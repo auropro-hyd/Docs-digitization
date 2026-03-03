@@ -1,0 +1,96 @@
+# ═══════════════════════════════════════════════════════════════
+# Auto Transcription Platform — .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# ── Virtual Environments ─────────────────────────────────────
+.venv/
+venv/
+ENV/
+
+# ── Environment Variables (secrets) ──────────────────────────
+.env
+.env.local
+.env.*.local
+# Allow example env files
+!.env.example
+!.env.*.example
+
+# ── Node.js ──────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# ── Next.js ──────────────────────────────────────────────────
+.next/
+out/
+
+# ── Testing & Coverage ───────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+coverage/
+
+# ── Linters & Type Checkers ──────────────────────────────────
+.ruff_cache/
+.pyright/
+.mypy_cache/
+*.tsbuildinfo
+
+# ── IDEs & Editors ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS Files ─────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Docker ───────────────────────────────────────────────────
+# Ignore Docker data volumes (created by compose)
+docker-data/
+
+# ── Database ─────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── Build Artifacts ──────────────────────────────────────────
+*.pem
+
+# ── Uploaded / Processed Documents ───────────────────────────
+# These are runtime data, not source code
+uploads/
+processed/
+data/output/
+
+# ── Vercel ───────────────────────────────────────────────────
+.vercel
+
+# ── Next.js generated ────────────────────────────────────────
+next-env.d.ts
