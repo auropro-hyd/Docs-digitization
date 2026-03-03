@@ -1,0 +1,6 @@
+FROM ollama/ollama:latest
+
+RUN ollama serve & sleep 5 && ollama pull gemma2:9b && kill %1 || true
+
+EXPOSE 11434
+CMD ["ollama", "serve"]

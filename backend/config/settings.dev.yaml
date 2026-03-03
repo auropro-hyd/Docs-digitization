@@ -1,0 +1,37 @@
+app_name: "Auto Transcription"
+debug: true
+
+ocr:
+  primary_engine: marker
+  secondary_engine: azure_di
+  quality_scorer: docling
+
+marker:
+  use_llm: true
+  paginate_output: true
+  extract_images: true
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "gemma2:9b"
+
+azure_di:
+  endpoint: "${AZURE_DI_ENDPOINT}"
+  api_key: "${AZURE_DI_API_KEY}"
+
+llm:
+  provider: ollama
+  base_url: "http://localhost:11434"
+  model: "gemma2:9b"
+
+database:
+  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/autotranscription"
+  sync_url: "postgresql://postgres:postgres@localhost:5432/autotranscription"
+  echo: true
+
+storage:
+  backend: filesystem
+  base_path: "./data/documents"
+
+hitl:
+  auto_approve_threshold: 0.9
+  review_threshold: 0.7
+  batch_review_enabled: true

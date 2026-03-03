@@ -1,0 +1,21 @@
+app_name: "Auto Transcription Test"
+debug: true
+
+ocr:
+  primary_engine: marker
+  secondary_engine: azure_di
+  quality_scorer: docling
+
+llm:
+  provider: ollama
+  base_url: "http://localhost:11434"
+  model: "gemma2:2b"
+
+database:
+  url: "postgresql+asyncpg://postgres:postgres@localhost:5432/autotranscription_test"
+  sync_url: "postgresql://postgres:postgres@localhost:5432/autotranscription_test"
+  echo: true
+
+storage:
+  backend: filesystem
+  base_path: "./data/test_documents"
