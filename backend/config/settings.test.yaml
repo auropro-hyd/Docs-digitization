@@ -1,10 +1,8 @@
 app_name: "Auto Transcription Test"
 debug: true
 
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di
 
 llm:
   provider: ollama

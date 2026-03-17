@@ -17,13 +17,13 @@ VENV_DIR     := $(BACKEND_DIR)/.venv
 VENV_BIN     := $(VENV_DIR)/bin
 VENV_BIN_REL := .venv/bin
 
-# ── Detect venv activation ──────────────────────────────────────
-PYTHON := $(if $(wildcard $(VENV_BIN)/python),$(VENV_BIN)/python,python3)
-PIP    := $(if $(wildcard $(VENV_BIN)/pip),$(VENV_BIN)/pip,pip)
+# ── Executables (always use venv paths after venv target) ───────
+PYTHON := $(VENV_BIN)/python
+PIP    := $(VENV_BIN)/pip
 
 # ── Phony targets ───────────────────────────────────────────────
 .PHONY: help setup venv install install-backend install-frontend \
-	dev backend frontend \
+	dev dev-fresh backend frontend \
 	infra-up infra-down infra-restart infra-status infra-logs \
 	db-logs db-shell db-reset \
 	ollama-up ollama-down ollama-pull ollama-list ollama-logs \
@@ -31,6 +31,7 @@ PIP    := $(if $(wildcard $(VENV_BIN)/pip),$(VENV_BIN)/pip,pip)
 	lint lint-fix format typecheck lint-frontend check-all \
 	build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs docker-restart \
+	health process-pdf kill \
 	clean deep-clean reset \
 	help
 
@@ -71,29 +72,38 @@ help: ## Show all available targets grouped by section
 	@echo "  CLEANUP"
 	@grep -E '^(clean|deep-clean|reset)[a-zA-Z_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "    \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 	@echo ""
+	@echo "  QUICK TEST"
+	@grep -E '^(health|process-pdf|kill)[a-zA-Z_-]*:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "    \033[36m%-22s\033[0m %s\n", $$1, $$2}'
+	@echo ""
 
 # ═════════════════════════════════════════════════════════════════
 #  SETUP — First-time project initialization
 # ═════════════════════════════════════════════════════════════════
 
-setup: venv install infra-up ollama-pull ## Full first-time setup (venv + deps + infra + models)
+setup: venv install infra-up ## Full first-time setup (venv + deps + infra)
 	@echo ""
 	@echo "✓ Setup complete. Run 'make dev' to start developing."
 
+VENV_REAL := $(HOME)/.venvs/auto-transcription
+
 venv: ## Create Python virtual environment
-	@if [ ! -d "$(VENV_DIR)" ]; then \
-		echo "Creating virtual environment..."; \
-		python3 -m venv $(VENV_DIR); \
-		echo "✓ Virtual environment created at $(VENV_DIR)"; \
-		echo "  Activate with: source $(VENV_BIN)/activate"; \
-	else \
+	@if [ -x "$(VENV_BIN)/python" ]; then \
 		echo "✓ Virtual environment already exists at $(VENV_DIR)"; \
+	else \
+		echo "Creating virtual environment (outside workspace to avoid IDE watcher conflicts)..."; \
+		rm -rf "$(VENV_DIR)" "$(VENV_REAL)"; \
+		mkdir -p "$(dir $(VENV_REAL))"; \
+		uv venv "$(VENV_REAL)" --python python3.13; \
+		ln -sfn "$(VENV_REAL)" "$(VENV_DIR)"; \
+		echo "✓ Virtual environment created at $(VENV_REAL)"; \
+		echo "  Symlinked to $(VENV_DIR)"; \
+		echo "  Activate with: source $(VENV_BIN)/activate"; \
 	fi
 
 install: install-backend install-frontend ## Install all dependencies (backend + frontend)
 
 install-backend: venv ## Install backend Python dependencies
-	$(PIP) install -e "$(BACKEND_DIR)/.[dev]"
+	uv pip install -p "$(VENV_BIN)/python" -e "$(BACKEND_DIR)/.[dev]"
 
 install-frontend: ## Install frontend Node.js dependencies
 	cd $(FRONTEND_DIR) && npm install
@@ -108,8 +118,12 @@ dev: ## Start backend + frontend concurrently (Ctrl+C stops both)
 	$(MAKE) frontend & \
 	wait
 
+dev-fresh: ## Clean frontend .next cache and start dev (use if Turbopack/SST errors persist)
+	rm -rf $(FRONTEND_DIR)/.next
+	$(MAKE) dev
+
 backend: ## Start FastAPI backend (dev mode with auto-reload)
-	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/uvicorn app.main:app --reload --reload-exclude '.venv' --host 0.0.0.0 --port 8000
 
 frontend: ## Start Next.js frontend (dev mode)
 	cd $(FRONTEND_DIR) && npm run dev
@@ -200,16 +214,16 @@ test-all: test-unit test-integration ## Run all tests (unit + integration)
 # ═════════════════════════════════════════════════════════════════
 
 lint: ## Run ruff linter on backend
-	$(VENV_BIN)/ruff check $(BACKEND_DIR)/app/
+	$(VENV_BIN)/ruff check $(BACKEND_DIR)/app/ $(BACKEND_DIR)/tests/
 
 lint-fix: ## Auto-fix backend lint issues
-	$(VENV_BIN)/ruff check --fix $(BACKEND_DIR)/app/
+	$(VENV_BIN)/ruff check --fix $(BACKEND_DIR)/app/ $(BACKEND_DIR)/tests/
 
 format: ## Auto-format backend code
-	$(VENV_BIN)/ruff format $(BACKEND_DIR)/app/
+	$(VENV_BIN)/ruff format $(BACKEND_DIR)/app/ $(BACKEND_DIR)/tests/
 
 format-check: ## Check backend formatting (dry-run, no changes)
-	$(VENV_BIN)/ruff format --check $(BACKEND_DIR)/app/
+	$(VENV_BIN)/ruff format --check $(BACKEND_DIR)/app/ $(BACKEND_DIR)/tests/
 
 typecheck: ## Run pyright type checker on backend
 	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/pyright
@@ -241,11 +255,13 @@ docker-up: infra-up build-backend ## Start full stack in Docker (infra + backend
 	docker run -d --name at-backend \
 		--network $(BACKEND_DIR)_default \
 		-e AT_ENV=prod \
-		-e DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/autotranscription \
+		-e AT_PIPELINE__MODE=azure_di \
+		-e AT_DATABASE__URL=postgresql+asyncpg://postgres:postgres@postgres:5432/autotranscription \
 		-p 8000:8000 \
 		autotranscription-backend:latest
 	@echo "✓ Full stack running:"
 	@echo "  Backend:    http://localhost:8000"
+	@echo "  Health:     http://localhost:8000/api/documents/health"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Ollama:     http://localhost:11434"
 
@@ -258,6 +274,62 @@ docker-logs: ## Tail backend Docker container logs
 	docker logs -f at-backend
 
 docker-restart: docker-down docker-up ## Restart full Docker stack
+
+# ═════════════════════════════════════════════════════════════════
+#  QUICK TEST — Process a document
+# ═════════════════════════════════════════════════════════════════
+
+health: ## Check backend health
+	@curl -sf http://localhost:8000/api/documents/health | python3 -m json.tool || echo "Backend not running"
+
+process-pdf: ## Process a PDF (usage: make process-pdf PDF=path/to/file.pdf)
+	@if [ -z "$(PDF)" ]; then \
+		echo "Usage: make process-pdf PDF=path/to/file.pdf"; \
+		exit 1; \
+	fi
+	curl -X POST http://localhost:8000/api/documents/process-file \
+		-F "file=@$(PDF)" -s | python3 -m json.tool
+
+kill: ## Kill processes on ports 8000 (backend) and 3000 (frontend)
+	@engaged=""; \
+	for port in 8000 3000; do \
+		pid=$$(lsof -ti:$$port 2>/dev/null); \
+		if [ -n "$$pid" ]; then \
+			name=$$(lsof -i:$$port -sTCP:LISTEN 2>/dev/null | tail -1 | awk '{print $$1}'); \
+			echo "  Port $$port: ENGAGED  (PID $$pid — $$name)"; \
+			engaged="$$engaged $$port"; \
+		else \
+			echo "  Port $$port: FREE"; \
+		fi; \
+	done; \
+	if [ -z "$$engaged" ]; then \
+		echo ""; \
+		echo "✓ All ports already free — nothing to kill."; \
+	else \
+		echo ""; \
+		for port in $$engaged; do \
+			pid=$$(lsof -ti:$$port 2>/dev/null); \
+			if [ -n "$$pid" ]; then \
+				kill -9 $$pid 2>/dev/null || true; \
+				echo "  ✗ Killed PID $$pid on port $$port"; \
+			fi; \
+		done; \
+		sleep 0.3; \
+		echo ""; \
+		echo "── Status after cleanup ─────────────────────────"; \
+		for port in 8000 3000; do \
+			pid=$$(lsof -ti:$$port 2>/dev/null); \
+			if [ -n "$$pid" ]; then \
+				echo "  Port $$port: STILL ENGAGED  (PID $$pid)"; \
+			else \
+				echo "  Port $$port: FREE ✓"; \
+			fi; \
+		done; \
+	fi
+	@if [ -f "$(FRONTEND_DIR)/.next/dev/lock" ]; then \
+		rm -f "$(FRONTEND_DIR)/.next/dev/lock"; \
+		echo "  ✗ Removed stale Next.js dev lock file"; \
+	fi
 
 # ═════════════════════════════════════════════════════════════════
 #  CLEANUP
@@ -273,7 +345,7 @@ clean: ## Remove caches and build artifacts
 	@echo "✓ Caches and build artifacts removed"
 
 deep-clean: clean ## Remove caches + venv + node_modules (full reset of deps)
-	rm -rf $(VENV_DIR)
+	rm -rf $(VENV_DIR) $(VENV_REAL)
 	rm -rf $(FRONTEND_DIR)/node_modules
 	@echo "✓ Deep clean complete (venv + node_modules removed)"
 

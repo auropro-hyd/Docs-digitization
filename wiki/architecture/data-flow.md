@@ -5,7 +5,9 @@ This document traces the complete lifecycle of a document through the system, fr
 ## Pipeline Summary
 
 ```
-Upload → Ingest → Parallel OCR+Quality → Merge → Confidence Routing
+Upload → Ingest → Route by Pipeline Mode
+    → [azure_di mode] → Run Azure DI + Quality → merge_azure_di_results → Confidence Routing
+    → [marker_docling mode] → Run Marker + Quality → merge_marker_results → Confidence Routing
     → [HITL Review if needed] → Store → Compliance Subgraph → Dashboard
 ```
 
@@ -62,52 +64,81 @@ The `ingest_document` node validates the PDF and determines the page count:
 
 If the PDF is missing or corrupt, the workflow routes to `handle_error`.
 
-### Step 5: Parallel Fan-Out (Send)
+### Step 5: Pipeline Mode Routing
 
-The `route_after_ingest` conditional edge returns three `Send` objects, triggering parallel execution:
+The `route_after_ingest` conditional edge reads `settings.pipeline.mode` and routes to the appropriate branch:
+
+- **`"azure_di"` mode** — runs Azure DI OCR + Docling quality scoring in parallel
+- **`"marker_docling"` mode** — runs Marker OCR + Docling quality scoring in parallel
+
+Each mode issues two `Send` objects:
 
 ```python
+# azure_di mode
 [
-    Send("run_marker_ocr", state),      # Primary OCR
-    Send("run_azure_di_ocr", state),    # Secondary OCR
-    Send("run_quality_scoring", state), # Quality assessment
+    Send("run_azure_di_ocr", state),
+    Send("run_quality_scoring", state),
+]
+
+# marker_docling mode
+[
+    Send("run_marker_ocr", state),
+    Send("run_quality_scoring", state),
 ]
 ```
 
-All three run concurrently. Each sends WebSocket status updates as it progresses.
+Both branches run their OCR and quality scoring concurrently, sending WebSocket status updates as they progress.
 
-#### 5a: Marker OCR
+#### 5a: Marker OCR (marker_docling mode)
 
-- Calls `container.primary_ocr.extract(pdf_path)` via the `OCREngine` port
+- Calls `container.ocr_engine.extract(pdf_path)` via the `OCREngine` port
 - Marker's `PdfConverter` processes the full PDF (runs in executor for async compat)
 - Splits paginated markdown output on `\n\n---\n\n`
 - Returns per-page markdown and word counts in `marker_results`
 
-#### 5b: Azure DI OCR
+#### 5b: Azure DI OCR (azure_di mode)
 
-- Calls `container.secondary_ocr.extract(pdf_path)` via the `OCREngine` port
+- Calls `container.ocr_engine.extract(pdf_path)` via the `OCREngine` port
 - Sends the PDF to Azure Document Intelligence `prebuilt-layout` model
 - Extracts per-word confidence scores, handwriting flags, barcodes, and selection marks
 - Returns structured per-page data in `azure_di_results`
 
-#### 5c: Docling Quality Scoring
+#### 5c: Docling Quality Scoring (both modes)
 
 - Calls `container.quality_scorer.score(pdf_path)` via the `QualityScorer` port
 - Docling's `DocumentConverter` produces per-page scores for layout, table, OCR, and parse quality
 - Returns a `QualityReport` serialized into `quality_scores`
 
-### Step 6: Merge Node
+### Step 6: Merge Node (mode-specific)
 
-All three parallel branches converge at `merge_ocr_results`. For each page, the node:
+Each pipeline mode has its own merge node:
 
-1. Combines Marker's markdown with Azure DI's word-level data (handwriting counts, barcodes, selection marks)
-2. Computes a **composite confidence score** using weighted factors:
+#### `merge_azure_di_results` (azure_di mode)
+
+Converges Azure DI OCR and Docling quality branches. For each page:
+
+1. Uses Azure DI's structured output (markdown, handwriting counts, barcodes, selection marks)
+2. Computes a **composite confidence score** using Azure DI word-level confidence and Docling quality:
 
 | Factor | Weight | Source |
 |--------|--------|--------|
-| Docling mean quality | 0.30 | Average of layout, table, OCR, parse scores |
-| Azure DI min word confidence | 0.25 | Lowest per-word confidence on the page |
-| Marker table quality | 0.15 | Table detection score (1-5 scale, normalized) |
+| Azure DI min word confidence | 0.35 | Lowest per-word confidence on the page |
+| Docling mean quality | 0.35 | Average of layout, table, OCR, parse scores |
+| Validation rules | 0.30 | Custom rule engine (placeholder at 0.8) |
+
+3. Produces unified `extractions` list and `confidence_scores` dict
+
+#### `merge_marker_results` (marker_docling mode)
+
+Converges Marker OCR and Docling quality branches. For each page:
+
+1. Uses Marker's markdown output combined with Docling quality scores
+2. Computes a **composite confidence score** using Docling quality scores:
+
+| Factor | Weight | Source |
+|--------|--------|--------|
+| Docling mean quality | 0.40 | Average of layout, table, OCR, parse scores |
+| Marker table quality | 0.30 | Table detection score (1-5 scale, normalized) |
 | Validation rules | 0.30 | Custom rule engine (placeholder at 0.8) |
 
 3. Produces unified `extractions` list and `confidence_scores` dict
@@ -222,8 +253,7 @@ sequenceDiagram
     participant API as FastAPI
     participant WS as WebSocket
     participant Graph as LangGraph<br/>Document Graph
-    participant Marker as Marker OCR<br/>(primary_ocr)
-    participant AzureDI as Azure DI OCR<br/>(secondary_ocr)
+    participant OCR as OCR Engine<br/>(ocr_engine)
     participant Docling as Docling<br/>(quality_scorer)
     participant LLM as Ollama LLM<br/>(llm)
     participant Store as DocumentStore
@@ -241,19 +271,26 @@ sequenceDiagram
     Note over Graph: ingest_document node
     Graph->>WS: { status: ingested, total_pages: N }
 
-    Note over Graph: Parallel fan-out via Send
-    par Marker OCR
-        Graph->>Marker: extract(pdf_path)
-        Marker-->>Graph: OCRResult (markdown per page)
-    and Azure DI OCR
-        Graph->>AzureDI: extract(pdf_path)
-        AzureDI-->>Graph: OCRResult (words, barcodes, marks)
-    and Quality Scoring
-        Graph->>Docling: score(pdf_path)
-        Docling-->>Graph: QualityReport (per-page scores)
+    Note over Graph: Route by pipeline.mode
+    alt azure_di mode
+        par Azure DI OCR
+            Graph->>OCR: extract(pdf_path)
+            OCR-->>Graph: OCRResult (words, barcodes, marks)
+        and Quality Scoring
+            Graph->>Docling: score(pdf_path)
+            Docling-->>Graph: QualityReport (per-page scores)
+        end
+        Note over Graph: merge_azure_di_results node
+    else marker_docling mode
+        par Marker OCR
+            Graph->>OCR: extract(pdf_path)
+            OCR-->>Graph: OCRResult (markdown per page)
+        and Quality Scoring
+            Graph->>Docling: score(pdf_path)
+            Docling-->>Graph: QualityReport (per-page scores)
+        end
+        Note over Graph: merge_marker_results node
     end
-
-    Note over Graph: merge_ocr_results node
     Graph->>Graph: Compute composite confidence per page
     Graph->>WS: { status: merging_results }
 
@@ -305,10 +342,13 @@ sequenceDiagram
 The `DocumentState.status` field tracks progress:
 
 ```
-uploaded → ingested → marker_ocr_running → marker_complete
-                    → azure_di_running   → azure_di_complete
-                    → quality_scoring    → quality_scored
-         → merging_results → merged
+uploaded → ingested → [route by pipeline.mode]
+    azure_di mode:       → azure_di_running   → azure_di_complete
+                         → quality_scoring    → quality_scored
+                         → merging_results (merge_azure_di_results) → merged
+    marker_docling mode: → marker_ocr_running → marker_complete
+                         → quality_scoring    → quality_scored
+                         → merging_results (merge_marker_results) → merged
          → auto_approved / reviewed
          → completed
 ```
@@ -319,11 +359,11 @@ Error states: `marker_error`, `azure_di_error`, `quality_error`, `error`
 
 ## Key Design Decisions
 
-1. **Parallel OCR, not sequential** -- Marker and Azure DI extract different things (markdown vs. word-level confidence). Running them in parallel via `Send` halves the wall-clock time.
+1. **Pipeline mode routing, not parallel dual-OCR** -- The `pipeline.mode` setting selects a single OCR engine (`"azure_di"` or `"marker_docling"`). Each mode has its own merge node (`merge_azure_di_results` or `merge_marker_results`) and confidence formula tuned to the engine's output characteristics.
 
-2. **Quality scoring is independent** -- Docling runs alongside OCR, not after it. Its scores are used for confidence calculation, not for content extraction.
+2. **Quality scoring is independent** -- Docling runs alongside the selected OCR engine, not after it. Its scores are used for confidence calculation, not for content extraction.
 
-3. **Composite confidence, not single-source** -- No single engine's confidence is trusted alone. The weighted formula combines four signals to reduce false positives in HITL routing.
+3. **Mode-specific composite confidence** -- Each merge node uses a confidence formula tailored to its OCR engine. Azure DI mode leverages word-level confidence; Marker mode relies on Docling quality scores and table detection.
 
 4. **`interrupt()` for HITL** -- LangGraph's native interrupt/resume mechanism persists workflow state to the checkpointer. The workflow can be paused for hours or days without losing progress.
 

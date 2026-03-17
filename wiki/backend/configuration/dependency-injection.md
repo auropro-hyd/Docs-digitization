@@ -1,6 +1,6 @@
 # Dependency Injection Container
 
-The DI container wires port interfaces to concrete adapter implementations based on the active configuration. Swapping an engine requires only a config change — no code modifications.
+The DI container wires port interfaces to concrete adapter implementations based on the active pipeline mode. Switching between `azure_di` and `marker_docling` requires only a config change — no code modifications.
 
 **Files:**
 - `backend/app/config/container.py` — Container class and factory functions
@@ -11,11 +11,9 @@ The DI container wires port interfaces to concrete adapter implementations based
 ```
 AppSettings (from settings.yaml + env vars)
       │
+      │  settings.pipeline.mode
       ▼
-Factory Functions (match/case on config values)
-      │
-      ▼
-Container (lazy singleton instances)
+Container (match/case on pipeline mode → lazy singleton instances)
       │
       ▼
 FastAPI Depends() (injects into route handlers)
@@ -28,43 +26,79 @@ The application defines port protocols (interfaces) that adapters must implement
 | Port | Module | Purpose |
 |------|--------|---------|
 | `OCREngine` | `app.core.ports.ocr` | OCR text extraction |
-| `QualityScorer` | `app.core.ports.quality` | Extraction quality scoring |
+| `QualityScorer` | `app.core.ports.quality` | Extraction quality scoring (marker_docling mode) |
 | `LLMProvider` | `app.core.ports.llm` | LLM inference |
 | `DocumentStore` | `app.core.ports.storage` | Document file storage |
 | `NotificationPort` | `app.core.ports.notification` | Real-time notifications |
 
-## Factory Functions
+## Container Class
 
-Each factory function uses Python's `match/case` to dispatch based on configuration values:
-
-### `create_ocr_engine(engine_name, settings?)`
+The `Container` holds **lazily initialized singleton** instances of each adapter. The key architectural change is that OCR engine selection is driven by `settings.pipeline.mode` via a `match` statement — there is a single `ocr_engine` property instead of separate primary/secondary engines.
 
 ```python
-def create_ocr_engine(engine_name: str, settings: AppSettings | None = None) -> OCREngine:
-    settings = settings or get_settings()
-    match engine_name:
-        case "marker":
-            from app.adapters.ocr.marker import MarkerOCRAdapter
-            return MarkerOCRAdapter(settings.marker)
-        case "azure_di":
-            from app.adapters.ocr.azure_di import AzureDIOCRAdapter
-            return AzureDIOCRAdapter(settings.azure_di)
-        case _:
-            raise ValueError(f"Unknown OCR engine: {engine_name}")
+class Container:
+    def __init__(self, settings: AppSettings | None = None):
+        self._settings = settings or get_settings()
+        self._ocr_engine: OCREngine | None = None
+        self._quality_scorer: QualityScorer | None = None
+        self._llm_provider: LLMProvider | None = None
+        self._document_store: DocumentStore | None = None
+        self._notification: NotificationPort | None = None
+
+    @property
+    def pipeline_mode(self) -> str:
+        return self._settings.pipeline.mode
+
+    @property
+    def ocr_engine(self) -> OCREngine:
+        if self._ocr_engine is None:
+            match self._settings.pipeline.mode:
+                case "azure_di":
+                    from app.adapters.ocr.azure_di import AzureDIOCRAdapter
+                    self._ocr_engine = AzureDIOCRAdapter(self._settings.azure_di)
+                case "marker_docling":
+                    from app.adapters.ocr.marker import MarkerOCRAdapter
+                    self._ocr_engine = MarkerOCRAdapter(self._settings.marker)
+                case _:
+                    raise ValueError(f"Unknown pipeline mode: {self._settings.pipeline.mode}")
+        return self._ocr_engine
 ```
 
-| Config Value | Adapter | Settings Model |
-|-------------|---------|----------------|
-| `marker` | `MarkerOCRAdapter` | `MarkerConfig` |
-| `azure_di` | `AzureDIOCRAdapter` | `AzureDIConfig` |
+### Pipeline Mode Resolution
 
-### `create_quality_scorer(settings?)`
+The `ocr_engine` property resolves to a different adapter depending on `settings.pipeline.mode`:
 
-Dispatches on `settings.ocr.quality_scorer`:
+| Pipeline Mode | `ocr_engine` resolves to | Config Used |
+|---------------|-------------------------|-------------|
+| `azure_di` | `AzureDIOCRAdapter(settings.azure_di)` | `AzureDIConfig` |
+| `marker_docling` | `MarkerOCRAdapter(settings.marker)` | `MarkerConfig` |
 
-| Config Value | Adapter |
-|-------------|---------|
-| `docling` | `DoclingQualityAdapter` |
+The `quality_scorer` property always returns `DoclingQualityAdapter` but is only used in `marker_docling` mode — the workflow graph does not invoke it in `azure_di` mode.
+
+### Container Properties
+
+| Property | Resolved Adapter | Config Field |
+|----------|-----------------|-------------|
+| `pipeline_mode` | Returns `str` — the active mode | `pipeline.mode` |
+| `ocr_engine` | `AzureDIOCRAdapter` or `MarkerOCRAdapter` (based on pipeline mode) | `pipeline.mode` → `azure_di.*` or `marker.*` |
+| `quality_scorer` | `DoclingQualityAdapter` (marker_docling mode only) | — |
+| `llm` | `OllamaLLMAdapter` or `AzureOpenAILLMAdapter` | `llm.provider` |
+| `document_store` | `FileSystemAdapter` or `AzureBlobAdapter` | `storage.backend` |
+| `notification` | `WebSocketNotifyAdapter` | (always WebSocket) |
+
+### `get_container()`
+
+Returns a cached `Container` singleton:
+
+```python
+@lru_cache
+def get_container() -> Container:
+    return Container()
+```
+
+## Factory Functions
+
+Non-pipeline adapters still use standalone factory functions with `match/case` dispatch:
 
 ### `create_llm_provider(settings?)`
 
@@ -88,59 +122,6 @@ Dispatches on `settings.storage.backend`:
 
 Currently always returns `WebSocketNotifyAdapter`. No configuration dispatch needed — WebSocket is the only notification mechanism.
 
-## Container Class
-
-The `Container` holds **lazily initialized singleton** instances of each adapter:
-
-```python
-class Container:
-    def __init__(self, settings: AppSettings | None = None):
-        self._settings = settings or get_settings()
-        self._primary_ocr: OCREngine | None = None
-        self._secondary_ocr: OCREngine | None = None
-        self._quality_scorer: QualityScorer | None = None
-        self._llm_provider: LLMProvider | None = None
-        self._document_store: DocumentStore | None = None
-        self._notification: NotificationPort | None = None
-
-    @property
-    def primary_ocr(self) -> OCREngine:
-        if self._primary_ocr is None:
-            self._primary_ocr = create_ocr_engine(
-                self._settings.ocr.primary_engine, self._settings
-            )
-        return self._primary_ocr
-
-    # ... same pattern for all properties
-```
-
-Each property:
-1. Checks if the private attribute is `None`
-2. If so, calls the corresponding factory function
-3. Caches the result in the private attribute
-4. Returns the cached instance on subsequent calls
-
-### Container Properties
-
-| Property | Factory | Config Field |
-|----------|---------|-------------|
-| `primary_ocr` | `create_ocr_engine(settings.ocr.primary_engine)` | `ocr.primary_engine` |
-| `secondary_ocr` | `create_ocr_engine(settings.ocr.secondary_engine)` | `ocr.secondary_engine` |
-| `quality_scorer` | `create_quality_scorer()` | `ocr.quality_scorer` |
-| `llm` | `create_llm_provider()` | `llm.provider` |
-| `document_store` | `create_document_store()` | `storage.backend` |
-| `notification` | `create_notification_port()` | (always WebSocket) |
-
-### `get_container()`
-
-Returns a cached `Container` singleton:
-
-```python
-@lru_cache
-def get_container() -> Container:
-    return Container()
-```
-
 ## FastAPI Integration
 
 **File:** `backend/app/api/dependencies.py`
@@ -148,15 +129,14 @@ def get_container() -> Container:
 Exposes simple functions that route handlers can use with `Depends()`:
 
 ```python
-from app.config.container import get_container
+from app.config.container import Container, get_container
 
-def get_primary_ocr() -> OCREngine:
-    return get_container().primary_ocr
-
-def get_secondary_ocr() -> OCREngine:
-    return get_container().secondary_ocr
+def get_ocr_engine() -> OCREngine:
+    """Get the OCR engine for the active pipeline mode."""
+    return get_container().ocr_engine
 
 def get_quality_scorer() -> QualityScorer:
+    """Get quality scorer (only meaningful in marker_docling mode)."""
     return get_container().quality_scorer
 
 def get_llm() -> LLMProvider:
@@ -164,24 +144,49 @@ def get_llm() -> LLMProvider:
 
 def get_document_store() -> DocumentStore:
     return get_container().document_store
+
+def get_di_container() -> Container:
+    return get_container()
 ```
 
 Usage in a route handler:
 
 ```python
 from fastapi import Depends
-from app.api.dependencies import get_primary_ocr
+from app.api.dependencies import get_ocr_engine
 from app.core.ports.ocr import OCREngine
 
 @router.post("/process")
-async def process_document(ocr: OCREngine = Depends(get_primary_ocr)):
+async def process_document(ocr: OCREngine = Depends(get_ocr_engine)):
     result = await ocr.extract(document)
     return result
 ```
 
-## Swapping an Engine
+The injected `ocr` is automatically the correct adapter for the active pipeline mode — `AzureDIOCRAdapter` in `azure_di` mode, `MarkerOCRAdapter` in `marker_docling` mode. No branching needed in route handlers.
 
-To add a new adapter (e.g., a new OCR engine called `tesseract`):
+## Swapping the Pipeline Mode
+
+To switch between Azure DI and Marker+Docling, change a single config value:
+
+### Via YAML
+
+```yaml
+# config/settings.dev.yaml
+pipeline:
+  mode: marker_docling   # switch from azure_di to marker_docling
+```
+
+### Via Environment Variable
+
+```bash
+AT_PIPELINE__MODE=marker_docling
+```
+
+No changes needed in route handlers, the Container class, or FastAPI dependencies — the new adapter flows through automatically via the `match` statement in `Container.ocr_engine`.
+
+## Adding a New Pipeline Mode
+
+To add a new pipeline mode (e.g., `tesseract`):
 
 ### 1. Implement the Port Protocol
 
@@ -197,42 +202,38 @@ class TesseractOCRAdapter(OCREngine):
         # ... implementation
 ```
 
-### 2. Register in the Factory
+### 2. Add a Case in the Container
 
-Add a new case to `create_ocr_engine()` in `container.py`:
+Add a new `match` case to `Container.ocr_engine` in `container.py`:
 
 ```python
-def create_ocr_engine(engine_name: str, settings: AppSettings | None = None) -> OCREngine:
-    settings = settings or get_settings()
-    match engine_name:
-        case "marker":
-            from app.adapters.ocr.marker import MarkerOCRAdapter
-            return MarkerOCRAdapter(settings.marker)
-        case "azure_di":
-            from app.adapters.ocr.azure_di import AzureDIOCRAdapter
-            return AzureDIOCRAdapter(settings.azure_di)
-        case "tesseract":
-            from app.adapters.ocr.tesseract import TesseractOCRAdapter
-            return TesseractOCRAdapter(settings.marker)  # or a new TesseractConfig
-        case _:
-            raise ValueError(f"Unknown OCR engine: {engine_name}")
+@property
+def ocr_engine(self) -> OCREngine:
+    if self._ocr_engine is None:
+        match self._settings.pipeline.mode:
+            case "azure_di":
+                from app.adapters.ocr.azure_di import AzureDIOCRAdapter
+                self._ocr_engine = AzureDIOCRAdapter(self._settings.azure_di)
+            case "marker_docling":
+                from app.adapters.ocr.marker import MarkerOCRAdapter
+                self._ocr_engine = MarkerOCRAdapter(self._settings.marker)
+            case "tesseract":
+                from app.adapters.ocr.tesseract import TesseractOCRAdapter
+                self._ocr_engine = TesseractOCRAdapter(self._settings.tesseract)
+            case _:
+                raise ValueError(...)
+    return self._ocr_engine
 ```
 
-### 3. Set the Configuration
+### 3. Add a Merge Node and Flow Edges
 
-```yaml
-# config/settings.dev.yaml
-ocr:
-  primary_engine: tesseract
-```
+Add a corresponding `merge_tesseract_results` node in `nodes.py` and wire the flow edges in `document_graph.py`.
 
-Or via environment variable:
+### 4. Set the Configuration
 
 ```bash
-AT_OCR__PRIMARY_ENGINE=tesseract
+AT_PIPELINE__MODE=tesseract
 ```
-
-No changes needed in route handlers, the Container, or FastAPI dependencies — the new adapter flows through automatically.
 
 ## Adapter Registry
 

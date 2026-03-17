@@ -194,5 +194,5 @@ The rule will automatically be included in the pass_rate and feed into the compo
 ## Related Documentation
 
 - [Composite Confidence Scorer](./composite-scorer.md) — consumes validation results as 30% of the composite score
-- [Document Processing Workflow](../workflow/document-processing.md) — where validation is invoked during `merge_ocr_results`
+- [Document Processing Workflow](../workflow/document-processing.md) — where validation is invoked during `merge_azure_di_results` or `merge_marker_results`
 - [HITL Flow](../workflow/hitl-flow.md) — how low confidence (including validation failures) triggers human review

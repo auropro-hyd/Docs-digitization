@@ -1,17 +1,867 @@
-"""Compliance review API routes."""
+"""Compliance review API routes.
+
+POST /{doc_id}/run        — launch compliance audit as background task
+GET  /{doc_id}/report     — return full ComplianceReport JSON
+GET  /{doc_id}/status     — return current run status + progress
+POST /{doc_id}/findings/{finding_id}/resolve — mark finding resolved
+POST /{doc_id}/findings/{finding_id}/review  — HITL review (approve/reject/modify)
+GET  /{doc_id}/hitl-summary                  — summary of HITL review status
+GET  /{doc_id}/export     — export compliance report as HTML or Markdown
+"""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import asyncio
+import json
+import logging
+from pathlib import Path
+
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+
+from app.config.settings import get_settings
+from app.core.task_manager import task_manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_COMPLIANCE_LOCK = "compliance_running.lock"
+_COMPLIANCE_RESULT = "compliance_result.json"
+
+ALL_AGENTS = ["alcoa", "gmp", "checklist", "sop", "reconciliation"]
+
+AGENT_LABELS: dict[str, str] = {
+    "alcoa": "ALCOA+",
+    "gmp": "GMP Validation",
+    "checklist": "Checklist Review",
+    "sop": "SOP Compliance",
+    "reconciliation": "Cross-Page Reconciliation",
+}
+
+
+class RunComplianceRequest(BaseModel):
+    agents: list[str] = Field(
+        default_factory=lambda: list(ALL_AGENTS),
+        description="Which compliance agents to run. Defaults to all.",
+    )
+
+
+def _doc_dir(doc_id: str) -> Path:
+    settings = get_settings()
+    d = Path(settings.storage.base_path) / doc_id
+    if not d.exists():
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
+    return d
+
+
+def _load_report(doc_id: str) -> dict | None:
+    d = _doc_dir(doc_id)
+    result_path = d / _COMPLIANCE_RESULT
+    if not result_path.exists():
+        return None
+    return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+# ── POST /run ─────────────────────────────────────────────────
+
+
+@router.get("/agents")
+async def list_available_agents():
+    """Return the list of available compliance agents with display labels."""
+    return [
+        {"id": agent_id, "label": AGENT_LABELS.get(agent_id, agent_id)}
+        for agent_id in ALL_AGENTS
+    ]
+
+
+@router.post("/{doc_id}/run")
+async def run_compliance_review(
+    doc_id: str,
+    body: RunComplianceRequest | None = None,
+):
+    """Trigger a compliance review for a processed document."""
+    d = _doc_dir(doc_id)
+
+    result_path = d / "result.json"
+    if not result_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail="Document must be processed before running compliance review.",
+        )
+
+    lock_path = d / _COMPLIANCE_LOCK
+    if lock_path.exists():
+        import time
+        age = time.time() - lock_path.stat().st_mtime
+        if age > _STALE_LOCK_SECONDS:
+            lock_path.unlink(missing_ok=True)
+            logger.warning("Cleaned stale lock before re-run for %s (%.0fs old)", doc_id, age)
+        else:
+            raise HTTPException(status_code=409, detail="Compliance review already running.")
+
+    selected = (body.agents if body else None) or list(ALL_AGENTS)
+    invalid = [a for a in selected if a not in ALL_AGENTS]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown agent(s): {', '.join(invalid)}. Valid: {', '.join(ALL_AGENTS)}",
+        )
+
+    lock_path.write_text("running", encoding="utf-8")
+
+    task_key = f"compliance:{doc_id}"
+    task_manager.spawn(task_key, _run_compliance_pipeline(doc_id, d, selected), replace=True)
+
+    return {"status": "started", "doc_id": doc_id, "agents": selected}
+
+
+async def _run_compliance_pipeline(doc_id: str, doc_dir: Path, selected_agents: list[str] | None = None) -> None:
+    """Background task that runs the full compliance pipeline."""
+    lock_path = doc_dir / _COMPLIANCE_LOCK
+    try:
+        result_path = doc_dir / "result.json"
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+
+        extractions: list[dict] = data.get("extractions", [])
+        filename = data.get("filename", "")
+        total_pages = data.get("total_pages", 0)
+        key_value_pairs = data.get("key_value_pairs", [])
+
+        if not extractions:
+            raw_md: dict = data.get("raw_markdown", {})
+            for page_key, md in sorted(raw_md.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0):
+                page_num = int(page_key) if str(page_key).isdigit() else 0
+                extractions.append({"page_num": page_num, "markdown": md})
+
+        from app.workflow.compliance_graph import run_compliance_pipeline
+
+        await run_compliance_pipeline(
+            doc_id=doc_id,
+            extractions=extractions,
+            filename=filename,
+            total_pages=total_pages,
+            key_value_pairs=key_value_pairs,
+            selected_agents=selected_agents,
+        )
+
+    except asyncio.CancelledError:
+        logger.info("Compliance pipeline cancelled for %s", doc_id)
+    except Exception:
+        logger.exception("Compliance pipeline failed for %s", doc_id)
+        from app.api.websocket import manager as ws_manager
+
+        await ws_manager.broadcast(doc_id, {
+            "type": "compliance_progress",
+            "phase": "error",
+            "status": "error",
+            "label": "Compliance audit failed. Please try again.",
+        })
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+# ── GET /report ───────────────────────────────────────────────
 
 
 @router.get("/{doc_id}/report")
 async def get_compliance_report(doc_id: str):
-    return {"doc_id": doc_id, "report": None, "status": "not_implemented"}
+    """Return the full compliance report."""
+    report = _load_report(doc_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No compliance report found. Run an audit first.")
+    return report
 
 
-@router.post("/{doc_id}/run")
-async def run_compliance_review(doc_id: str):
-    return {"doc_id": doc_id, "status": "queued"}
+# ── GET /status ───────────────────────────────────────────────
+
+
+_STALE_LOCK_SECONDS = 600  # 10 minutes
+
+
+@router.get("/{doc_id}/status")
+async def get_compliance_status(doc_id: str):
+    """Return the current compliance run status."""
+    d = _doc_dir(doc_id)
+
+    lock_path = d / _COMPLIANCE_LOCK
+    result_path = d / _COMPLIANCE_RESULT
+
+    task_alive = task_manager.is_running(f"compliance:{doc_id}")
+
+    if lock_path.exists():
+        if not task_alive:
+            import time
+            age = time.time() - lock_path.stat().st_mtime
+            if age > _STALE_LOCK_SECONDS:
+                lock_path.unlink(missing_ok=True)
+                logger.warning("Cleaned stale compliance lock for %s (%.0fs old)", doc_id, age)
+            else:
+                return {"status": "running", "doc_id": doc_id}
+        else:
+            return {"status": "running", "doc_id": doc_id}
+    if result_path.exists():
+        return {"status": "complete", "doc_id": doc_id}
+    return {"status": "idle", "doc_id": doc_id}
+
+
+@router.delete("/{doc_id}/run")
+async def cancel_compliance_run(doc_id: str):
+    """Force-cancel a stuck compliance run by cancelling the task and removing the lock."""
+    d = _doc_dir(doc_id)
+    lock_path = d / _COMPLIANCE_LOCK
+    was_running = lock_path.exists()
+
+    cancelled = task_manager.cancel(f"compliance:{doc_id}")
+
+    lock_path.unlink(missing_ok=True)
+    logger.info("Force-cancelled compliance run for %s (was_running=%s, task_cancelled=%s)", doc_id, was_running, cancelled)
+    return {"status": "cancelled", "was_running": was_running, "doc_id": doc_id}
+
+
+# ── POST /findings/{finding_id}/resolve ───────────────────────
+
+
+@router.post("/{doc_id}/findings/{finding_id}/resolve")
+async def resolve_finding(doc_id: str, finding_id: str):
+    """Toggle the resolved status of a specific finding."""
+    d = _doc_dir(doc_id)
+    result_path = d / _COMPLIANCE_RESULT
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    report_data = json.loads(result_path.read_text(encoding="utf-8"))
+
+    # Find the finding once to determine current state, then apply the toggled value everywhere
+    current_resolved = None
+    for finding in report_data.get("findings", []):
+        if finding.get("finding_id") == finding_id:
+            current_resolved = finding.get("resolved", False)
+            break
+
+    if current_resolved is None:
+        raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found.")
+
+    new_resolved = not current_resolved
+
+    for finding in report_data.get("findings", []):
+        if finding.get("finding_id") == finding_id:
+            finding["resolved"] = new_resolved
+            break
+
+    for ar in report_data.get("agent_reports", []):
+        for finding in ar.get("findings", []):
+            if finding.get("finding_id") == finding_id:
+                finding["resolved"] = new_resolved
+                break
+
+    result_path.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
+
+    return {"finding_id": finding_id, "resolved": new_resolved}
+
+
+# ── POST /findings/{finding_id}/review (HITL) ─────────────────
+
+
+class HITLReviewRequest(BaseModel):
+    action: str = Field(
+        ...,
+        description="One of: approve, reject, modify, reset",
+        pattern="^(approve|reject|modify|reset)$",
+    )
+    note: str = Field("", description="Optional reviewer note")
+    modified_severity: str | None = Field(None, description="New severity if action=modify")
+    modified_description: str | None = Field(None, description="New description if action=modify")
+
+
+@router.post("/{doc_id}/findings/{finding_id}/review")
+async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
+    """HITL review: approve, reject, or modify a finding."""
+    from datetime import datetime, timezone
+
+    d = _doc_dir(doc_id)
+    result_path = d / _COMPLIANCE_RESULT
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    report_data = json.loads(result_path.read_text(encoding="utf-8"))
+
+    action_map = {
+        "approve": "user_approved",
+        "reject": "user_rejected",
+        "modify": "user_modified",
+        "reset": "needs_review",
+    }
+    new_hitl_status = action_map[body.action]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _update_finding(f: dict) -> bool:
+        if f.get("finding_id") != finding_id:
+            return False
+        f["hitl_status"] = new_hitl_status
+        f["hitl_note"] = "" if body.action == "reset" else body.note
+        f["hitl_reviewed_at"] = now_iso if body.action != "reset" else None
+        if body.action == "reject":
+            f["resolved"] = True
+        if body.action == "reset":
+            f["resolved"] = False
+        if body.action == "modify":
+            if body.modified_severity:
+                f["severity"] = body.modified_severity
+            if body.modified_description:
+                f["description"] = body.modified_description
+        return True
+
+    found = False
+    for finding in report_data.get("findings", []):
+        if _update_finding(finding):
+            found = True
+            break
+
+    for ar in report_data.get("agent_reports", []):
+        for finding in ar.get("findings", []):
+            _update_finding(finding)
+
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found.")
+
+    result_path.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
+
+    updated = next(
+        (f for f in report_data.get("findings", []) if f["finding_id"] == finding_id),
+        {},
+    )
+    return {
+        "finding_id": finding_id,
+        "hitl_status": updated.get("hitl_status"),
+        "hitl_note": updated.get("hitl_note"),
+        "hitl_reviewed_at": updated.get("hitl_reviewed_at"),
+        "severity": updated.get("severity"),
+        "resolved": updated.get("resolved"),
+    }
+
+
+# ── GET /hitl-summary ─────────────────────────────────────────
+
+
+@router.get("/{doc_id}/hitl-summary")
+async def hitl_summary(doc_id: str):
+    """Return a summary of HITL review status for a compliance report."""
+    report = _load_report(doc_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    findings = report.get("findings", [])
+    counts = {
+        "total": len(findings),
+        "auto_approved": 0,
+        "needs_review": 0,
+        "user_approved": 0,
+        "user_rejected": 0,
+        "user_modified": 0,
+    }
+    for f in findings:
+        status = f.get("hitl_status", "auto_approved")
+        if status in counts:
+            counts[status] += 1
+
+    counts["reviewed"] = counts["user_approved"] + counts["user_rejected"] + counts["user_modified"]
+    counts["pending_review"] = counts["needs_review"]
+
+    return counts
+
+
+# ── GET /export ───────────────────────────────────────────────
+
+
+_EXPORT_CSS = """<style>
+:root { --bg: #ffffff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
+  --critical: #dc2626; --major: #ea580c; --minor: #ca8a04; --observation: #6b7280;
+  --success: #16a34a; --info: #2563eb; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Inter', system-ui, -apple-system, sans-serif; max-width: 960px;
+  margin: 0 auto; padding: 2rem 1.5rem; color: var(--fg); line-height: 1.6; }
+h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+h2 { font-size: 1.2rem; margin-top: 2rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--border); }
+h3 { font-size: 1rem; margin-top: 1.25rem; color: #374151; }
+p, li { font-size: 0.9rem; }
+.meta { color: var(--muted); font-size: 0.8rem; }
+.cover { text-align: center; padding: 2rem 0; border-bottom: 3px solid var(--fg); margin-bottom: 2rem; }
+.cover .score-ring { display: inline-block; font-size: 3rem; font-weight: 800; padding: 0.5rem 1rem;
+  border-radius: 50%; width: 100px; height: 100px; line-height: 100px; margin: 1rem 0; }
+.score-high { background: #dcfce7; color: var(--success); border: 3px solid var(--success); }
+.score-med  { background: #fef3c7; color: var(--minor); border: 3px solid var(--minor); }
+.score-low  { background: #fef2f2; color: var(--critical); border: 3px solid var(--critical); }
+table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.85rem; }
+th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+th { background: #f9fafb; font-weight: 600; }
+.finding { border-left: 4px solid var(--muted); padding: 0.75rem 1rem; margin: 0.75rem 0;
+  background: #f9fafb; border-radius: 0 6px 6px 0; }
+.finding.resolved { border-left-color: var(--success); background: #f0fdf4; }
+.finding.severity-critical { border-left-color: var(--critical); background: #fef2f2; }
+.finding.severity-major { border-left-color: var(--major); background: #fff7ed; }
+.finding.severity-minor { border-left-color: var(--minor); background: #fefce8; }
+.finding.severity-observation { border-left-color: var(--observation); background: #f9fafb; }
+.sev { font-weight: 700; text-transform: uppercase; font-size: 0.7rem; padding: 2px 6px;
+  border-radius: 3px; display: inline-block; }
+.sev-critical { background: #fee2e2; color: var(--critical); }
+.sev-major { background: #ffedd5; color: var(--major); }
+.sev-minor { background: #fef9c3; color: var(--minor); }
+.sev-observation { background: #f3f4f6; color: var(--observation); }
+.hitl { font-size: 0.75rem; padding: 1px 5px; border-radius: 3px; }
+.hitl-needs_review { background: #fef3c7; color: #92400e; }
+.hitl-approved { background: #dcfce7; color: #166534; }
+.hitl-user_rejected { background: #fee2e2; color: #991b1b; }
+.hitl-user_modified { background: #e0e7ff; color: #3730a3; }
+.reasoning-block { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #eff6ff;
+  border-left: 3px solid var(--info); border-radius: 0 4px 4px 0; font-size: 0.82rem; }
+.evidence-block { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #f9fafb;
+  border-left: 3px solid var(--minor); border-radius: 0 4px 4px 0; font-style: italic; font-size: 0.82rem; }
+.section { margin-top: 1.5rem; }
+ol, ul { padding-left: 1.5rem; margin: 0.5rem 0; }
+.page-break { page-break-before: always; }
+@media print { body { max-width: 100%; padding: 1rem; } .page-break { break-before: page; } }
+</style>"""
+
+
+def _format_page_ranges(pages: list) -> str:
+    """Collapse consecutive page numbers into ranges for the export."""
+    if not pages:
+        return ""
+    nums = sorted(set(int(p) for p in pages if isinstance(p, int) or (isinstance(p, str) and p.isdigit())))
+    if not nums:
+        return ""
+    ranges: list[str] = []
+    start = end = nums[0]
+    for n in nums[1:]:
+        if n == end + 1:
+            end = n
+        else:
+            ranges.append(f"{start}" if start == end else f"{start}–{end}")
+            start = end = n
+    ranges.append(f"{start}" if start == end else f"{start}–{end}")
+    return ", ".join(ranges)
+
+
+def _score_class(score: float) -> str:
+    if score >= 75:
+        return "score-high"
+    if score >= 45:
+        return "score-med"
+    return "score-low"
+
+
+@router.get("/{doc_id}/export")
+async def export_compliance_report(
+    doc_id: str,
+    format: str = Query("html", pattern="^(md|html)$"),
+):
+    """Export the compliance report as HTML or Markdown."""
+    report = _load_report(doc_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    stem = Path(report.get("filename", doc_id)).stem
+
+    if format == "md":
+        md_content = _build_report_markdown(report)
+        return Response(
+            content=md_content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{stem}_compliance.md"'},
+        )
+
+    html_doc = _build_report_html(report, stem)
+    return Response(
+        content=html_doc,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{stem}_compliance.html"'},
+    )
+
+
+def _esc(text: object) -> str:
+    """HTML escape, safe for None and non-string values."""
+    from html import escape
+    if text is None:
+        return ""
+    return escape(str(text))
+
+
+def _build_report_html(report: dict, stem: str) -> str:
+    """Build a professional HTML compliance report."""
+    score = report.get("overall_score", 0)
+    summary = report.get("executive_summary", {})
+    sev = report.get("severity_counts", {})
+    trail = report.get("audit_trail", {})
+    methodology = report.get("score_methodology", {})
+
+    h = []
+    h.append(f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
+    h.append(f"<title>{_esc(stem)} — Compliance Audit Report</title>")
+    h.append(_EXPORT_CSS)
+    h.append("</head><body>")
+
+    # --- Cover ---
+    h.append('<div class="cover">')
+    h.append(f"<h1>Compliance Audit Report</h1>")
+    h.append(f'<p class="meta">{_esc(report.get("filename", stem))} &mdash; '
+             f'{_esc(report.get("document_type", ""))} &mdash; '
+             f'{report.get("total_pages", "?")} pages</p>')
+    h.append(f'<p class="meta">Generated: {_esc(str(report.get("generated_at", "")))}</p>')
+    h.append(f'<div class="score-ring {_score_class(score)}">{score:.0f}</div>')
+    h.append(f'<p class="meta">Overall Compliance Score (out of 100)</p>')
+    h.append("</div>")
+
+    # --- Executive Summary ---
+    if summary:
+        h.append("<h2>Executive Summary</h2>")
+        if summary.get("overall_assessment"):
+            h.append(f'<p>{_esc(summary["overall_assessment"])}</p>')
+
+        if summary.get("strengths"):
+            h.append("<h3>Strengths</h3><ul>")
+            for s in summary["strengths"]:
+                h.append(f"<li>{_esc(s)}</li>")
+            h.append("</ul>")
+
+        if summary.get("key_risks"):
+            h.append("<h3>Key Risks</h3><ul>")
+            for r in summary["key_risks"]:
+                h.append(f"<li>{_esc(r)}</li>")
+            h.append("</ul>")
+
+        if summary.get("priority_actions"):
+            h.append("<h3>Priority Actions</h3><ol>")
+            for a in summary["priority_actions"]:
+                h.append(f"<li>{_esc(a)}</li>")
+            h.append("</ol>")
+
+    # --- Severity Distribution ---
+    if sev:
+        h.append("<h2>Severity Distribution</h2>")
+        h.append("<table><tr><th>Severity</th><th>Count</th></tr>")
+        for s in ["critical", "major", "minor", "observation"]:
+            cnt = sev.get(s, 0)
+            if cnt:
+                h.append(f'<tr><td><span class="sev sev-{s}">{s.upper()}</span></td><td>{cnt}</td></tr>')
+        total = sum(sev.values())
+        h.append(f'<tr><th>Total</th><th>{total}</th></tr>')
+        h.append("</table>")
+
+    # --- Per-Agent Breakdown ---
+    for ar in report.get("agent_reports", []):
+        agent_name = ar.get("agent_display", ar.get("agent", "?"))
+        h.append(f'<h2 class="page-break">{_esc(agent_name)}</h2>')
+        h.append(f'<p>Score: <strong>{ar.get("score", "N/A")}/100</strong> &mdash; '
+                 f'Rules: {ar.get("total_rules", 0)} &mdash; '
+                 f'Findings: {ar.get("total_findings", 0)}</p>')
+
+        cat_scores = ar.get("category_scores", [])
+        if cat_scores:
+            h.append("<table><tr><th>Category</th><th>Score</th>"
+                     "<th>Compliant</th><th>Non-Compliant</th><th>N/A</th></tr>")
+            for cs in cat_scores:
+                h.append(f'<tr><td>{_esc(cs.get("category_display", ""))}</td>'
+                         f'<td>{cs.get("score", "")}/100</td>'
+                         f'<td>{cs.get("compliant", 0)}</td>'
+                         f'<td>{cs.get("non_compliant", 0)}</td>'
+                         f'<td>{cs.get("not_applicable", 0)}</td></tr>')
+            h.append("</table>")
+
+        findings = ar.get("findings", [])
+        if findings:
+            h.append(f"<h3>Findings ({len(findings)})</h3>")
+            for f in findings:
+                sev_cls = f.get("severity", "observation")
+                resolved_cls = " resolved" if f.get("resolved") else ""
+                hitl = f.get("hitl_status", "")
+                hitl_label = {
+                    "needs_review": "Needs Review",
+                    "auto_approved": "Auto Approved",
+                    "user_approved": "Approved",
+                    "user_rejected": "Rejected",
+                    "user_modified": "Modified",
+                }.get(hitl, hitl)
+                hitl_cls = "approved" if "approved" in hitl else hitl
+
+                pages_str = _format_page_ranges(f.get("page_numbers", []))
+
+                h.append(f'<div class="finding severity-{sev_cls}{resolved_cls}">')
+                hitl_html = f' &mdash; <span class="hitl hitl-{hitl_cls}">{_esc(hitl_label)}</span>' if hitl else ""
+                resolved_html = "  &#10003; Resolved" if f.get("resolved") else ""
+                h.append(
+                    f'<p><strong>{_esc(f.get("rule_id", ""))}</strong> '
+                    f'<span class="sev sev-{sev_cls}">{sev_cls.upper()}</span>'
+                    f'{hitl_html}{resolved_html}</p>'
+                )
+
+                desc = f.get("description", "")
+                if desc:
+                    h.append(f"<p>{_esc(desc)}</p>")
+
+                reasoning = f.get("reasoning", "")
+                if reasoning:
+                    h.append(f'<div class="reasoning-block"><strong>Reasoning:</strong> {_esc(reasoning)}</div>')
+
+                evidence = f.get("evidence", "")
+                if evidence:
+                    h.append(f'<div class="evidence-block"><strong>Evidence:</strong> &ldquo;{_esc(evidence)}&rdquo;</div>')
+
+                rec = f.get("recommendation", "")
+                if rec:
+                    h.append(f'<p><strong>Recommendation:</strong> {_esc(rec)}</p>')
+
+                if pages_str:
+                    h.append(f'<p class="meta">Pages: {pages_str}</p>')
+
+                h.append("</div>")
+
+    # --- Skipped Agents ---
+    skipped = report.get("skipped_agents", [])
+    if skipped:
+        h.append("<h2>Skipped Agents</h2><ul>")
+        for s in skipped:
+            h.append(f'<li><strong>{_esc(s.get("category", ""))}</strong>: {_esc(s.get("reason", ""))}</li>')
+        h.append("</ul>")
+
+    # --- Audit Trail ---
+    if trail:
+        h.append('<h2>Audit Trail &amp; Methodology</h2>')
+        h.append("<table>")
+        h.append(f'<tr><td>Duration</td><td>{trail.get("duration_seconds", 0):.1f}s</td></tr>')
+        h.append(f'<tr><td>LLM Calls</td><td>{trail.get("total_llm_calls", 0)}</td></tr>')
+        h.append(f'<tr><td>Rules Evaluated</td><td>{trail.get("total_rules_evaluated", 0)}</td></tr>')
+        h.append(f'<tr><td>Evaluator Model</td><td>{_esc(trail.get("evaluator_model", "N/A"))}</td></tr>')
+        h.append(f'<tr><td>Orchestrator Model</td><td>{_esc(trail.get("orchestrator_model", "N/A"))}</td></tr>')
+        h.append("</table>")
+
+    if methodology:
+        h.append(f'<p class="meta" style="margin-top:0.5rem">'
+                 f'<strong>Scoring formula:</strong> {_esc(methodology.get("formula", ""))}</p>')
+
+    h.append("</body></html>")
+    return "\n".join(h)
+
+
+def _build_report_markdown(report: dict) -> str:
+    """Build a markdown version of the compliance report."""
+    lines: list[str] = []
+    lines.append(f"# Compliance Audit Report — {report.get('filename', 'Document')}")
+    lines.append("")
+
+    summary = report.get("executive_summary", {})
+    lines.append(f"**Overall Score: {report.get('overall_score', 'N/A')}/100**")
+    lines.append("")
+    if summary.get("overall_assessment"):
+        lines.append(f"## Executive Summary\n\n{summary['overall_assessment']}")
+        lines.append("")
+
+    if summary.get("strengths"):
+        lines.append("### Strengths\n")
+        for s in summary["strengths"]:
+            lines.append(f"- {s}")
+        lines.append("")
+
+    if summary.get("key_risks"):
+        lines.append("### Key Risks\n")
+        for risk in summary["key_risks"]:
+            lines.append(f"- {risk}")
+        lines.append("")
+
+    if summary.get("priority_actions"):
+        lines.append("### Priority Actions\n")
+        for i, action in enumerate(summary["priority_actions"], 1):
+            lines.append(f"{i}. {action}")
+        lines.append("")
+
+    sev = report.get("severity_counts", {})
+    if sev:
+        lines.append("## Severity Breakdown\n")
+        lines.append("| Severity | Count |")
+        lines.append("|----------|-------|")
+        for s in ["critical", "major", "minor", "observation"]:
+            if sev.get(s, 0):
+                lines.append(f"| {s.title()} | {sev[s]} |")
+        lines.append("")
+
+    for ar in report.get("agent_reports", []):
+        lines.append(f"## {ar.get('agent_display', ar.get('agent', '?'))}")
+        lines.append(f"\nScore: **{ar.get('score', 'N/A')}/100** | "
+                      f"Rules: {ar.get('total_rules', 0)} | "
+                      f"Findings: {ar.get('total_findings', 0)}\n")
+
+        for cs in ar.get("category_scores", []):
+            lines.append(f"### {cs.get('category_display', cs.get('category_id', '?'))}")
+            lines.append(f"Score: {cs.get('score', 'N/A')}/100 | "
+                          f"Compliant: {cs.get('compliant', 0)} | "
+                          f"Non-compliant: {cs.get('non_compliant', 0)}\n")
+
+        if ar.get("findings"):
+            lines.append("### Findings\n")
+            for f in ar["findings"]:
+                pages = _format_page_ranges(f.get("page_numbers", []))
+                resolved = " [Resolved]" if f.get("resolved") else ""
+                hitl = f.get("hitl_status", "")
+                lines.append(f"**{f.get('rule_id', '')}** [{f.get('severity', '').upper()}]{resolved}")
+                if hitl:
+                    lines.append(f"  *Review: {hitl}*")
+                desc = f.get("description", "")
+                if desc:
+                    lines.append(f"  {desc}")
+                reasoning = f.get("reasoning", "")
+                if reasoning:
+                    lines.append(f"  > **Reasoning:** {reasoning}")
+                evidence = f.get("evidence", "")
+                if evidence:
+                    lines.append(f'  > **Evidence:** "{evidence}"')
+                rec = f.get("recommendation", "")
+                if rec:
+                    lines.append(f"  **Recommendation:** {rec}")
+                if pages:
+                    lines.append(f"  Pages: {pages}")
+                lines.append("")
+
+    skipped = report.get("skipped_agents", [])
+    if skipped:
+        lines.append("## Skipped Agents\n")
+        for s in skipped:
+            lines.append(f"- **{s.get('category', '?')}**: {s.get('reason', '')}")
+        lines.append("")
+
+    trail = report.get("audit_trail", {})
+    if trail:
+        lines.append("## Audit Trail\n")
+        lines.append(f"- Duration: {trail.get('duration_seconds', 0):.1f}s")
+        lines.append(f"- LLM calls: {trail.get('total_llm_calls', 0)}")
+        lines.append(f"- Rules evaluated: {trail.get('total_rules_evaluated', 0)}")
+        lines.append(f"- Evaluator model: {trail.get('evaluator_model', 'N/A')}")
+        lines.append(f"- Orchestrator model: {trail.get('orchestrator_model', 'N/A')}")
+
+    methodology = report.get("score_methodology", {})
+    if methodology:
+        lines.append(f"\n*Scoring: {methodology.get('formula', '')}*")
+
+    return "\n".join(lines)
+
+
+# ── Segmentation endpoints ────────────────────────────────────
+
+
+@router.get("/{doc_id}/segmentation")
+async def get_segmentation(doc_id: str):
+    """Return the stored document segmentation."""
+    d = _doc_dir(doc_id)
+    seg_path = d / "segmentation.json"
+    if not seg_path.exists():
+        raise HTTPException(status_code=404, detail="No segmentation found. Run compliance audit first.")
+    return json.loads(seg_path.read_text(encoding="utf-8"))
+
+
+@router.put("/{doc_id}/segmentation")
+async def update_segmentation(doc_id: str, body: dict):
+    """Update segmentation (user edits section boundaries/types)."""
+    d = _doc_dir(doc_id)
+    seg_path = d / "segmentation.json"
+    seg_path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
+    return {"status": "updated"}
+
+
+@router.post("/{doc_id}/segment")
+async def trigger_segmentation(doc_id: str):
+    """Force re-segmentation via LLM."""
+    d = _doc_dir(doc_id)
+    result_path = d / "result.json"
+    if not result_path.exists():
+        raise HTTPException(status_code=400, detail="Document must be processed first.")
+
+    task_manager.spawn(f"segmentation:{doc_id}", _run_segmentation(doc_id, d), replace=True)
+    return {"status": "started"}
+
+
+async def _run_segmentation(doc_id: str, doc_dir: Path) -> None:
+    """Background task for re-segmentation."""
+    try:
+        result_path = doc_dir / "result.json"
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+
+        extractions = data.get("extractions", [])
+        if not extractions:
+            raw_md = data.get("raw_markdown", {})
+            for pk, md_text in sorted(raw_md.items(), key=lambda x: int(x[0]) if str(x[0]).isdigit() else 0):
+                pn = int(pk) if str(pk).isdigit() else 0
+                extractions.append({"page_num": pn, "markdown": md_text})
+
+        from app.compliance.segmentation import DocumentSegmenter, store_segmentation
+        from app.config.container import get_container
+
+        container = get_container()
+        llm = container.compliance_cross_page_llm
+        segmenter = DocumentSegmenter(llm)
+        seg = await segmenter.segment(
+            extractions,
+            data.get("key_value_pairs", []),
+            data.get("filename", ""),
+            data.get("total_pages", len(extractions)),
+        )
+        store_segmentation(doc_dir, seg)
+
+        from app.api.websocket import manager as ws_manager
+        await ws_manager.broadcast(doc_id, {
+            "type": "compliance_progress",
+            "phase": "segmentation",
+            "status": "complete",
+            "sections_count": len(seg.sections),
+        })
+    except Exception:
+        logger.exception("Segmentation failed for %s", doc_id)
+
+
+# ── Discovered rules endpoints ────────────────────────────────
+
+
+@router.get("/{doc_id}/discovered-rules")
+async def get_discovered_rules(doc_id: str):
+    """Return auto-discovered cross-page rules for this document."""
+    d = _doc_dir(doc_id)
+    path = d / "auto_discovered_rules.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.post("/{doc_id}/discovered-rules/{index}/promote")
+async def promote_discovered_rule(doc_id: str, index: int):
+    """Promote an auto-discovered rule to predefined (append to reconciliation_rules.md)."""
+    d = _doc_dir(doc_id)
+    path = d / "auto_discovered_rules.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="No discovered rules found.")
+
+    rules = json.loads(path.read_text(encoding="utf-8"))
+    if index < 0 or index >= len(rules):
+        raise HTTPException(status_code=404, detail=f"Rule index {index} out of range.")
+
+    rule = rules[index]
+    if rule.get("promoted"):
+        return {"status": "already_promoted"}
+
+    from app.compliance.rules.registry import get_registry, invalidate_registry
+
+    registry = get_registry()
+    sections_semantic = rule.get("sections_semantic", [])
+    section_tag = f" [sections: {', '.join(sections_semantic)}]" if sections_semantic else ""
+
+    registry.add_rule(
+        agent="reconciliation",
+        category="auto_promoted",
+        category_display="Auto-Promoted",
+        text=rule["description"] + section_tag,
+        severity_hint="observation",
+    )
+
+    rule["promoted"] = True
+    path.write_text(json.dumps(rules, indent=2, ensure_ascii=False), encoding="utf-8")
+    invalidate_registry()
+
+    return {"status": "promoted", "index": index}

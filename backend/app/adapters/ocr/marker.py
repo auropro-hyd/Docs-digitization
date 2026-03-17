@@ -56,7 +56,7 @@ class MarkerOCRAdapter:
         self._converter = PdfConverter(**kwargs)
         return self._converter
 
-    async def extract(self, pdf_path: str, pages: list[int] | None = None) -> OCRResult:
+    async def extract(self, pdf_path: str, pages: list[int] | None = None, progress_callback=None) -> OCRResult:
         converter = self._get_converter()
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, converter, pdf_path)

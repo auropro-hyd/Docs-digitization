@@ -1,55 +1,56 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { Toaster } from "sonner";
+import { ThemeProvider } from "@/providers/theme-provider";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Sidebar } from "@/components/common/nav";
+import { Header } from "@/components/common/header";
+import { CommandPalette } from "@/components/common/command-palette";
+import { MobileBottomNav, MobileNavSheet } from "@/components/common/mobile-nav";
+import { GlobalProcessingBar } from "@/components/common/global-processing-bar";
+import { MainContent } from "@/components/common/main-content";
 import "./globals.css";
-import Link from "next/link";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "Auto Transcription",
-  description: "End-to-end document digitalization platform",
+  title: "AutoTranscript | Document Intelligence Platform",
+  description: "Enterprise AI-powered document digitalization, extraction, and compliance review",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className={`${inter.className} bg-gray-50 text-gray-900 antialiased`}>
-        <div className="flex min-h-screen flex-col">
-          <header className="border-b border-gray-200 bg-white">
-            <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
-              <Link href="/" className="text-lg font-bold text-gray-900">
-                Auto Transcription
-              </Link>
-              <nav className="flex items-center gap-6">
-                <Link
-                  href="/"
-                  className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
-                >
-                  Upload
-                </Link>
-                <Link
-                  href="/documents"
-                  className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
-                >
-                  Documents
-                </Link>
-                <Link
-                  href="/review"
-                  className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
-                >
-                  Review
-                </Link>
-                <Link
-                  href="/compliance"
-                  className="text-sm font-medium text-gray-600 transition-colors hover:text-gray-900"
-                >
-                  Compliance
-                </Link>
-              </nav>
-            </div>
-          </header>
-          <main className="flex-1">{children}</main>
-        </div>
+    <html lang="en" className={inter.variable} suppressHydrationWarning>
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <ThemeProvider>
+          <TooltipProvider delayDuration={0}>
+            <Sidebar />
+            <MobileNavSheet />
+
+            <MainContent>
+              <Header />
+              <GlobalProcessingBar />
+              <main>
+                {children}
+              </main>
+            </MainContent>
+
+            <MobileBottomNav />
+            <CommandPalette />
+
+            <Toaster
+              position="bottom-right"
+              toastOptions={{
+                className: "bg-card text-card-foreground border-border shadow-lg",
+                style: { borderRadius: "12px", fontSize: "13px" },
+              }}
+            />
+          </TooltipProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

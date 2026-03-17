@@ -1,21 +1,25 @@
 "use client";
 
-import { cn } from "@/lib/utils";
 import type { ProcessingStatus } from "@/stores/document-store";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
-const STATUS_CONFIG: Record<ProcessingStatus, { label: string; color: string }> = {
-  idle: { label: "Ready", color: "bg-gray-400" },
-  uploading: { label: "Uploading...", color: "bg-blue-400 animate-pulse" },
-  ingested: { label: "Ingested", color: "bg-blue-500" },
-  marker_ocr_running: { label: "Running Marker OCR...", color: "bg-indigo-500 animate-pulse" },
-  azure_di_running: { label: "Running Azure DI...", color: "bg-indigo-500 animate-pulse" },
-  quality_scoring: { label: "Quality Scoring...", color: "bg-purple-500 animate-pulse" },
-  merging_results: { label: "Merging Results...", color: "bg-purple-500 animate-pulse" },
-  hitl_required: { label: "Review Required", color: "bg-amber-500" },
-  auto_approved: { label: "Auto-Approved", color: "bg-green-500" },
-  reviewed: { label: "Reviewed", color: "bg-green-500" },
-  completed: { label: "Completed", color: "bg-green-600" },
-  error: { label: "Error", color: "bg-red-500" },
+const STATUS_CONFIG: Record<
+  ProcessingStatus,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string; pulse?: boolean }
+> = {
+  idle: { label: "Ready", variant: "secondary", className: "bg-muted text-muted-foreground" },
+  uploading: { label: "Uploading", variant: "outline", className: "border-info text-info", pulse: true },
+  ingested: { label: "Ingested", variant: "outline", className: "border-info text-info", pulse: true },
+  marker_ocr_running: { label: "Marker OCR", variant: "outline", className: "border-chart-2 text-chart-2", pulse: true },
+  azure_di_running: { label: "Azure DI", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
+  quality_scoring: { label: "Scoring", variant: "outline", className: "border-warning text-warning", pulse: true },
+  merging_results: { label: "Merging", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
+  hitl_required: { label: "Review Required", variant: "outline", className: "border-warning text-warning" },
+  auto_approved: { label: "Auto-Approved", variant: "outline", className: "border-success text-success" },
+  reviewed: { label: "Reviewed", variant: "outline", className: "border-success text-success" },
+  completed: { label: "Complete", variant: "outline", className: "border-success text-success" },
+  error: { label: "Error", variant: "destructive", className: "" },
 };
 
 interface StatusIndicatorProps {
@@ -27,9 +31,11 @@ export function StatusIndicator({ status, className }: StatusIndicatorProps) {
   const config = STATUS_CONFIG[status] || STATUS_CONFIG.idle;
 
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <span className={cn("h-2.5 w-2.5 rounded-full", config.color)} />
-      <span className="text-sm font-medium text-gray-700">{config.label}</span>
-    </div>
+    <Badge variant={config.variant} className={cn("gap-1.5 text-[11px] font-medium", config.className, className)}>
+      <span
+        className={cn("size-1.5 rounded-full bg-current", config.pulse && "animate-pulse")}
+      />
+      {config.label}
+    </Badge>
   );
 }

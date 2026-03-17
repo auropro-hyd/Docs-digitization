@@ -1,0 +1,1089 @@
+<mxfile host="65bd71144e" pages="4">
+    <diagram id="arch-overview" name="System Architecture">
+        <mxGraphModel dx="1250" dy="821" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1400" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title1" value="&lt;b&gt;Auto Transcription — System Architecture&lt;/b&gt;" style="text;html=1;fontSize=20;fontColor=#1A237E;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="20" width="800" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="fe-group" value="&lt;b&gt;FRONTEND&lt;/b&gt;  (Next.js 16 / React 19 / Tailwind v4 / Shadcn UI)" style="swimlane;startSize=30;fillColor=#E8EAF6;strokeColor=#7986CB;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#283593;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="80" width="1520" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="page-dash" value="&lt;b&gt;Dashboard&lt;/b&gt;&#10;/ (Upload &amp; Status)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="fe-group" vertex="1">
+                    <mxGeometry x="30" y="45" width="140" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="page-docs" value="&lt;b&gt;Documents&lt;/b&gt;&#10;/documents&#10;(auto-refresh on focus)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="fe-group" vertex="1">
+                    <mxGeometry x="185" y="45" width="150" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="page-review" value="&lt;b&gt;Review (HITL)&lt;/b&gt;&#10;/review?doc=&amp;page=&#10;completion banner → CTA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="fe-group" vertex="1">
+                    <mxGeometry x="350" y="45" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="page-compliance" value="&lt;b&gt;Compliance Audit&lt;/b&gt;&#10;/compliance?doc=&#10;cancel confirm, export" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="fe-group" vertex="1">
+                    <mxGeometry x="535" y="45" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="fe-context-bar" value="DocumentContextBar&#10;(cross-page nav)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#42A5F5;fontSize=8;fontColor=#1565C0;" parent="fe-group" vertex="1">
+                    <mxGeometry x="350" y="105" width="165" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="store-doc" value="useDocumentStore&#10;(Zustand)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=8;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;fontColor=#4527A0;" parent="fe-group" vertex="1">
+                    <mxGeometry x="790" y="40" width="120" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="store-compliance" value="useComplianceStore&#10;(Zustand)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=8;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;fontColor=#4527A0;" parent="fe-group" vertex="1">
+                    <mxGeometry x="930" y="40" width="120" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="store-layout" value="useLayoutStore&#10;(Zustand)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=8;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;fontColor=#4527A0;" parent="fe-group" vertex="1">
+                    <mxGeometry x="1070" y="40" width="110" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="ws-client" value="WebSocket Client&#10;DocumentWebSocket&#10;(auto-reconnect, ping)" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=9;size=12;fontColor=#BF360C;" parent="fe-group" vertex="1">
+                    <mxGeometry x="1230" y="40" width="170" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="api-lib" value="lib/api.ts — 25+ API functions  |  hooks: useWebSocket, useMediaQuery, useLocalStorage, useHydrated" style="text;html=1;fontSize=9;fontColor=#546E7A;align=center;" parent="fe-group" vertex="1">
+                    <mxGeometry x="30" y="145" width="750" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="api-lib-detail" value="uploadDocument | processDocument | getDocument | getReviewPages | approveComponent | runComplianceReview | reviewComplianceFinding (approve/reject/modify/reset) | getAgentsWithMeta | addRule | ..." style="text;html=1;fontSize=8;fontColor=#78909C;align=left;" parent="fe-group" vertex="1">
+                    <mxGeometry x="30" y="163" width="1400" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="api-group" value="&lt;b&gt;API LAYER&lt;/b&gt;  (FastAPI + WebSocket)" style="swimlane;startSize=30;fillColor=#E0F2F1;strokeColor=#4DB6AC;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#00695C;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="320" width="1520" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="route-docs" value="&lt;b&gt;/api/documents&lt;/b&gt;&#10;upload, process,&#10;list, get, delete,&#10;serve PDF, process-file" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#26A69A;fontSize=9;fontColor=#00695C;" parent="api-group" vertex="1">
+                    <mxGeometry x="30" y="40" width="160" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="route-review" value="&lt;b&gt;/api/review&lt;/b&gt;&#10;pages, approve,&#10;edit, flag,&#10;component actions/bulk,&#10;export (md/html)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#26A69A;fontSize=9;fontColor=#00695C;" parent="api-group" vertex="1">
+                    <mxGeometry x="220" y="40" width="170" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="route-compliance" value="&lt;b&gt;/api/compliance&lt;/b&gt;&#10;run, cancel, report, status,&#10;resolve, HITL review&#10;(approve/reject/modify/reset),&#10;hitl-summary, export,&#10;segmentation, discovered-rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#26A69A;fontSize=9;fontColor=#00695C;" parent="api-group" vertex="1">
+                    <mxGeometry x="420" y="35" width="190" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="route-rules" value="&lt;b&gt;/api/rules&lt;/b&gt;&#10;CRUD agents,&#10;CRUD rules,&#10;bulk-add, categories" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#26A69A;fontSize=9;fontColor=#00695C;" parent="api-group" vertex="1">
+                    <mxGeometry x="640" y="40" width="160" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="route-ws" value="&lt;b&gt;WebSocket /ws/{doc_id}&lt;/b&gt;&#10;ConnectionManager&#10;(broadcast, ping/pong,&#10;exponential backoff)" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=9;size=12;fontColor=#BF360C;" parent="api-group" vertex="1">
+                    <mxGeometry x="840" y="35" width="200" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="bg-tasks" value="&lt;b&gt;BackgroundTasks&lt;/b&gt;&#10;TaskManager&#10;(process, compliance,&#10;spawn, cancel, shutdown)" style="shape=parallelogram;perimeter=parallelogramPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=15;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;fontColor=#37474F;" parent="api-group" vertex="1">
+                    <mxGeometry x="1090" y="40" width="190" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="container" value="&lt;b&gt;DI Container&lt;/b&gt;&#10;container.py&#10;(lazy singletons,&#10;3 LLM providers:&#10;evaluator / orchestrator&#10;/ cross_page)" style="shape=process;whiteSpace=wrap;html=1;size=0.07;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;fontColor=#37474F;" parent="api-group" vertex="1">
+                    <mxGeometry x="1320" y="35" width="160" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="proc-group" value="&lt;b&gt;PROCESSING LAYER&lt;/b&gt;  (LangGraph Workflows + MemorySaver Checkpointer)" style="swimlane;startSize=30;fillColor=#FFF8E1;strokeColor=#FFB74D;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="520" width="740" height="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-ingest" value="ingest_document" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=10;fontStyle=1;fontColor=#E65100;" parent="proc-group" vertex="1">
+                    <mxGeometry x="30" y="45" width="130" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-route1" value="route_after_ingest" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="proc-group" vertex="1">
+                    <mxGeometry x="200" y="35" width="120" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-azocr" value="run_azure_di_ocr&#10;(Layout model)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;fontColor=#1565C0;" parent="proc-group" vertex="1">
+                    <mxGeometry x="360" y="35" width="130" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-marker" value="run_marker_ocr&#10;(offline)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                    <mxGeometry x="360" y="85" width="130" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-quality" value="run_quality_scoring&#10;(Docling)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                    <mxGeometry x="360" y="130" width="130" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-merge-az" value="merge_azure_di&#10;_results&#10;(HTML tables,&#10;signatures, KV pairs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=8;fontColor=#E65100;" parent="proc-group" vertex="1">
+                    <mxGeometry x="530" y="30" width="140" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-merge-mk" value="merge_marker&#10;_results" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                    <mxGeometry x="530" y="95" width="140" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-conf" value="route_by&#10;_confidence" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="proc-group" vertex="1">
+                    <mxGeometry x="30" y="140" width="110" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-autoapprove" value="auto_approve&#10;(≥80% conf)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=9;fontColor=#2E7D32;" parent="proc-group" vertex="1">
+                    <mxGeometry x="200" y="135" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-hitl" value="hitl_review&#10;(&lt;60% conf)&#10;interrupt()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;fontSize=9;fontColor=#D84315;" parent="proc-group" vertex="1">
+                    <mxGeometry x="200" y="185" width="120" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-store" value="store_results&#10;→ result.json&#10;→ document.json" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=8;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=9;fontColor=#2E7D32;" parent="proc-group" vertex="1">
+                    <mxGeometry x="400" y="150" width="130" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="node-error" value="handle_error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontColor=#C62828;" parent="proc-group" vertex="1">
+                    <mxGeometry x="580" y="160" width="100" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-ingest" target="node-route1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="azure_di" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="proc-group" source="node-route1" target="node-azocr" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="marker" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="proc-group" source="node-route1" target="node-marker" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-azocr" target="node-merge-az" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e4b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="proc-group" source="node-marker" target="node-quality" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e4c" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="proc-group" source="node-quality" target="node-merge-mk" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5a" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-merge-az" target="node-conf" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="600" y="170"/>
+                            <mxPoint x="690" y="170"/>
+                            <mxPoint x="690" y="240"/>
+                            <mxPoint x="85" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e5b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="proc-group" source="node-merge-mk" target="node-conf" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="600" y="112"/>
+                            <mxPoint x="690" y="112"/>
+                            <mxPoint x="690" y="240"/>
+                            <mxPoint x="85" y="240"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e6" value="≥ 80%" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#2E7D32;strokeColor=#78909C;" parent="proc-group" source="node-conf" target="node-autoapprove" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e7" value="&lt; 60%" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#D84315;strokeColor=#78909C;" parent="proc-group" source="node-conf" target="node-hitl" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-autoapprove" target="node-store" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-hitl" target="node-store" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-group" value="&lt;b&gt;COMPLIANCE LAYER&lt;/b&gt;  (Agentic Pipeline)" style="swimlane;startSize=30;fillColor=#FCE4EC;strokeColor=#EF9A9A;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="800" y="520" width="760" height="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-orch" value="&lt;b&gt;Orchestrator&lt;/b&gt;&#10;(GPT-4.1-mini)&#10;Doc type → route" style="shape=step;perimeter=stepPerimeter;whiteSpace=wrap;html=1;fixedSize=1;size=15;fillColor=#F8BBD0;strokeColor=#EC407A;fontSize=9;fontColor=#880E4F;" parent="comp-group" vertex="1">
+                    <mxGeometry x="15" y="45" width="125" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-seg" value="&lt;b&gt;Segmenter&lt;/b&gt;&#10;LLM-based section&#10;identification" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8BBD0;strokeColor=#EC407A;fontSize=8;fontColor=#880E4F;" parent="comp-group" vertex="1">
+                    <mxGeometry x="15" y="105" width="125" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-alcoa" value="ALCOA+&#10;Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;fontStyle=1;fontColor=#1565C0;" parent="comp-group" vertex="1">
+                    <mxGeometry x="180" y="40" width="85" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-gmp" value="GMP&#10;Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;fontStyle=1;fontColor=#2E7D32;" parent="comp-group" vertex="1">
+                    <mxGeometry x="180" y="75" width="85" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-check" value="Checklist&#10;Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FFD54F;fontSize=9;fontStyle=1;fontColor=#F57F17;" parent="comp-group" vertex="1">
+                    <mxGeometry x="180" y="110" width="85" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-sop" value="SOP&#10;Agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;fontStyle=1;fontColor=#4527A0;" parent="comp-group" vertex="1">
+                    <mxGeometry x="180" y="145" width="85" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-recon" value="Reconciliation&#10;Agent&#10;(cross-page)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=8;fontStyle=1;fontColor=#C62828;" parent="comp-group" vertex="1">
+                    <mxGeometry x="175" y="182" width="95" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-eval" value="&lt;b&gt;RuleBatchEvaluator&lt;/b&gt;&#10;(GPT-4.1-mini)&#10;&#10;batch × page fan-out&#10;asyncio.Semaphore&#10;retry + backoff" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;fontColor=#BF360C;" parent="comp-group" vertex="1">
+                    <mxGeometry x="310" y="50" width="150" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-crosspage" value="&lt;b&gt;Cross-Page Subsystem&lt;/b&gt;&#10;SectionResolver&#10;CrossPageEvaluator&#10;AutoDiscovery" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=8;fontColor=#C62828;" parent="comp-group" vertex="1">
+                    <mxGeometry x="310" y="150" width="150" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-report" value="&lt;b&gt;Report Assembly&lt;/b&gt;&#10;- Deduplicate&#10;- Compute scores&#10;- HITL thresholds&#10;- Executive summary&#10;  (LLM-generated)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;fontColor=#2E7D32;" parent="comp-group" vertex="1">
+                    <mxGeometry x="510" y="45" width="140" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-result" value="compliance&#10;_result.json" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=8;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=9;fontColor=#2E7D32;" parent="comp-group" vertex="1">
+                    <mxGeometry x="590" y="155" width="100" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce0" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-orch" target="comp-seg" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-seg" target="comp-alcoa" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="155" y="127"/>
+                            <mxPoint x="155" y="55"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ce2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-seg" target="comp-gmp" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="155" y="127"/>
+                            <mxPoint x="155" y="90"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ce3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-seg" target="comp-check" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-seg" target="comp-sop" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="155" y="127"/>
+                            <mxPoint x="155" y="160"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ce5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-alcoa" target="comp-eval" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce6" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-gmp" target="comp-eval" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce7" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-check" target="comp-eval" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-sop" target="comp-eval" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce8b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="comp-group" source="comp-recon" target="comp-crosspage" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce9" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-eval" target="comp-report" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce9b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="comp-group" source="comp-crosspage" target="comp-report" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ce10" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="comp-group" source="comp-report" target="comp-result" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ports-group" value="&lt;b&gt;PORTS &amp; ADAPTERS&lt;/b&gt;  (Hexagonal Architecture)" style="swimlane;startSize=25;fillColor=#F3E5F5;strokeColor=#CE93D8;rounded=1;arcSize=8;fontSize=11;fontStyle=1;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="830" width="1520" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="port-ocr" value="&lt;b&gt;OCREngine&lt;/b&gt; (port)&#10;→ AzureDIOCRAdapter&#10;→ MarkerOCRAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                    <mxGeometry x="30" y="35" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="port-llm" value="&lt;b&gt;LLMProvider&lt;/b&gt; (port)&#10;→ AzureOpenAILLMAdapter&#10;→ OllamaLLMAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                    <mxGeometry x="230" y="35" width="180" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="port-storage" value="&lt;b&gt;DocumentStore&lt;/b&gt; (port)&#10;→ FileSystemAdapter&#10;→ AzureBlobAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                    <mxGeometry x="440" y="35" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="port-notify" value="&lt;b&gt;NotificationPort&lt;/b&gt; (port)&#10;→ WebSocketNotifyAdapter&#10;→ PgNotifyAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                    <mxGeometry x="640" y="35" width="180" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="port-quality" value="&lt;b&gt;QualityScorer&lt;/b&gt; (port)&#10;→ DoclingQualityAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                    <mxGeometry x="850" y="35" width="170" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-group" value="&lt;b&gt;EXTERNAL SERVICES &amp; STORAGE&lt;/b&gt;" style="swimlane;startSize=25;fillColor=#EDE7F6;strokeColor=#9575CD;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="970" width="1520" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-azdi" value="&lt;b&gt;Azure Document&#10;Intelligence&lt;/b&gt;&#10;(Layout model)&#10;ocrHighRes, tables,&#10;keyValue, signatures" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;fontColor=#1565C0;" parent="ext-group" vertex="1">
+                    <mxGeometry x="20" y="30" width="195" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-azoai" value="&lt;b&gt;Azure OpenAI&lt;/b&gt;&#10;GPT-4.1-mini (evaluator)&#10;GPT-4.1-mini (orchestrator)&#10;gpt-4o (fallback)&#10;RPM limiting + retry" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;fontColor=#BF360C;" parent="ext-group" vertex="1">
+                    <mxGeometry x="230" y="30" width="220" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-ollama" value="&lt;b&gt;Ollama (optional)&lt;/b&gt;&#10;gemma2:9b&#10;Local LLM" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="ext-group" vertex="1">
+                    <mxGeometry x="465" y="30" width="150" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-pg" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&#10;asyncpg&#10;LISTEN/NOTIFY" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#4DB6AC;fontSize=9;fontColor=#00695C;" parent="ext-group" vertex="1">
+                    <mxGeometry x="630" y="30" width="150" height="85" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-fs" value="&lt;b&gt;Filesystem / Azure Blob&lt;/b&gt;&#10;data/documents/{doc_id}/&#10;├── *.pdf&#10;├── result.json&#10;├── document.json&#10;├── compliance_result.json&#10;├── segmentation.json&#10;├── dependency_tags.json&#10;├── auto_discovered_rules.json&#10;└── *.lock (processing, compliance)" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=8;align=left;fontColor=#2E7D32;" parent="ext-group" vertex="1">
+                    <mxGeometry x="800" y="20" width="230" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-rules" value="&lt;b&gt;Rule Files&lt;/b&gt;&#10;compliance/rules/&#10;├── alcoa_rules.md&#10;├── gmp_rules.md&#10;├── checklist_rules.md&#10;├── sop_rules.md&#10;├── reconciliation_rules.md&#10;└── agents_meta.json" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=8;align=left;fontColor=#2E7D32;" parent="ext-group" vertex="1">
+                    <mxGeometry x="1050" y="20" width="190" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ext-config" value="&lt;b&gt;Configuration&lt;/b&gt;&#10;Priority: env → .env → YAML → defaults&#10;Pydantic AppSettings&#10;AT_ prefix, __ nesting&#10;8 config blocks" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=8;align=left;fontColor=#37474F;" parent="ext-group" vertex="1">
+                    <mxGeometry x="1260" y="20" width="200" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="x1" value="REST + WS" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;fontSize=9;fontColor=#546E7A;" parent="1" source="fe-group" target="api-group" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x2" value="Background" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;fontSize=9;fontColor=#546E7A;" parent="1" source="api-group" target="proc-group" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x3" value="Background" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;fontSize=9;fontColor=#546E7A;" parent="1" source="api-group" target="comp-group" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="x4" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;fontSize=9;fontColor=#546E7A;" parent="1" source="api-group" target="ports-group" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="doc-flow" name="Document Processing Flow">
+        <mxGraphModel dx="1080" dy="548" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1100" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="t2" value="&lt;b&gt;Document Processing — Data Flow&lt;/b&gt;" style="text;html=1;fontSize=18;fontColor=#1A237E;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="20" width="800" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="user" value="&lt;b&gt;User&lt;/b&gt;" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontColor=#1A237E;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="100" width="40" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="s1" value="&lt;b&gt;1. Upload PDF&lt;/b&gt;&#10;POST /api/documents/upload&#10;&#10;→ Stores PDF to&#10;  data/documents/{doc_id}/&#10;→ Returns doc_id" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=10;align=left;spacingLeft=10;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="160" y="80" width="220" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="s2" value="&lt;b&gt;2. Trigger Processing&lt;/b&gt;&#10;POST /api/documents/{id}/process&#10;&#10;→ Creates processing.lock&#10;→ Launches BackgroundTask&#10;→ Opens WS /ws/{doc_id}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=10;align=left;spacingLeft=10;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="80" width="230" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="s3" value="&lt;b&gt;3. LangGraph Pipeline&lt;/b&gt;&#10;document_graph.py&#10;(MemorySaver checkpointer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=11;fontStyle=1;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="230" width="260" height="45" as="geometry"/>
+                </mxCell>
+                <mxCell id="n1" value="&lt;b&gt;ingest_document&lt;/b&gt;&#10;Read PDF bytes&#10;Get filename, metadata" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=9;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="320" width="170" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="n2" value="&lt;b&gt;route_after_ingest&lt;/b&gt;&#10;Check pipeline.mode&#10;(azure_di | marker_docling)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="280" y="310" width="190" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n3a" value="&lt;b&gt;run_azure_di_ocr&lt;/b&gt;&#10;Azure DI Layout model&#10;ocrHighRes, tables, signatures&#10;keyValuePairs, formulas&#10;&#10;Real-time % via LRO polling&#10;WS: ocr_progress" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;align=left;spacingLeft=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="290" width="210" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="n3b" value="&lt;b&gt;run_marker_ocr&lt;/b&gt;&#10;Marker PDF→MD&#10;(offline mode)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="410" width="210" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="n3c" value="&lt;b&gt;run_quality_scoring&lt;/b&gt;&#10;DoclingQualityAdapter&#10;Page-level quality scoring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="480" width="210" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="n4a" value="&lt;b&gt;merge_azure_di_results&lt;/b&gt;&#10;- Build HTML tables (rowspan/colspan)&#10;- Repeat headers for cross-page tables&#10;- Extract signatures, key-value pairs&#10;- Per-page markdown with structure&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="290" width="250" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="n4b" value="&lt;b&gt;merge_marker_results&lt;/b&gt;&#10;- Combine Marker + Docling output&#10;- Build per-page markdown&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="810" y="430" width="250" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n5" value="&lt;b&gt;route_by_confidence&lt;/b&gt;&#10;min(page_scores) vs thresholds&#10;review_threshold=0.6&#10;auto_approve_threshold=0.8" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="310" width="190" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="n6a" value="&lt;b&gt;auto_approve&lt;/b&gt;&#10;All pages ≥ 80% confidence&#10;→ status = approved" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=9;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1350" y="290" width="200" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="n6b" value="&lt;b&gt;hitl_review&lt;/b&gt;&#10;Page confidence &lt; 60%&#10;→ interrupt() for human review&#10;→ Command(resume=...) to continue" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;fontSize=9;fontColor=#D84315;" parent="1" vertex="1">
+                    <mxGeometry x="1350" y="360" width="210" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="n7" value="&lt;b&gt;store_results&lt;/b&gt;&#10;→ result.json&#10;→ document.json" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=10;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1380" y="460" width="140" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="n-error" value="&lt;b&gt;handle_error&lt;/b&gt;&#10;WS: error notification&#10;status = error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#EF5350;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="1130" y="490" width="160" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="rjson" value="&lt;b&gt;result.json contains:&lt;/b&gt;&#10;• filename, total_pages&#10;• extractions[]: page_num, markdown, confidence&#10;• raw_markdown: {page → md}&#10;• hitl_decisions: {page → status}&#10;• component_decisions: {id → {status, data}}&#10;• key_value_pairs: [{key, value, confidence}]&#10;• signatures: [{page, type, bbox}]&#10;• tables: [{page, html, rows, cols}]&#10;• confidence_scores: {page → score}" style="shape=note;whiteSpace=wrap;html=1;size=18;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;align=left;spacingLeft=8;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="540" width="310" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="wsmsg" value="&lt;b&gt;WebSocket Messages:&lt;/b&gt;&#10;• processing_started&#10;• processing_stage {stage, label}&#10;• ocr_progress {percent_completed}&#10;• processing_progress {stage, progress}&#10;• hitl_required {pages_count, pages}&#10;• processing_complete {total_pages, has_hitl}&#10;• processing_error {error}&#10;• status {auto_approved | completed}" style="shape=note;whiteSpace=wrap;html=1;size=18;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="420" y="540" width="280" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="review-title" value="&lt;b&gt;4. HITL Review (Frontend)&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#C62828;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="780" y="540" width="250" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="rev1" value="GET /review/{id}/pages&#10;→ Side-by-side: PDF ↔ Markdown&#10;→ Scroll sync&#10;→ DocumentContextBar nav" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="780" y="570" width="200" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="rev2" value="POST approve / edit / flag&#10;(page-level or component-level)&#10;bulk component actions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="1010" y="570" width="200" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="rev3" value="GET export?format=md|html&#10;→ Download reviewed doc&#10;Completion banner → Compliance CTA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="1240" y="570" width="220" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="de1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="user" target="s1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="s1" target="s2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="s2" target="s3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="s3" target="n1" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n1" target="n2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de6" value="azure_di" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3a" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de7" value="marker_docling" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;dashed=1;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3b" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de7b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="1" source="n3b" target="n3c" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n3a" target="n4a" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de8b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="1" source="n3c" target="n4b" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de9a" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n4a" target="n5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de9b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="1" source="n4b" target="n5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de10" value="≥ 80%" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#2E7D32;strokeColor=#78909C;" parent="1" source="n5" target="n6a" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de11" value="&lt; 60%" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#D84315;strokeColor=#78909C;" parent="1" source="n5" target="n6b" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de12" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n6a" target="n7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de13" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n6b" target="n7" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de-err1" value="error" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#EF5350;fontSize=8;fontColor=#C62828;" parent="1" source="n2" target="n-error" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="375" y="530"/>
+                            <mxPoint x="1210" y="530"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="de14" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="rev1" target="rev2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="de15" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="rev2" target="rev3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="compliance-flow" name="Compliance Audit Pipeline">
+        <mxGraphModel dx="1694" dy="821" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1400" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="t3" value="&lt;b&gt;Compliance Audit — Detailed Pipeline&lt;/b&gt;" style="text;html=1;fontSize=18;fontColor=#1A237E;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="10" width="800" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="trigger" value="&lt;b&gt;User triggers audit&lt;/b&gt;&#10;POST /compliance/{doc_id}/run&#10;{agents: [&quot;alcoa&quot;, &quot;gmp&quot;, ...]}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="60" width="250" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="loaddata" value="&lt;b&gt;Load from result.json&lt;/b&gt;&#10;extractions[], filename,&#10;total_pages, key_value_pairs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="60" width="200" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph1-title" value="&lt;b&gt;Phase 1: Orchestrator&lt;/b&gt; (GPT-4.1-mini)" style="text;html=1;fontSize=13;fontColor=#880E4F;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="140" width="350" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="orch" value="&lt;b&gt;ComplianceOrchestrator.analyze()&lt;/b&gt;&#10;&#10;Input: filename, pages, first 3 page extractions, KV pairs&#10;Output: OrchestratorResult {&#10;  is_relevant, confidence, document_type,&#10;  applicable_categories, skipped_categories&#10;}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8BBD0;strokeColor=#EC407A;fontSize=9;align=left;spacingLeft=10;fontColor=#880E4F;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="170" width="400" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="orch-ws" value="WS: phase=orchestrator&#10;→ status=running&#10;→ status=complete&#10;  {document_type, applicable, skipped}" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="170" width="230" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="selected" value="&lt;b&gt;Agent Selection&lt;/b&gt;&#10;If user selected agents → use those&#10;Else → use orchestrator's applicable list&#10;Remaining → SkippedCategory(reason)&#10;If cross_page enabled → add &quot;reconciliation&quot;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="790" y="150" width="280" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph15-title" value="&lt;b&gt;Phase 1.5: Document Segmentation&lt;/b&gt; (LLM-based)" style="text;html=1;fontSize=13;fontColor=#880E4F;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="295" width="400" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="seg-box" value="&lt;b&gt;DocumentSegmenter.segment()&lt;/b&gt;&#10;&#10;Identifies distinct sub-documents in packet&#10;(page restarts, header changes, layout shifts)&#10;&#10;Output: DocumentSegmentation {sections: [&#10;  {section_id, name, type, start_page, end_page}&#10;]}&#10;&#10;Cached to segmentation.json&#10;build_page_to_section() → section_map" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8BBD0;strokeColor=#EC407A;fontSize=9;align=left;spacingLeft=10;fontColor=#880E4F;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="325" width="380" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="seg-ws" value="WS: phase=segmentation&#10;→ status=running&#10;→ status=complete&#10;  {sections_count}" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="340" width="200" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph2-title" value="&lt;b&gt;Phase 2: Per-Page Agent Evaluation&lt;/b&gt; (Sequential agents, internal batch concurrency)" style="text;html=1;fontSize=13;fontColor=#BF360C;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="490" width="600" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="registry" value="&lt;b&gt;RuleRegistry&lt;/b&gt;&#10;&#10;Loads rules from *_rules.md&#10;agents_meta.json&#10;&#10;get_batches(agent, size=7, by_category=True)&#10;→ RuleBatch[] (batch_id, category, rules)&#10;&#10;CRUD: add/update/delete agents &amp; rules" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;align=left;spacingLeft=10;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="530" width="280" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FFB74D;dashed=1;dashPattern=5 5;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="520" width="820" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-label" value="&lt;b&gt;For each agent (sequential):&lt;/b&gt; ALCOA+ → GMP → Checklist → SOP" style="text;html=1;fontSize=11;fontColor=#E65100;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="525" width="500" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-init" value="&lt;b&gt;Agent.review_document()&lt;/b&gt;&#10;→ Load batches from registry&#10;→ WS: rules manifest (all rule IDs, text)&#10;→ Inject section_map &amp; global_kv_pairs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=9;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="555" width="230" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="fanout" value="&lt;b&gt;run_agent_evaluation()&lt;/b&gt;&#10;&#10;Fan-out: batch × page&#10;asyncio.Semaphore&#10;(max_concurrent_batches)&#10;&#10;Each task:&#10;  RuleBatchEvaluator.evaluate_batch()&#10;  → LLM call (GPT-4.1-mini)&#10;  → RuleBatchResult {evaluations, cross_references}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=10;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="660" y="550" width="240" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="eval-detail" value="&lt;b&gt;RuleEvaluation:&lt;/b&gt;&#10;rule_id, status, &lt;b&gt;confidence&lt;/b&gt;,&#10;severity, evidence,&#10;description, recommendation&#10;&#10;&lt;b&gt;CrossReference:&lt;/b&gt;&#10;ref_type, identifier,&#10;context, page_num" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=8;align=left;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="545" width="200" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="ws-rules" value="WS per batch:&#10;{phase: evaluation, agent,&#10; rule_updates: [{rule_id,&#10;  status, confidence}],&#10; batches_complete, percent}" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="665" width="210" height="75" as="geometry"/>
+                </mxCell>
+                <mxCell id="assemble" value="&lt;b&gt;assemble_agent_report()&lt;/b&gt;&#10;&#10;→ Deduplicate findings (merge pages)&#10;→ Compute CategoryScores&#10;→ &lt;b&gt;HITL: confidence &lt; 80% → needs_review&lt;/b&gt;&#10;→ AgentReport&#10;→ Store dependency_tags.json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;align=left;spacingLeft=10;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="400" y="640" width="230" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph25-title" value="&lt;b&gt;Phase 2.5: Cross-Page Reconciliation&lt;/b&gt; (optional, enable_cross_page=True)" style="text;html=1;fontSize=13;fontColor=#C62828;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="760" width="550" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;dashed=1;dashPattern=5 5;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="790" width="1080" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-resolver" value="&lt;b&gt;SectionResolver&lt;/b&gt;&#10;Maps rule [sections: ...]&#10;to DocumentSegmentation&#10;sections via LLM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="810" width="180" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-eval" value="&lt;b&gt;CrossPageEvaluator&lt;/b&gt;&#10;Gathers content by section&#10;Evaluates multi-section rules&#10;group_rules_by_sections()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="810" width="200" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-discovery" value="&lt;b&gt;AutoDiscovery&lt;/b&gt;&#10;Proposes extra cross-page checks&#10;→ auto_discovered_rules.json&#10;Supports rule promotion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="520" y="810" width="210" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-report" value="&lt;b&gt;ReconciliationAgent&lt;/b&gt;&#10;assemble_agent_report()&#10;→ AgentReport" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="780" y="810" width="180" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="recon-ws" value="WS: phase=evaluation,&#10;agent=reconciliation" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="980" y="815" width="145" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="re1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="recon-resolver" target="recon-eval" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="re2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="recon-eval" target="recon-discovery" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="re3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="recon-discovery" target="recon-report" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph3-title" value="&lt;b&gt;Phase 3: Report Generation&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#2E7D32;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="970" width="250" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="report-gen" value="&lt;b&gt;Report Assembly&lt;/b&gt;&#10;&#10;1. Collect all AgentReports (per-page + reconciliation)&#10;2. Deduplicate cross-agent findings&#10;3. Compute overall_score&#10;   = weighted avg of agent scores&#10;4. Generate ExecutiveSummary (GPT-4.1-mini)&#10;   {assessment, risks, strengths, actions}&#10;5. Build ComplianceReport" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;align=left;spacingLeft=10;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1000" width="320" height="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="severity-weights" value="&lt;b&gt;SEVERITY_WEIGHTS:&lt;/b&gt;&#10;critical = 10&#10;major = 5&#10;minor = 2&#10;observation = 1" style="shape=note;whiteSpace=wrap;html=1;size=12;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;align=left;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="410" y="1000" width="150" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="comp-report-schema" value="&lt;b&gt;ComplianceReport:&lt;/b&gt;&#10;report_id, doc_id, filename, total_pages&#10;document_type, generated_at&#10;overall_score, score_methodology&#10;executive_summary:&#10;  {assessment, risks, strengths, actions}&#10;agent_reports[]: AgentReport&#10;  {agent, score, findings[], category_scores[]}&#10;skipped_agents[]: SkippedCategory&#10;findings[]: ComplianceFinding&#10;  {finding_id, rule_id, severity, &lt;b&gt;confidence&lt;/b&gt;,&#10;   &lt;b&gt;hitl_status&lt;/b&gt;, hitl_note, evidence, pages,&#10;   resolved, hitl_reviewed_at}&#10;audit_trail:&#10;  {duration, llm_calls, models, agents_executed,&#10;   agents_skipped, rule_batch_size}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;align=left;spacingLeft=10;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="980" width="310" height="230" as="geometry"/>
+                </mxCell>
+                <mxCell id="store-comp" value="→ compliance_result.json" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=10;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="960" y="1030" width="170" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ph4-title" value="&lt;b&gt;Phase 4: Compliance HITL Review (Frontend)&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#D84315;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1230" width="400" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl-flow" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;dashed=1;dashPattern=5 5;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="1260" width="1100" height="170" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl1" value="&lt;b&gt;FindingsTable&lt;/b&gt;&#10;Shows all findings with:&#10;• Severity badge&#10;• Confidence % badge&#10;• HITL status badge&#10;• Filter by review status&#10;• Highlight finding from URL" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=9;align=left;spacingLeft=8;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="1275" width="200" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl2" value="&lt;b&gt;needs_review findings&lt;/b&gt;&#10;(confidence &lt; 80%)&#10;&#10;User can:&#10;✓ Confirm Finding&#10;✗ Reject (false positive)&#10;✎ Modify (change severity)&#10;↺ Reset (back to needs_review)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;align=left;spacingLeft=8;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="1275" width="200" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl3" value="&lt;b&gt;POST .../review&lt;/b&gt;&#10;{action, note,&#10; modified_severity}&#10;&#10;action: approve | reject&#10;| modify | reset" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#26A69A;fontSize=9;fontColor=#00695C;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="1280" width="160" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl4" value="&lt;b&gt;Updated HITL status&lt;/b&gt;&#10;&#10;auto_approved (≥80%)&#10;needs_review (&lt;80%)&#10;user_approved&#10;user_rejected → resolved&#10;user_modified&#10;reset → needs_review" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;align=left;spacingLeft=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="730" y="1270" width="180" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl5" value="&lt;b&gt;HITL Summary Bar&lt;/b&gt;&#10;{needsReview, autoApproved,&#10; userApproved, userRejected}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="940" y="1295" width="190" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="trigger" target="loaddata" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="loaddata" target="orch" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="480" y="135"/>
+                            <mxPoint x="260" y="135"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca3" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="orch" target="selected" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca3b" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="selected" target="seg-box" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="930" y="290"/>
+                            <mxPoint x="250" y="290"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="seg-box" target="agent-init" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="250" y="480"/>
+                            <mxPoint x="515" y="480"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="registry" target="agent-init" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca6" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="agent-init" target="fanout" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca7" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="fanout" target="assemble" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="780" y="700"/>
+                            <mxPoint x="640" y="700"/>
+                            <mxPoint x="640" y="688"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca7b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="1" source="assemble" target="recon-box" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="515" y="755"/>
+                            <mxPoint x="600" y="755"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="recon-box" target="report-gen" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="600" y="965"/>
+                            <mxPoint x="220" y="965"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="ca9" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="report-gen" target="comp-report-schema" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca10" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="comp-report-schema" target="store-comp" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca11" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="hitl1" target="hitl2" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca12" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="hitl2" target="hitl3" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca13" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="hitl3" target="hitl4" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="ca14" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="hitl4" target="hitl5" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="fanout-detail" name="Batch x Page Fan-Out (Deep Dive)">
+        <mxGraphModel dx="1250" dy="821" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1400" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="fo-title" value="&lt;b&gt;Batch × Page Fan-Out — Deep Dive&lt;/b&gt;&#10;&lt;i&gt;How a single compliance agent evaluates all its rules against all document pages&lt;/i&gt;" style="text;html=1;fontSize=18;fontColor=#1A237E;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="300" y="10" width="1200" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec1-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="70" width="420" height="520" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec1-label" value="&lt;b&gt;STEP 1: Rule Registry → Batches&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#4527A0;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="75" width="400" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="rulefile" value="&lt;b&gt;alcoa_rules.md&lt;/b&gt;&#10;&#10;Category: Attributable&#10;  1. All entries must have author ID&#10;  2. Signatures must be traceable&#10;  3. Electronic entries have audit trail&#10;  ...&#10;  10. Observer signatures present&#10;&#10;Category: Legible&#10;  1. Handwriting is readable&#10;  2. No overwritten entries&#10;  ...&#10;  8. Font size adequate&#10;&#10;Category: Contemporaneous&#10;  1. Entries dated at time of activity&#10;  ...&#10;  9. No backdated entries" style="shape=note;whiteSpace=wrap;html=1;size=18;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=8;align=left;spacingLeft=8;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="110" width="220" height="270" as="geometry"/>
+                </mxCell>
+                <mxCell id="get-batches" value="&lt;b&gt;registry.get_batches()&lt;/b&gt;&#10;&#10;batch_size = 7 (configurable)&#10;by_category = True&#10;&#10;Groups rules by category,&#10;then chunks each category&#10;into slices of ≤ 7 rules&#10;&#10;scope: page | document | section" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;fontSize=9;align=left;spacingLeft=8;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="50" y="410" width="220" height="130" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="rulefile" target="get-batches" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="batch-list-title" value="&lt;b&gt;Resulting Batches (18 total):&lt;/b&gt;" style="text;html=1;fontSize=10;fontColor=#4527A0;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="110" width="150" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="b0" value="B0: Attributable 1-7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="132" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b1" value="B1: Attributable 8-10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="158" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b2" value="B2: Legible 1-7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="184" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b3" value="B3: Legible 8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="210" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b4" value="B4: Contemporaneous 1-7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FFD54F;fontSize=8;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="236" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b5" value="B5: Contemporaneous 8-9" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF8E1;strokeColor=#FFD54F;fontSize=8;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="262" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="bdots" value="⋮  (batches 6-15)" style="text;html=1;fontSize=9;fontColor=#78909C;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="288" width="140" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="b16" value="B16: Enduring 1-7" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="310" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="b17" value="B17: Available 1-8" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=8;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="336" width="140" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="batch-summary" value="&lt;b&gt;82 rules&lt;/b&gt; across &lt;b&gt;9 categories&lt;/b&gt;&#10;÷ batch_size 7 = &lt;b&gt;18 batches&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="370" width="150" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e2" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="get-batches" target="batch-summary" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec2-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="70" width="540" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec2-label" value="&lt;b&gt;INPUT: Document Pages (from result.json extractions)&lt;/b&gt;" style="text;html=1;fontSize=11;fontColor=#1565C0;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="75" width="520" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg1" value="&lt;b&gt;Page 1&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg2" value="&lt;b&gt;Page 2&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="560" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg3" value="&lt;b&gt;Page 3&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="pgdots" value="..." style="text;html=1;fontSize=14;fontColor=#78909C;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="700" y="105" width="30" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg10" value="&lt;b&gt;Page 10&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="736" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg11" value="&lt;b&gt;Page 11&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="806" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="pg12" value="&lt;b&gt;Page 12&lt;/b&gt;&#10;markdown" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="876" y="100" width="64" height="35" as="geometry"/>
+                </mxCell>
+                <mxCell id="page-count" value="&lt;b&gt;12 pages&lt;/b&gt;" style="text;html=1;fontSize=9;fontColor=#1565C0;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="950" y="108" width="60" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec3-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="185" width="900" height="410" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec3-label" value="&lt;b&gt;STEP 2: Cartesian Product — asyncio.gather(* all tasks)&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#BF360C;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="190" width="500" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec3-code" value="tasks = [_run(batch, ext) &lt;b&gt;for batch in batches for ext in extractions&lt;/b&gt;]" style="text;html=1;fontSize=9;fontColor=#BF360C;fontStyle=2;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="212" width="500" height="16" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-corner" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="240" width="100" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p1" value="&lt;b&gt;P1&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p2" value="&lt;b&gt;P2&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p3" value="&lt;b&gt;P3&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-dots" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=8;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="240" width="30" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p10" value="&lt;b&gt;P10&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p11" value="&lt;b&gt;P11&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gh-p12" value="&lt;b&gt;P12&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="240" width="42" height="26" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-b0" value="&lt;b&gt;B0&lt;/b&gt; Attrib 1-7" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=7;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="266" width="100" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-00" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-01" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-02" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-0d" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=7;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="266" width="30" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-09" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-010" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-011" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="266" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-b1" value="&lt;b&gt;B1&lt;/b&gt; Attrib 8-10" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=7;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="288" width="100" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-10" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-11" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-12" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-1d" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=7;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="288" width="30" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-19" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-110" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-111" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="288" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-b2" value="&lt;b&gt;B2&lt;/b&gt; Legible 1-7" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="310" width="100" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-20" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-21" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-22" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-2d" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=7;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="310" width="30" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-29" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-210" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-211" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="310" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-dots" value="⋮" style="text;html=1;fontSize=12;fontColor=#78909C;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="332" width="382" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-b16" value="&lt;b&gt;B16&lt;/b&gt; Endur 1-7" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=7;fontColor=#6A1B9A;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="356" width="100" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-160" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-161" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-162" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-16d" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=7;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="356" width="30" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-169" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-1610" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-1611" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="356" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gr-b17" value="&lt;b&gt;B17&lt;/b&gt; Avail 1-8" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#EF9A9A;fontSize=7;fontColor=#C62828;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="378" width="100" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-170" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-171" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="642" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-172" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="684" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-17d" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=7;fontColor=#78909C;" parent="1" vertex="1">
+                    <mxGeometry x="726" y="378" width="30" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-179" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="756" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-1710" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="798" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="gc-1711" value="LLM" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=7;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="378" width="42" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="grid-total" value="&lt;b&gt;18 batches × 12 pages = 216 tasks&lt;/b&gt;&#10;Each cell = 1 LLM call evaluating ≤7 rules against 1 page&#10;All 216 queued simultaneously via asyncio.gather()" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=center;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="540" y="415" width="340" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="sem-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;dashed=1;dashPattern=5 5;opacity=50;" parent="1" vertex="1">
+                    <mxGeometry x="920" y="240" width="200" height="230" as="geometry"/>
+                </mxCell>
+                <mxCell id="sem-title" value="&lt;b&gt;Semaphore Gate&lt;/b&gt;&#10;asyncio.Semaphore&#10;(max_concurrent_batches)" style="text;html=1;fontSize=10;fontColor=#E65100;fontStyle=1;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="243" width="180" height="38" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot1" value="⚡ Task 14" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="285" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot2" value="⚡ Task 38" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1015" y="285" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot3" value="⚡ Task 71" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="307" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot4" value="⚡ Task 99" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1015" y="307" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot5" value="⚡ Task 102" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="329" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot6" value="⚡ Task 115" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1015" y="329" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot7" value="⚡ Task 147" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="351" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot8" value="⚡ Task 163" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1015" y="351" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot9" value="⚡ Task 188" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="935" y="373" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="slot10" value="⚡ Task 201" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=7;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1015" y="373" width="75" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="sem-note" value="N of 216 tasks execute&#10;at any instant (N = config).&#10;As one completes, the&#10;next waiting task starts.&#10;&#10;Default: 4 (code) / 10 (.env)" style="text;html=1;fontSize=8;fontColor=#E65100;align=center;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="395" width="180" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e3" value="216 tasks queued" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;fontSize=8;fontColor=#546E7A;" parent="1" source="gc-011" target="sem-bg" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec4-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="185" width="590" height="405" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec4-label" value="&lt;b&gt;STEP 3: Inside One LLM Call (zoom into a single cell)&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#BF360C;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="1170" y="190" width="470" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="zoom-prompt" value="&lt;b&gt;Prompt built by _build_batch_prompt():&lt;/b&gt;&#10;&#10;&quot;Evaluate ONLY the following 7 rules&#10;against this page content.&#10;For each rule return:&#10;  rule_id, status, &lt;b&gt;confidence&lt;/b&gt;,&#10;  severity, evidence,&#10;  description, recommendation.&#10;&#10;Also extract cross_references&#10;(SOP refs, batch IDs, equipment IDs)&#10;&#10;SECTION: Batch Manufacturing Record (pg 3-8)&#10;&#10;RULES TO EVALUATE:&#10;- [ALC-ATT1] All entries must have author ID&#10;- [ALC-ATT2] Signatures must be traceable&#10;- [ALC-ATT3] Electronic entries have audit trail&#10;  ... (4 more)&#10;&#10;PAGE CONTENT (page 3):&#10;\`\`\`&#10;{first 6000 chars of page markdown}&#10;\`\`\`&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=8;align=left;spacingLeft=8;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="1175" y="220" width="270" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="zoom-llm" value="&lt;b&gt;GPT-4.1-mini&lt;/b&gt;&#10;generate_structured()&#10;↓&#10;response_format =&#10;RuleBatchResult" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=center;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="1175" y="545" width="270" height="65" as="geometry"/>
+                </mxCell>
+                <mxCell id="zoom-result" value="&lt;b&gt;RuleBatchResult { evaluations: [&lt;/b&gt;&#10;&#10;  { rule_id: &quot;ALC-ATT1&quot;,&#10;    status: &quot;compliant&quot;,&#10;    confidence: 0.95,&#10;    severity: null,&#10;    evidence: &quot;&quot; },&#10;&#10;  { rule_id: &quot;ALC-ATT2&quot;,&#10;    status: &quot;non_compliant&quot;,&#10;    confidence: 0.72,&#10;    severity: &quot;major&quot;,&#10;    evidence: &quot;Signature on line 14...&quot;,&#10;    description: &quot;Missing operator ID...&quot;,&#10;    recommendation: &quot;Add operator...&quot; },&#10;&#10;  { rule_id: &quot;ALC-ATT3&quot;,&#10;    status: &quot;not_applicable&quot;,&#10;    confidence: 0.98 },&#10;  ...&#10;&lt;b&gt;],  cross_references: [&lt;/b&gt;&#10;  { ref_type: &quot;sop_reference&quot;,&#10;    identifier: &quot;SOP-PRD-042&quot;,&#10;    context: &quot;Referenced in step 3.2&quot; }&#10;&lt;b&gt;]}&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=8;align=left;spacingLeft=8;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="1475" y="220" width="250" height="360" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e4" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="zoom-prompt" target="zoom-llm" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="zoom-llm" target="zoom-result" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1310" y="585"/>
+                            <mxPoint x="1460" y="585"/>
+                            <mxPoint x="1460" y="400"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="sec5-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBE9E7;strokeColor=#FF8A65;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="610" width="420" height="200" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec5-label" value="&lt;b&gt;STEP 4: Progress Callback (per completed task)&lt;/b&gt;" style="text;html=1;fontSize=11;fontColor=#BF360C;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="615" width="400" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="cb-code" value="&lt;b&gt;progress_callback(completed, total, batch, result)&lt;/b&gt;&#10;&#10;1. llm_call_count += 1&#10;2. For each evaluation in result:&#10;   • Merge status:  non_compliant &gt; uncertain &gt; compliant&#10;   • Merge confidence:  min(prev, new)&#10;   • Update rule_statuses[rule_id]&#10;3. Collect cross_references → dependency_tags&#10;4. Build rule_updates list&#10;5. Broadcast WS message:" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="642" width="260" height="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="ws-msg-detail" value="&lt;b&gt;WS: compliance_progress&lt;/b&gt;&#10;{&#10;  phase: &quot;evaluation&quot;,&#10;  agent: &quot;alcoa&quot;,&#10;  batches_complete: 47,&#10;  batches_total: 216,&#10;  percent: 21,&#10;  rule_updates: [&#10;    {rule_id: &quot;ALC-ATT1&quot;,&#10;     status: &quot;compliant&quot;,&#10;     confidence: 0.95},&#10;    {rule_id: &quot;ALC-ATT2&quot;,&#10;     status: &quot;non_compliant&quot;,&#10;     confidence: 0.72}&#10;  ]&#10;}" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#FBE9E7;strokeColor=#FF8A65;fontSize=8;align=left;spacingLeft=6;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="310" y="642" width="140" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec6-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="610" width="900" height="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="sec6-label" value="&lt;b&gt;STEP 5: assemble_agent_report() — Collect, Deduplicate, Score&lt;/b&gt;" style="text;html=1;fontSize=13;fontColor=#2E7D32;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="490" y="615" width="560" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="raw-results" value="&lt;b&gt;216 raw results&lt;/b&gt;&#10;(batch_id, page_num, RuleBatchResult)&#10;&#10;Same rule may appear on&#10;multiple pages with different&#10;status / confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="650" width="200" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="dedup" value="&lt;b&gt;_deduplicate_findings()&lt;/b&gt;&#10;&#10;For each unique rule_id:&#10;  • Merge page_numbers&#10;  • Take worst severity&#10;  • Take minimum confidence&#10;  • Keep first evidence&#10;  • Recompute hitl_status&#10;&#10;Sort by severity (desc)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=9;align=left;spacingLeft=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="740" y="645" width="195" height="145" as="geometry"/>
+                </mxCell>
+                <mxCell id="hitl-thresh" value="&lt;b&gt;HITL Threshold&lt;/b&gt;&#10;&#10;confidence ≥ 0.80&#10;  → auto_approved ✓&#10;&#10;confidence &lt; 0.80&#10;  → needs_review ⚠" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;align=left;spacingLeft=8;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="975" y="645" width="155" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="agent-report" value="&lt;b&gt;AgentReport&lt;/b&gt;&#10;&#10;agent: &quot;alcoa&quot;&#10;score: 75.0 / 100&#10;total_rules: 82&#10;total_findings: 12&#10;severity_counts: {critical: 1, major: 5, ...}&#10;category_scores: [CategoryScore × 9]&#10;findings: [ComplianceFinding × 12]&#10;pages_reviewed: [1..12]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#66BB6A;fontSize=9;align=left;spacingLeft=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1170" y="640" width="195" height="155" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e6" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="raw-results" target="dedup" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e7" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="dedup" target="hitl-thresh" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="fo-e8" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="hitl-thresh" target="agent-report" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="scoring" value="&lt;b&gt;Agent Score Calculation&lt;/b&gt;&#10;&#10;score = 100 − Σ( SEVERITY_WEIGHTS[finding.severity] )&#10;&#10;SEVERITY_WEIGHTS:&#10;  critical = 10,  major = 5,  minor = 2,  observation = 1&#10;&#10;Example: 1×critical + 5×major + 3×minor + 3×observation&#10;         = 10 + 25 + 6 + 3 = 44  →  score = 56/100" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ECEFF1;strokeColor=#90A4AE;fontSize=9;align=left;spacingLeft=10;fontColor=#37474F;" parent="1" vertex="1">
+                    <mxGeometry x="480" y="870" width="470" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="conf-merge-bg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;dashed=1;dashPattern=5 5;opacity=30;" parent="1" vertex="1">
+                    <mxGeometry x="990" y="870" width="380" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="conf-merge-title" value="&lt;b&gt;Confidence Merge Example (ALC-ATT2)&lt;/b&gt;" style="text;html=1;fontSize=10;fontColor=#F57F17;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="1000" y="875" width="360" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-p3" value="Page 3: 0.72" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;fontSize=8;fontColor=#D84315;" parent="1" vertex="1">
+                    <mxGeometry x="1005" y="900" width="80" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-p7" value="Page 7: 0.88" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;fontSize=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="1095" y="900" width="80" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-p11" value="Page 11: 0.65" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;fontSize=8;fontColor=#D84315;" parent="1" vertex="1">
+                    <mxGeometry x="1185" y="900" width="80" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-arrow1" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="cm-p3" target="cm-result" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-arrow2" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="cm-p7" target="cm-result" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-arrow3" value="" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="cm-p11" target="cm-result" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="cm-result" value="&lt;b&gt;min() = 0.65&lt;/b&gt;&#10;→ needs_review&#10;pages: [3, 7, 11]" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FFAB91;fontSize=9;fontColor=#D84315;fontStyle=0;" parent="1" vertex="1">
+                    <mxGeometry x="1095" y="940" width="120" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="&lt;b&gt;LEGEND&lt;/b&gt;" style="text;html=1;fontSize=11;fontColor=#1A237E;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="1010" width="60" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EDE7F6;strokeColor=#9575CD;" parent="1" vertex="1">
+                    <mxGeometry x="30" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg1t" value="Rule Registry / Batching" style="text;html=1;fontSize=8;fontColor=#4527A0;" parent="1" vertex="1">
+                    <mxGeometry x="52" y="1033" width="140" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;" parent="1" vertex="1">
+                    <mxGeometry x="200" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg2t" value="Document Pages" style="text;html=1;fontSize=8;fontColor=#1565C0;" parent="1" vertex="1">
+                    <mxGeometry x="222" y="1033" width="100" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;" parent="1" vertex="1">
+                    <mxGeometry x="340" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg3t" value="LLM Call / Evaluator" style="text;html=1;fontSize=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="362" y="1033" width="120" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;" parent="1" vertex="1">
+                    <mxGeometry x="500" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg4t" value="Semaphore / Concurrency" style="text;html=1;fontSize=8;fontColor=#E65100;" parent="1" vertex="1">
+                    <mxGeometry x="522" y="1033" width="140" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg5" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBE9E7;strokeColor=#FF8A65;" parent="1" vertex="1">
+                    <mxGeometry x="680" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg5t" value="WebSocket Progress" style="text;html=1;fontSize=8;fontColor=#BF360C;" parent="1" vertex="1">
+                    <mxGeometry x="702" y="1033" width="120" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg6" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#81C784;" parent="1" vertex="1">
+                    <mxGeometry x="840" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg6t" value="Report Assembly / Output" style="text;html=1;fontSize=8;fontColor=#2E7D32;" parent="1" vertex="1">
+                    <mxGeometry x="862" y="1033" width="140" height="18" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg7" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;" parent="1" vertex="1">
+                    <mxGeometry x="1020" y="1035" width="18" height="14" as="geometry"/>
+                </mxCell>
+                <mxCell id="leg7t" value="Decision / HITL Threshold" style="text;html=1;fontSize=8;fontColor=#F57F17;" parent="1" vertex="1">
+                    <mxGeometry x="1042" y="1033" width="140" height="18" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

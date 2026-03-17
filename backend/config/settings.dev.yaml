@@ -1,11 +1,16 @@
 app_name: "Auto Transcription"
 debug: true
 
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di
 
+# Azure DI features to request (endpoint + key come from .env)
+azure_di:
+  features:
+    - barcodes
+    - keyValuePairs
+
+# Marker settings (active when pipeline.mode = marker_docling)
 marker:
   use_llm: true
   paginate_output: true
@@ -13,10 +18,7 @@ marker:
   ollama_base_url: "http://localhost:11434"
   ollama_model: "gemma2:9b"
 
-azure_di:
-  endpoint: "${AZURE_DI_ENDPOINT}"
-  api_key: "${AZURE_DI_API_KEY}"
-
+# LLM for compliance agents and marker_docling processors
 llm:
   provider: ollama
   base_url: "http://localhost:11434"

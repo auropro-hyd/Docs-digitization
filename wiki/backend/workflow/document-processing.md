@@ -2,11 +2,13 @@
 
 > **Code references:** [`backend/app/workflow/document_graph.py`](../../../backend/app/workflow/document_graph.py), [`backend/app/workflow/nodes.py`](../../../backend/app/workflow/nodes.py), [`backend/app/workflow/state.py`](../../../backend/app/workflow/state.py)
 
-The document processing workflow is the core pipeline of the Auto Transcription system. It is implemented as a **LangGraph StateGraph** that ingests a pharmaceutical PDF, runs it through multiple OCR engines in parallel, scores quality, merges results, and routes pages for human review or automatic approval based on composite confidence.
+The document processing workflow is the core pipeline of the Auto Transcription system. It is implemented as a **LangGraph StateGraph** that ingests a pharmaceutical PDF, conditionally routes it to one of two pipeline modes based on `settings.pipeline.mode`, scores confidence, and routes pages for human review or automatic approval.
 
 ---
 
 ## Graph Overview
+
+The graph has two distinct flow paths that share a common head (ingest) and tail (confidence routing → HITL/approve → store):
 
 ```mermaid
 flowchart TD
@@ -15,15 +17,15 @@ flowchart TD
     ingest_document -->|conditional| route_after_ingest{route_after_ingest}
 
     route_after_ingest -->|error| handle_error
-    route_after_ingest -->|Send| run_marker_ocr
-    route_after_ingest -->|Send| run_azure_di_ocr
-    route_after_ingest -->|Send| run_quality_scoring
+    route_after_ingest -->|"azure_di mode"| run_azure_di_ocr
+    route_after_ingest -->|"marker_docling mode"| run_marker_ocr
 
-    run_marker_ocr --> merge_ocr_results
-    run_azure_di_ocr --> merge_ocr_results
-    run_quality_scoring --> merge_ocr_results
+    run_azure_di_ocr --> merge_azure_di_results
+    merge_azure_di_results -->|conditional| route_by_confidence{route_by_confidence}
 
-    merge_ocr_results -->|conditional| route_by_confidence{route_by_confidence}
+    run_marker_ocr --> run_quality_scoring
+    run_quality_scoring --> merge_marker_results
+    merge_marker_results -->|conditional| route_by_confidence
 
     route_by_confidence -->|"min score < threshold"| hitl_review
     route_by_confidence -->|"min score ≥ threshold"| auto_approve
@@ -35,11 +37,20 @@ flowchart TD
     handle_error --> END
 ```
 
+### Flow Paths
+
+| Pipeline Mode | Path |
+|--------------|------|
+| `azure_di` | `ingest_document` → `run_azure_di_ocr` → `merge_azure_di_results` → confidence routing → ... |
+| `marker_docling` | `ingest_document` → `run_marker_ocr` → `run_quality_scoring` → `merge_marker_results` → confidence routing → ... |
+
+The routing is determined at runtime by `route_after_ingest`, which reads `settings.pipeline.mode`. Only one path executes per invocation — there is no parallel fan-out to multiple engines.
+
 ---
 
 ## State Definition
 
-The workflow operates on `DocumentState`, a `TypedDict` with annotated reducers so that parallel branches can merge their outputs without overwriting each other.
+The workflow operates on `DocumentState`, a `TypedDict` with annotated reducers so that state updates merge cleanly.
 
 ```python
 class DocumentState(TypedDict):
@@ -49,19 +60,19 @@ class DocumentState(TypedDict):
     filename: str
     total_pages: int
 
-    # Per-engine OCR results (merge via dict update)
-    marker_results: Annotated[dict, _merge_dicts]
-    azure_di_results: Annotated[dict, _merge_dicts]
-    quality_scores: dict
+    # Per-engine OCR results (mode-specific)
+    marker_results: Annotated[dict, _merge_dicts]    # marker_docling mode
+    azure_di_results: Annotated[dict, _merge_dicts]  # azure_di mode
+    quality_scores: dict                              # marker_docling mode (Docling)
 
-    # Merged outputs (merge via list append / dict update)
+    # Unified extraction output (both modes)
     extractions: Annotated[list, _merge_lists]
     confidence_scores: Annotated[dict, _merge_dicts]
-    page_classifications: Annotated[dict, _merge_dicts]
-
-    # Document structure
-    sections: list
     raw_markdown: Annotated[dict, _merge_dicts]
+
+    # Page intelligence (planned)
+    page_classifications: Annotated[dict, _merge_dicts]
+    sections: list
 
     # HITL
     hitl_pages_for_review: list
@@ -79,9 +90,7 @@ class DocumentState(TypedDict):
 | `_merge_lists(left, right)` | Appends `right` to `left` — used for `extractions`, `hitl_decisions` |
 | `_merge_dicts(left, right)` | Shallow-merges `right` into `left` — used for per-page result dicts |
 
-The reducers are critical for the parallel fan-out pattern: when `run_marker_ocr`, `run_azure_di_ocr`, and `run_quality_scoring` complete concurrently, each writes to a different state key and the reducers ensure no data is lost during the join at `merge_ocr_results`.
-
-A secondary state `PageProcessingState` (with `doc_id`, `pdf_path`, `page_num`) is defined for future per-page Send parallelism.
+Pipeline modes populate different subsets of fields: `azure_di` mode writes to `azure_di_results` and `raw_markdown`; `marker_docling` mode writes to `marker_results`, `quality_scores`, and `raw_markdown`. Both modes converge on the common output fields `extractions` and `confidence_scores` after their respective merge nodes.
 
 ---
 
@@ -99,44 +108,66 @@ async def ingest_document(state: DocumentState) -> dict
 - Returns `{"total_pages": n, "status": "ingested"}`.
 - On a missing or corrupt PDF, returns `{"status": "error", "error": "..."}`.
 
-### `run_marker_ocr`
-
-```python
-async def run_marker_ocr(state: DocumentState) -> dict
-```
-
-- Calls the **primary OCR port** via `container.primary_ocr.extract(pdf_path)` (Marker adapter).
-- Builds per-page markdown and word-count dictionaries.
-- Returns `{"marker_results": {...}, "raw_markdown": {...}, "status": "marker_ocr_complete"}`.
-
-### `run_azure_di_ocr`
+### `run_azure_di_ocr` (azure_di mode)
 
 ```python
 async def run_azure_di_ocr(state: DocumentState) -> dict
 ```
 
-- Calls the **secondary OCR port** via `container.secondary_ocr.extract(pdf_path)` (Azure Document Intelligence adapter).
-- Computes per-page word confidence and handwriting statistics.
-- Returns `{"azure_di_results": {...}, "status": "azure_di_ocr_complete"}`.
+- Calls `container.ocr_engine.extract(pdf_path)` — resolves to `AzureDIOCRAdapter`.
+- Computes per-page word confidence, handwriting statistics, barcodes, and selection marks.
+- Stores full document markdown if available from Azure DI.
+- Returns `{"azure_di_results": {...}, "raw_markdown": {...}, "status": "azure_di_complete"}`.
 
-### `run_quality_scoring`
+### `run_marker_ocr` (marker_docling mode)
+
+```python
+async def run_marker_ocr(state: DocumentState) -> dict
+```
+
+- Calls `container.ocr_engine.extract(pdf_path)` — resolves to `MarkerOCRAdapter`.
+- Builds per-page markdown and word-count dictionaries.
+- Returns `{"marker_results": {...}, "raw_markdown": {...}, "status": "marker_complete"}`.
+
+### `run_quality_scoring` (marker_docling mode)
 
 ```python
 async def run_quality_scoring(state: DocumentState) -> dict
 ```
 
-- Calls the **quality scorer port** via `container.quality_scorer.score(pdf_path)` (Docling adapter).
-- Returns `{"quality_scores": {...}, "status": "quality_scoring_complete"}`.
+- Calls `container.quality_scorer.score(pdf_path)` — uses `DoclingQualityAdapter`.
+- Only runs in `marker_docling` mode (wired sequentially after `run_marker_ocr`).
+- Returns `{"quality_scores": {...}, "status": "quality_scored"}`.
 
-### `merge_ocr_results`
+### `merge_azure_di_results`
 
 ```python
-async def merge_ocr_results(state: DocumentState) -> dict
+async def merge_azure_di_results(state: DocumentState) -> dict
 ```
 
-- Iterates over all pages and merges outputs from Marker, Azure DI, and Docling.
-- Calls the internal helper `_compute_page_confidence(quality_page, azure_page, marker_page)` per page to produce a weighted **composite confidence score** (see [Composite Scorer](../confidence-scoring/composite-scorer.md)).
-- Returns `{"extractions": [...], "confidence_scores": {...}, "status": "merged"}`.
+Builds unified `extractions` and `confidence_scores` from Azure DI output. Confidence is computed per page using:
+
+**Formula:** `0.50 × avg_word_confidence + 0.20 × min_word_confidence + 0.30 × validation_pass_rate`
+
+- `avg_word_confidence` / `min_word_confidence`: from Azure DI's per-word confidence scores
+- `validation_pass_rate`: from `validate_page_extraction()` plausibility checks
+
+Returns `{"extractions": [...], "confidence_scores": {...}, "status": "merged"}`.
+
+### `merge_marker_results`
+
+```python
+async def merge_marker_results(state: DocumentState) -> dict
+```
+
+Builds unified `extractions` and `confidence_scores` from Marker + Docling output. Confidence is computed per page using:
+
+**Formula:** `0.60 × docling_quality_mean + 0.40 × validation_pass_rate`
+
+- `docling_quality_mean`: average of Docling's `layout_score`, `table_score`, `ocr_score`, `parse_score`
+- `validation_pass_rate`: from `validate_page_extraction()` plausibility checks
+
+Returns `{"extractions": [...], "confidence_scores": {...}, "status": "merged"}`.
 
 ### `hitl_review`
 
@@ -144,7 +175,7 @@ async def merge_ocr_results(state: DocumentState) -> dict
 async def hitl_review(state: DocumentState) -> dict
 ```
 
-- Identifies pages whose confidence falls below `settings.hitl.review_threshold`.
+- Identifies pages whose confidence falls below `settings.hitl.auto_approve_threshold`.
 - Sends `hitl_required` status to the frontend via WebSocket.
 - Calls **`interrupt()`** — the LangGraph native HITL primitive — to pause the workflow and yield a review payload to the frontend.
 - When the human resumes via `Command(resume=feedback)`, returns `{"hitl_decisions": [...], "status": "reviewed"}`.
@@ -181,38 +212,30 @@ async def handle_error(state: DocumentState) -> dict
 
 ---
 
-## Parallel Execution
-
-The fan-out after ingestion uses LangGraph's **`Send` API**:
-
-```python
-async def route_after_ingest(state: DocumentState) -> list[Send]:
-    if state.get("status") == "error":
-        return [Send("handle_error", state)]
-    return [
-        Send("run_marker_ocr", state),
-        Send("run_azure_di_ocr", state),
-        Send("run_quality_scoring", state),
-    ]
-```
-
-LangGraph schedules all three OCR/quality nodes concurrently. Each writes to a distinct state key (`marker_results`, `azure_di_results`, `quality_scores`) with annotated reducers, so they merge cleanly when the graph joins at `merge_ocr_results`.
-
-```mermaid
-flowchart LR
-    route_after_ingest -->|Send| A[run_marker_ocr]
-    route_after_ingest -->|Send| B[run_azure_di_ocr]
-    route_after_ingest -->|Send| C[run_quality_scoring]
-    A --> merge_ocr_results
-    B --> merge_ocr_results
-    C --> merge_ocr_results
-```
-
----
-
 ## Conditional Routing
 
-After merging, the graph evaluates `route_by_confidence`:
+### `route_after_ingest`
+
+Routes to the correct pipeline flow based on `settings.pipeline.mode`:
+
+```python
+def route_after_ingest(state: DocumentState) -> str:
+    if state.get("status") == "error":
+        return "handle_error"
+
+    settings = get_settings()
+    mode = settings.pipeline.mode
+
+    if mode == "marker_docling":
+        return "run_marker_ocr"
+    return "run_azure_di_ocr"
+```
+
+This replaces the old parallel `Send()` fan-out. Only one pipeline flow executes — there is no concurrent execution of multiple OCR engines.
+
+### `route_by_confidence`
+
+After the active merge node produces `confidence_scores`, the graph evaluates:
 
 ```python
 def route_by_confidence(state: DocumentState) -> str:
@@ -225,7 +248,20 @@ def route_by_confidence(state: DocumentState) -> str:
     return "auto_approve"
 ```
 
-The threshold is configurable via `settings.hitl.review_threshold` (default `0.9`). If **any** page falls below it, the entire document is routed to human review.
+The threshold is configurable via `settings.hitl.review_threshold` (default `0.7`). If **any** page falls below it, the entire document is routed to human review.
+
+---
+
+## Confidence Scoring by Mode
+
+Each pipeline mode has its own confidence formula, applied in its respective merge node:
+
+| Mode | Merge Node | Formula | Components |
+|------|-----------|---------|------------|
+| `azure_di` | `merge_azure_di_results` | `0.50 × avg + 0.20 × min + 0.30 × val` | Azure DI per-word scores + validation rules |
+| `marker_docling` | `merge_marker_results` | `0.60 × quality + 0.40 × val` | Docling quality scores + validation rules |
+
+Both formulas produce a `[0.0, 1.0]` confidence per page. The `validate_page_extraction()` function applies the same plausibility checks in both modes (see [Validation Rules](../confidence-scoring/validation-rules.md)).
 
 ---
 
@@ -240,7 +276,7 @@ Node → container.notification.send_update(doc_id, payload)
      → WebSocket clients
 ```
 
-This gives fine-grained control over what the frontend receives at each stage (`ingested`, `marker_ocr_running`, `hitl_required`, `completed`, etc.) without coupling the frontend to LangGraph's internal event stream.
+This gives fine-grained control over what the frontend receives at each stage (`ingested`, `azure_di_running`, `marker_ocr_running`, `merging_results`, `hitl_required`, `completed`, etc.) without coupling the frontend to LangGraph's internal event stream.
 
 ---
 
@@ -267,33 +303,61 @@ Checkpointing is essential for the HITL flow: when `interrupt()` pauses the work
 
 ## Graph Construction
 
-`build_document_graph` wires everything together:
+`build_document_graph` wires everything together. Both pipeline flow paths are registered as nodes, but only one path is traversed at runtime based on `route_after_ingest`:
 
 ```python
 builder = StateGraph(DocumentState)
 
-# Nodes
+# Common nodes
 builder.add_node("ingest_document", ingest_document)
-builder.add_node("run_marker_ocr", run_marker_ocr)
-builder.add_node("run_azure_di_ocr", run_azure_di_ocr)
-builder.add_node("run_quality_scoring", run_quality_scoring)
-builder.add_node("merge_ocr_results", merge_ocr_results)
 builder.add_node("hitl_review", hitl_review)
 builder.add_node("auto_approve", auto_approve)
 builder.add_node("store_results", store_results)
 builder.add_node("handle_error", handle_error)
 
-# Edges
+# Azure DI flow nodes
+builder.add_node("run_azure_di_ocr", run_azure_di_ocr)
+builder.add_node("merge_azure_di_results", merge_azure_di_results)
+
+# Marker + Docling flow nodes
+builder.add_node("run_marker_ocr", run_marker_ocr)
+builder.add_node("run_quality_scoring", run_quality_scoring)
+builder.add_node("merge_marker_results", merge_marker_results)
+
+# Entry
 builder.add_edge(START, "ingest_document")
 builder.add_conditional_edges("ingest_document", route_after_ingest)
-builder.add_edge("run_marker_ocr", "merge_ocr_results")
-builder.add_edge("run_azure_di_ocr", "merge_ocr_results")
-builder.add_edge("run_quality_scoring", "merge_ocr_results")
-builder.add_conditional_edges("merge_ocr_results", route_by_confidence)
+
+# Azure DI flow
+builder.add_edge("run_azure_di_ocr", "merge_azure_di_results")
+builder.add_conditional_edges("merge_azure_di_results", route_by_confidence)
+
+# Marker + Docling flow
+builder.add_edge("run_marker_ocr", "run_quality_scoring")
+builder.add_edge("run_quality_scoring", "merge_marker_results")
+builder.add_conditional_edges("merge_marker_results", route_by_confidence)
+
+# Common tail
 builder.add_edge("hitl_review", "store_results")
 builder.add_edge("auto_approve", "store_results")
 builder.add_edge("store_results", END)
 builder.add_edge("handle_error", END)
+```
+
+### Flow Diagram
+
+```mermaid
+flowchart LR
+    subgraph "Azure DI Flow"
+        A1[run_azure_di_ocr] --> A2[merge_azure_di_results]
+    end
+    subgraph "Marker + Docling Flow"
+        M1[run_marker_ocr] --> M2[run_quality_scoring] --> M3[merge_marker_results]
+    end
+    route_after_ingest -->|"azure_di"| A1
+    route_after_ingest -->|"marker_docling"| M1
+    A2 --> route_by_confidence
+    M3 --> route_by_confidence
 ```
 
 ---

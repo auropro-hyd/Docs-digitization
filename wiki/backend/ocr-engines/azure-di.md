@@ -5,7 +5,7 @@
 
 ## What Azure DI Provides
 
-Azure Document Intelligence (formerly Form Recognizer) is used as the **supplementary extraction engine**. It does not produce the primary Markdown — that is Marker's job. Instead it enriches the pipeline with four capabilities that Marker lacks:
+Azure Document Intelligence (formerly Form Recognizer) is the **default OCR engine** in `azure_di` pipeline mode. It handles the full extraction pipeline — PDF to text with per-word metadata. Key capabilities:
 
 | Capability | Detail |
 |---|---|
@@ -147,18 +147,19 @@ def _to_bounding_region(regions, page_num):
     # ... compute from polygon ...
 ```
 
-For tables, Azure DI natively tracks cell spans across pages via `bounding_regions` on each cell, making its cross-page table support complementary to Marker's LLM-based merge approach.
+For tables, Azure DI natively tracks cell spans across pages via `bounding_regions` on each cell.
 
 ---
 
-## Confidence Scores in the Composite
+## Confidence Scoring (azure_di mode)
 
-Azure DI's per-word confidence scores are the most granular confidence signal in the pipeline. They feed into the composite confidence in two ways:
+In `azure_di` pipeline mode, confidence comes directly from DI's per-word scores:
 
-1. **Page-level mean word confidence** — averaged across all words on a page, providing a single 0.0–1.0 score per page.
-2. **Low-confidence word flagging** — words below a configurable threshold are flagged for human review.
+```
+Page confidence = 0.50 × avg_word_confidence + 0.20 × min_word_confidence + 0.30 × validation_pass_rate
+```
 
-Combined with Marker's table scores (1–5) and Docling's quality dimensions, this gives the pipeline a multi-perspective confidence view.
+Pages below the HITL threshold are routed for human review.
 
 ---
 

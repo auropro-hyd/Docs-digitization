@@ -7,8 +7,8 @@ The platform runs in three environments, each with different adapter configurati
 | Component | Local Dev | Azure Staging | On-Prem Production |
 |-----------|-----------|---------------|-------------------|
 | **FastAPI** | `uvicorn` (localhost:8000) | Azure App Service | Docker / systemd |
-| **Primary OCR (Marker)** | Local (GPU/CPU) | Local in App Service container | Local (GPU) |
-| **Secondary OCR (Azure DI)** | Azure AI Foundry cloud API | Azure AI Foundry cloud API | Disconnected container |
+| **Pipeline Mode** | `azure_di` or `marker_docling` (configurable) | `azure_di` | `azure_di` or `marker_docling` |
+| **OCR Engine** | Marker (GPU/CPU) or Azure DI (cloud API) | Azure DI (cloud API) | Azure DI (disconnected container) or Marker (GPU) |
 | **Quality Scoring (Docling)** | Local (CPU) | Local in App Service container | Local (CPU) |
 | **LLM** | Ollama local (gemma2:9b) | Ollama on ACI | Ollama local (gemma2:9b) |
 | **Database** | PostgreSQL Docker | Azure DB for PostgreSQL | PostgreSQL local |
@@ -43,12 +43,12 @@ On-prem deployment receives a validated release package (Docker images + config)
 
 ## Config Strategy
 
-Configuration is loaded by `app/config/settings.py` in this order:
+Configuration is loaded by `app/config/settings.py` with this priority (highest wins):
 
-1. **YAML file** -- `config/settings.{env}.yaml` where `env` comes from the `AT_ENV` environment variable (defaults to `dev`)
-2. **Environment variables** -- prefixed with `AT_`, using `__` as nested delimiter (e.g., `AT_LLM__PROVIDER=azure_openai`)
-
-Environment variables override YAML values.
+1. **OS environment variables** -- prefixed with `AT_`, using `__` as nested delimiter (e.g., `AT_LLM__PROVIDER=azure_openai`)
+2. **`.env` file** -- local development secrets (`backend/.env`)
+3. **YAML file** -- `config/settings.{env}.yaml` where `env` comes from `AT_ENV` (defaults to `dev`)
+4. **Pydantic field defaults** -- code-level fallbacks in `settings.py`
 
 ### Example: `settings.dev.yaml`
 
@@ -56,10 +56,8 @@ Environment variables override YAML values.
 env: dev
 debug: true
 
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di   # "azure_di" or "marker_docling"
 
 marker:
   use_llm: true
@@ -68,9 +66,8 @@ marker:
   ollama_base_url: http://localhost:11434
   ollama_model: gemma2:9b
 
+# Endpoint + key from env vars: AT_AZURE_DI__ENDPOINT, AT_AZURE_DI__API_KEY
 azure_di:
-  endpoint: https://your-resource.cognitiveservices.azure.com
-  api_key: ${AZURE_DI_API_KEY}
   features:
     - barcodes
     - keyValuePairs
@@ -100,14 +97,11 @@ hitl:
 env: staging
 debug: false
 
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di
 
+# Endpoint + key from env vars: AT_AZURE_DI__ENDPOINT, AT_AZURE_DI__API_KEY
 azure_di:
-  endpoint: https://autotranscription-staging.cognitiveservices.azure.com
-  api_key: ${AZURE_DI_API_KEY}
   features:
     - barcodes
     - keyValuePairs
@@ -117,13 +111,13 @@ llm:
   base_url: http://ollama-aci.eastus.azurecontainer.io:11434
   model: gemma2:9b
 
+# DB credentials from env vars: AT_DATABASE__URL
 database:
-  url: postgresql+asyncpg://${DB_USER}:${DB_PASS}@autotranscription-staging.postgres.database.azure.com:5432/autotranscription
   echo: false
 
+# Connection string from env var: AT_STORAGE__AZURE_CONNECTION_STRING
 storage:
   backend: azure_blob
-  azure_connection_string: ${AZURE_STORAGE_CONNECTION}
   azure_container: documents
 
 hitl:
@@ -137,10 +131,8 @@ hitl:
 env: prod
 debug: false
 
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di   # or "marker_docling" for sites without Azure DI
 
 marker:
   use_llm: true
@@ -152,7 +144,7 @@ marker:
 azure_di:
   # Disconnected container running locally
   endpoint: http://localhost:5080
-  api_key: ${AZURE_DI_CONTAINER_KEY}
+  # API key from env var: AT_AZURE_DI__API_KEY
   features:
     - barcodes
     - keyValuePairs
@@ -162,8 +154,8 @@ llm:
   base_url: http://localhost:11434
   model: gemma2:9b
 
+# DB credentials from env var: AT_DATABASE__URL
 database:
-  url: postgresql+asyncpg://app_user:${DB_PASS}@db-server:5432/autotranscription
   echo: false
 
 storage:
@@ -183,11 +175,12 @@ hitl:
 
 **Purpose:** Developer iteration with fast feedback loops.
 
-- **Marker** runs locally (uses GPU if available, falls back to CPU)
-- **Azure DI** calls the cloud API via Azure AI Foundry (requires `AZURE_DI_API_KEY` in env)
+- **Pipeline mode** is configurable — `azure_di` (default) or `marker_docling`
+- **Marker** runs locally when `pipeline.mode` is `marker_docling` (uses GPU if available, falls back to CPU)
+- **Azure DI** calls the cloud API via Azure AI Foundry when `pipeline.mode` is `azure_di` (requires `AT_AZURE_DI__ENDPOINT` and `AT_AZURE_DI__API_KEY` in env)
 - **Ollama** runs locally with `gemma2:9b` pulled via `infra/scripts/pull-ollama-models.sh`
 - **PostgreSQL** runs in Docker (see `infra/docker/`)
-- **Docling** runs locally on CPU
+- **Docling** runs locally on CPU (used in both modes)
 - **Frontend** runs via `next dev` with hot reload, connecting to `localhost:8000`
 
 Setup script: `infra/scripts/setup-local.sh`

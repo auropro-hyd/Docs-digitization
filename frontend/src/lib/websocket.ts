@@ -7,6 +7,8 @@ export type WSMessage = {
   pages_count?: number;
   pages?: number[];
   error?: string;
+  page_num?: number;
+  confidence?: number;
   [key: string]: unknown;
 };
 
@@ -17,34 +19,61 @@ export class DocumentWebSocket {
   private docId: string;
   private callbacks: Set<WSCallback> = new Set();
   private reconnectAttempts = 0;
-  private maxReconnects = 5;
+  private maxReconnects = 10;
+  private intentionalClose = false;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(docId: string) {
     this.docId = docId;
   }
 
   connect() {
+    if (this.intentionalClose) return;
+
     this.ws = new WebSocket(`${WS_BASE}/ws/${this.docId}`);
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
+      this.startPing();
     };
 
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data) as WSMessage;
+        if (data.type === "pong") return;
         this.callbacks.forEach((cb) => cb(data));
       } catch {
-        // ignore parse errors
+        console.warn("[WS] Failed to parse message:", event.data);
       }
     };
 
     this.ws.onclose = () => {
+      this.stopPing();
+      if (this.intentionalClose) return;
       if (this.reconnectAttempts < this.maxReconnects) {
         this.reconnectAttempts++;
-        setTimeout(() => this.connect(), 1000 * this.reconnectAttempts);
+        const delay = Math.min(1000 * this.reconnectAttempts, 8000);
+        setTimeout(() => this.connect(), delay);
       }
     };
+
+    this.ws.onerror = () => {
+      this.stopPing();
+    };
+  }
+
+  private startPing() {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      this.send({ type: "ping" });
+    }, 15_000);
+  }
+
+  private stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
   }
 
   subscribe(callback: WSCallback) {
@@ -53,6 +82,8 @@ export class DocumentWebSocket {
   }
 
   disconnect() {
+    this.intentionalClose = true;
+    this.stopPing();
     this.ws?.close();
     this.ws = null;
     this.callbacks.clear();

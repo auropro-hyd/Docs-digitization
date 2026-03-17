@@ -18,13 +18,23 @@ git clone <repo-url>
 cd Auto_Transcription
 ```
 
-## 2. Start Infrastructure Services
-
-The backend includes a Docker Compose file that starts PostgreSQL and Ollama:
+## 2. Create a Virtual Environment
 
 ```bash
-cd backend
-docker compose up -d
+make venv
+```
+
+Or manually:
+
+```bash
+python3 -m venv backend/.venv
+source backend/.venv/bin/activate
+```
+
+## 3. Start Infrastructure Services
+
+```bash
+make infra-up
 ```
 
 This starts:
@@ -34,45 +44,43 @@ This starts:
 Verify both services are healthy:
 
 ```bash
-docker compose ps
+make infra-status
 ```
 
-## 3. Pull Ollama Models
-
-If using Docker Ollama:
+## 4. Pull Ollama Models
 
 ```bash
-docker compose exec ollama ollama pull gemma2:9b
-```
-
-If using a local Ollama installation:
-
-```bash
-ollama pull gemma2:9b
+make ollama-pull
 ```
 
 > `gemma2:9b` is the default model for both Marker OCR LLM features and the main LLM provider. The model name is configurable in settings — see [Settings](../backend/configuration/settings.md).
 
-## 4. Install Backend Dependencies
+## 5. Install Backend Dependencies
 
 ```bash
-cd backend
-pip install -e ".[dev]"
+make install-backend
 ```
 
-This installs the backend package in editable mode along with development dependencies (ruff, pytest, etc.).
+This creates the venv (if needed), then installs the backend package in editable mode along with development dependencies (ruff, pytest, etc.).
 
-## 5. Configure Environment Variables
+## 6. Configure Environment Variables
 
-Create a `.env` file in the `backend/` directory:
+Copy the example env file, then fill in your secrets:
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Edit `backend/.env` and set at minimum:
 
 ```bash
 # backend/.env
 AT_ENV=dev
+AT_PIPELINE__MODE=azure_di   # or "marker_docling"
 
-# Azure Document Intelligence (required for dual-engine OCR)
-AZURE_DI_ENDPOINT=https://<your-resource>.cognitiveservices.azure.com
-AZURE_DI_API_KEY=<your-api-key>
+# Azure Document Intelligence (required when pipeline mode is azure_di)
+AT_AZURE_DI__ENDPOINT=https://<your-resource>.cognitiveservices.azure.com
+AT_AZURE_DI__API_KEY=<your-api-key>
 ```
 
 **Getting Azure DI credentials:**
@@ -88,38 +96,30 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_WS_URL=ws://localhost:8000
 ```
 
-## 6. Start the Backend
+## 7. Start the Backend
 
 ```bash
-cd backend
-uvicorn app.main:app --reload
+make backend
 ```
 
-The API server starts at `http://localhost:8000`. The `--reload` flag enables auto-restart on code changes.
+The API server starts at `http://localhost:8000` with auto-reload enabled.
 
 Verify the backend is running:
 
 ```bash
-curl http://localhost:8000/docs
+make health
 ```
 
-This should return the FastAPI Swagger UI.
-
-## 7. Install Frontend Dependencies
+## 8. Install & Start the Frontend
 
 ```bash
-cd frontend
-npm install
-```
-
-## 8. Start the Frontend
-
-```bash
-cd frontend
-npm run dev
+make install-frontend
+make frontend
 ```
 
 The Next.js development server starts at `http://localhost:3000`.
+
+> **Tip:** To run backend and frontend together in one command, use `make dev`.
 
 ## 9. Verify the Setup
 
@@ -138,9 +138,7 @@ The Next.js development server starts at `http://localhost:3000`.
 | `AT_DEBUG` | `true` | Enable debug mode |
 | `AT_HOST` | `0.0.0.0` | Server bind address |
 | `AT_PORT` | `8000` | Server bind port |
-| `AT_OCR__PRIMARY_ENGINE` | `marker` | Primary OCR engine (`marker` or `azure_di`) |
-| `AT_OCR__SECONDARY_ENGINE` | `azure_di` | Secondary OCR engine |
-| `AT_OCR__QUALITY_SCORER` | `docling` | Quality scoring engine |
+| `AT_PIPELINE__MODE` | `azure_di` | Pipeline mode (`azure_di` or `marker_docling`) |
 | `AT_MARKER__OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL for Marker |
 | `AT_MARKER__OLLAMA_MODEL` | `gemma2:9b` | Ollama model for Marker |
 | `AT_AZURE_DI__ENDPOINT` | (placeholder) | Azure Document Intelligence endpoint |
@@ -201,7 +199,7 @@ services:
 | `Connection refused` on port 5432 | Check `docker compose ps` — PostgreSQL may not be healthy yet |
 | `Connection refused` on port 11434 | Ollama container may still be starting — wait 10–20 seconds |
 | `Model not found` error | Run `ollama pull gemma2:9b` (or via Docker exec) |
-| Azure DI returns 401 | Verify `AZURE_DI_ENDPOINT` and `AZURE_DI_API_KEY` in `.env` |
+| Azure DI returns 401 | Verify `AT_AZURE_DI__ENDPOINT` and `AT_AZURE_DI__API_KEY` in `.env` |
 | Frontend can't reach backend | Confirm `NEXT_PUBLIC_API_URL` matches the backend address |
 | WebSocket not connecting | Confirm `NEXT_PUBLIC_WS_URL` and check browser console for errors |
 

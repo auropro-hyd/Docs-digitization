@@ -4,6 +4,7 @@ These tests use NO external dependencies (no Marker, Azure DI, Ollama, etc.)
 -- only pure domain logic with mock data.
 """
 
+from app.config.settings import HITLConfig
 from app.core.models.quality import PageQualityScore
 from app.core.services.confidence import (
     CompositeConfidenceScorer,
@@ -13,7 +14,6 @@ from app.core.services.confidence import (
 from app.core.services.hitl_router import HITLRouter
 from app.core.services.section_builder import SectionBuilder
 from app.core.services.validation_rules import validate_page_extraction
-from app.config.settings import HITLConfig
 
 
 class TestCompositeConfidenceScorer:
@@ -53,9 +53,7 @@ class TestCompositeConfidenceScorer:
         assert scorer.classify_confidence(0.5) == "low"
 
     def test_custom_weights(self):
-        weights = CompositeConfidenceWeights(
-            docling_mean=0.5, azure_di_min_word=0.2, marker_table=0.1, validation=0.2
-        )
+        weights = CompositeConfidenceWeights(docling_mean=0.5, azure_di_min_word=0.2, marker_table=0.1, validation=0.2)
         scorer = CompositeConfidenceScorer(weights)
         score = scorer.score_page(
             docling_page=PageQualityScore(
@@ -137,9 +135,7 @@ class TestSectionBuilder:
 
 class TestValidationRules:
     def test_valid_content_passes(self):
-        result = validate_page_extraction({
-            "markdown": "Batch: 2538104192 Date: 15/03/2025 Qty: 4305 kg"
-        })
+        result = validate_page_extraction({"markdown": "Batch: 2538104192 Date: 15/03/2025 Qty: 4305 kg"})
         assert result.pass_rate > 0.5
 
     def test_empty_content_fails(self):
@@ -148,8 +144,6 @@ class TestValidationRules:
         assert any("too short" in f for f in result.failures)
 
     def test_implausible_date_detected(self):
-        result = validate_page_extraction({
-            "markdown": "Some content here\nDate: 01/01/1950\nMore content follows"
-        })
+        result = validate_page_extraction({"markdown": "Some content here\nDate: 01/01/1950\nMore content follows"})
         has_date_failure = any("Implausible date" in f for f in result.failures)
         assert has_date_failure

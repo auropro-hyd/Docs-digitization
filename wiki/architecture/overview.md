@@ -66,11 +66,11 @@ Current adapter matrix:
 
 | Port | Adapter | When Used |
 |------|---------|-----------|
-| `OCREngine` | `MarkerOCRAdapter` | Primary OCR (all environments) |
-| `OCREngine` | `AzureDIOCRAdapter` | Secondary OCR (handwriting, barcodes) |
+| `OCREngine` | `MarkerOCRAdapter` | `pipeline.mode = "marker_docling"` |
+| `OCREngine` | `AzureDIOCRAdapter` | `pipeline.mode = "azure_di"` |
 | `LLMProvider` | `OllamaLLMAdapter` | Production (on-prem) |
 | `LLMProvider` | `AzureOpenAILLMAdapter` | Dev/staging fallback |
-| `QualityScorer` | `DoclingQualityAdapter` | All environments |
+| `QualityScorer` | `DoclingQualityAdapter` | All environments (both modes) |
 | `DocumentStore` | `FileSystemAdapter` | Dev and on-prem production |
 | `DocumentStore` | `AzureBlobAdapter` | Azure staging |
 | `NotificationPort` | `WebSocketNotifyAdapter` | Single-worker (primary) |
@@ -84,14 +84,16 @@ The **DI container** (`app/config/container.py`) resolves adapters at runtime ba
 
 ```python
 # Pseudocode of the resolution flow
-settings.ocr.primary_engine = "marker"  # from YAML
-container.primary_ocr  →  MarkerOCRAdapter(settings.marker)
+settings.pipeline.mode = "azure_di"      # from YAML (or "marker_docling")
+container.ocr_engine  →  AzureDIOCRAdapter(settings.azure_di)
+# -- or, if mode is "marker_docling" --
+container.ocr_engine  →  MarkerOCRAdapter(settings.marker)
 
-settings.llm.provider = "ollama"        # from YAML
+settings.llm.provider = "ollama"         # from YAML
 container.llm  →  OllamaLLMAdapter(settings.llm)
 ```
 
-Swapping an engine is a one-line config change -- no code modifications needed.
+Switching the OCR pipeline is a one-line config change (`pipeline.mode`) -- no code modifications needed.
 
 ## LangGraph Workflow Layer
 
@@ -100,11 +102,11 @@ The LangGraph `StateGraph` sits on top of the architecture. Workflow nodes call 
 ```python
 # From app/workflow/nodes.py
 container = get_container()
-result = await container.primary_ocr.extract(state["pdf_path"])   # port, not adapter
+result = await container.ocr_engine.extract(state["pdf_path"])    # port, not adapter
 report = await container.quality_scorer.score(state["pdf_path"])  # port, not adapter
 ```
 
-This means the workflow is entirely adapter-agnostic. The same graph runs against Marker+Ollama locally and Azure DI+Azure OpenAI in staging.
+This means the workflow is entirely adapter-agnostic. The `pipeline.mode` setting determines which OCR adapter backs `container.ocr_engine`, and which merge node (`merge_azure_di_results` or `merge_marker_results`) is invoked.
 
 ## FastAPI as a Thin API Layer
 

@@ -21,6 +21,8 @@ dependencies = [
     "python-multipart",
     "aiofiles",
     "httpx",
+    "pypdfium2>=4.0",
+    "markdown",
 ]
 
 [project.optional-dependencies]

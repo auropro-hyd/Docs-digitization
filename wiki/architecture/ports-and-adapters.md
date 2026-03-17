@@ -125,25 +125,30 @@ class YourEngineConfig(BaseModel):
     # ... your config fields
 ```
 
-3. **Register in the container** (`app/config/container.py`):
+3. **Register in the Container's `ocr_engine` property** (`app/config/container.py`):
+
+The Container resolves `ocr_engine` based on `settings.pipeline.mode`:
 
 ```python
-def create_ocr_engine(engine_name: str, settings: AppSettings | None = None) -> OCREngine:
-    match engine_name:
-        case "marker":
-            ...
+@property
+def ocr_engine(self) -> OCREngine:
+    match self._settings.pipeline.mode:
+        case "marker_docling":
+            from app.adapters.ocr.marker import MarkerOCRAdapter
+            return MarkerOCRAdapter(self._settings.marker)
         case "azure_di":
-            ...
+            from app.adapters.ocr.azure_di import AzureDIOCRAdapter
+            return AzureDIOCRAdapter(self._settings.azure_di)
         case "your_engine":
             from app.adapters.ocr.your_engine import YourEngineAdapter
-            return YourEngineAdapter(settings.your_engine)
+            return YourEngineAdapter(self._settings.your_engine)
 ```
 
 4. **Set config** in your environment's `settings.*.yaml`:
 
 ```yaml
-ocr:
-  primary_engine: your_engine
+pipeline:
+  mode: your_engine
 ```
 
 No other code changes needed -- the workflow, confidence scoring, and HITL routing all work through the `OCREngine` port.
@@ -405,9 +410,8 @@ Shows which workflow nodes and services consume each port:
 
 | Port | Consumed By |
 |------|-------------|
-| `OCREngine` (primary) | `run_marker_ocr` node |
-| `OCREngine` (secondary) | `run_azure_di_ocr` node |
-| `QualityScorer` | `run_quality_scoring` node |
+| `OCREngine` | `run_marker_ocr` node (marker_docling mode) or `run_azure_di_ocr` node (azure_di mode) — resolved via `container.ocr_engine` |
+| `QualityScorer` | `run_quality_scoring` node (both modes) |
 | `LLMProvider` | ALCOA, GMP, Checklist, SOP compliance agents |
 | `DocumentStore` | `store_results` node, API routes |
 | `NotificationPort` | Every workflow node (status updates), HITL review |

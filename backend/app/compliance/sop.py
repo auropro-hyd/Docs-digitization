@@ -1,62 +1,54 @@
 """SOP compliance review agent.
 
-Compares manufacturing steps against SOP requirements and flags deviations.
+Thin wrapper over the shared RuleBatchEvaluator.
 """
 
 from __future__ import annotations
 
-from app.compliance.alcoa import ComplianceFinding
+import logging
+
+from app.compliance.evaluator import assemble_agent_report, run_agent_evaluation
+from app.compliance.models import AgentReport
+from app.compliance.rules.registry import RuleRegistry
+from app.config.settings import ComplianceConfig
 from app.core.ports.llm import LLMProvider
 
-SOP_REVIEW_PROMPT = """You are an SOP compliance reviewer for pharmaceutical manufacturing.
+logger = logging.getLogger(__name__)
 
-Review the following document content and check:
-- Are SOP references properly cited?
-- Do manufacturing steps align with documented procedures?
-- Are any deviations from standard procedures documented?
-- Are deviation reports referenced where deviations occurred?
-
-**Document content (page {page_num}):**
-```
-{content}
-```
-
-List any SOP compliance findings with severity and recommendations.
-If no issues found, state "No findings."
-"""
+AGENT_NAME = "sop"
 
 
 class SOPAgent:
-    def __init__(self, llm: LLMProvider):
+    def __init__(self, llm: LLMProvider, registry: RuleRegistry, config: ComplianceConfig):
         self._llm = llm
+        self._registry = registry
+        self._config = config
 
-    async def review_page(self, page_num: int, content: str) -> list[ComplianceFinding]:
-        prompt = SOP_REVIEW_PROMPT.format(page_num=page_num, content=content[:4000])
-        response = await self._llm.generate(
-            prompt,
-            system="You are a pharmaceutical SOP compliance expert.",
+    async def review_document(
+        self,
+        extractions: list[dict],
+        progress_callback=None,
+        section_map: dict[int, dict] | None = None,
+        global_kv_pairs: list[dict] | None = None,
+    ) -> AgentReport:
+        batches = self._registry.get_batches(
+            AGENT_NAME,
+            self._config.rule_batch_size,
+            self._config.batch_by_category,
+            scope_filter="page",
+        )
+        all_rules = self._registry.get_rules(AGENT_NAME)
+        pages = [ext.get("page_num", 0) for ext in extractions]
+
+        results = await run_agent_evaluation(
+            AGENT_NAME,
+            batches,
+            extractions,
+            self._llm,
+            max_concurrent=self._config.max_concurrent_batches,
+            progress_callback=progress_callback,
+            section_map=section_map,
+            global_kv_pairs=global_kv_pairs,
         )
 
-        if "no findings" in response.lower() or "no issues" in response.lower():
-            return []
-
-        return [
-            ComplianceFinding(
-                rule_id=f"SOP-P{page_num}",
-                rule_category="sop",
-                severity="observation",
-                page_num=page_num,
-                description=response[:500],
-                recommendation="Review SOP compliance requirements",
-            )
-        ]
-
-    async def review_document(self, extractions: list[dict]) -> list[ComplianceFinding]:
-        all_findings: list[ComplianceFinding] = []
-        for ext in extractions:
-            page_num = ext.get("page_num", 0)
-            markdown = ext.get("markdown", "")
-            if markdown.strip():
-                findings = await self.review_page(page_num, markdown)
-                all_findings.extend(findings)
-        return all_findings
+        return assemble_agent_report(AGENT_NAME, all_rules, results, pages)
