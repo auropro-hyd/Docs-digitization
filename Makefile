@@ -8,18 +8,31 @@
 # ═══════════════════════════════════════════════════════════════════
 
 .DEFAULT_GOAL := help
-SHELL := /bin/bash
+SHELL := /usr/bin/env bash
 
 # ── Directories ──────────────────────────────────────────────────
 BACKEND_DIR  := backend
 FRONTEND_DIR := frontend
 VENV_DIR     := $(BACKEND_DIR)/.venv
-VENV_BIN     := $(VENV_DIR)/bin
-VENV_BIN_REL := .venv/bin
 
-# ── Executables (always use venv paths after venv target) ───────
-PYTHON := $(VENV_BIN)/python
-PIP    := $(VENV_BIN)/pip
+# ── OS Detection ─────────────────────────────────────────────────
+# $(OS) is set to Windows_NT on Windows; empty on macOS/Linux.
+# Windows users should run make from Git Bash, MSYS2, or WSL.
+ifeq ($(OS),Windows_NT)
+    DETECTED_OS  := Windows
+    VENV_BIN     := $(VENV_DIR)/Scripts
+    VENV_BIN_REL := .venv/Scripts
+    PYTHON       := $(VENV_BIN)/python.exe
+    PIP          := $(VENV_BIN)/pip.exe
+    VENV_REAL    := $(VENV_DIR)
+else
+    DETECTED_OS  := $(shell uname -s)
+    VENV_BIN     := $(VENV_DIR)/bin
+    VENV_BIN_REL := .venv/bin
+    PYTHON       := $(VENV_BIN)/python
+    PIP          := $(VENV_BIN)/pip
+    VENV_REAL    := $(HOME)/.venvs/auto-transcription
+endif
 
 # ── Phony targets ───────────────────────────────────────────────
 .PHONY: help setup venv install install-backend install-frontend \
@@ -84,9 +97,18 @@ setup: venv install infra-up ## Full first-time setup (venv + deps + infra)
 	@echo ""
 	@echo "✓ Setup complete. Run 'make dev' to start developing."
 
-VENV_REAL := $(HOME)/.venvs/auto-transcription
-
 venv: ## Create Python virtual environment
+ifeq ($(OS),Windows_NT)
+	@if [ -x "$(VENV_BIN)/python.exe" ]; then \
+		echo "✓ Virtual environment already exists at $(VENV_DIR)"; \
+	else \
+		echo "Creating virtual environment..."; \
+		rm -rf "$(VENV_DIR)"; \
+		uv venv "$(VENV_DIR)" --python python3.13 || python -m venv "$(VENV_DIR)"; \
+		echo "✓ Virtual environment created at $(VENV_DIR)"; \
+		echo "  Activate with: source $(VENV_BIN)/activate"; \
+	fi
+else
 	@if [ -x "$(VENV_BIN)/python" ]; then \
 		echo "✓ Virtual environment already exists at $(VENV_DIR)"; \
 	else \
@@ -99,11 +121,12 @@ venv: ## Create Python virtual environment
 		echo "  Symlinked to $(VENV_DIR)"; \
 		echo "  Activate with: source $(VENV_BIN)/activate"; \
 	fi
+endif
 
 install: install-backend install-frontend ## Install all dependencies (backend + frontend)
 
 install-backend: venv ## Install backend Python dependencies
-	uv pip install -p "$(VENV_BIN)/python" -e "$(BACKEND_DIR)/.[dev]"
+	uv pip install -p "$(PYTHON)" -e "$(BACKEND_DIR)/.[dev]"
 
 install-frontend: ## Install frontend Node.js dependencies
 	cd $(FRONTEND_DIR) && npm install
@@ -113,10 +136,7 @@ install-frontend: ## Install frontend Node.js dependencies
 # ═════════════════════════════════════════════════════════════════
 
 dev: ## Start backend + frontend concurrently (Ctrl+C stops both)
-	@trap 'kill 0' INT; \
-	$(MAKE) backend & \
-	$(MAKE) frontend & \
-	wait
+	@$(MAKE) backend & $(MAKE) frontend & wait
 
 dev-fresh: ## Clean frontend .next cache and start dev (use if Turbopack/SST errors persist)
 	rm -rf $(FRONTEND_DIR)/.next
@@ -164,8 +184,8 @@ db-shell: ## Open psql shell in the PostgreSQL container
 	cd $(BACKEND_DIR) && docker compose exec postgres psql -U postgres -d autotranscription
 
 db-reset: ## Drop and recreate the database (destructive!)
-	@echo "⚠  This will destroy all data in the database."
-	@read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	@echo "WARNING: This will destroy all data in the database."
+	@bash -c 'read -p "Are you sure? [y/N] " confirm && [ "$$confirm" = "y" ]' || exit 1
 	cd $(BACKEND_DIR) && docker compose exec postgres psql -U postgres -c "DROP DATABASE IF EXISTS autotranscription;"
 	cd $(BACKEND_DIR) && docker compose exec postgres psql -U postgres -c "CREATE DATABASE autotranscription;"
 	@echo "✓ Database reset complete"
@@ -291,6 +311,29 @@ process-pdf: ## Process a PDF (usage: make process-pdf PDF=path/to/file.pdf)
 		-F "file=@$(PDF)" -s | python3 -m json.tool
 
 kill: ## Kill processes on ports 8000 (backend) and 3000 (frontend)
+ifeq ($(OS),Windows_NT)
+	@for port in 8000 3000; do \
+		pid=$$(netstat -ano 2>/dev/null | grep ":$$port " | grep LISTENING | awk '{print $$5}' | head -1); \
+		if [ -n "$$pid" ] && [ "$$pid" != "0" ]; then \
+			echo "  Port $$port: ENGAGED  (PID $$pid)"; \
+			taskkill //PID $$pid //F 2>/dev/null || true; \
+			echo "  Killed PID $$pid on port $$port"; \
+		else \
+			echo "  Port $$port: FREE"; \
+		fi; \
+	done
+	@sleep 1
+	@echo ""
+	@echo "── Status after cleanup ─────────────────────────"
+	@for port in 8000 3000; do \
+		pid=$$(netstat -ano 2>/dev/null | grep ":$$port " | grep LISTENING | awk '{print $$5}' | head -1); \
+		if [ -n "$$pid" ] && [ "$$pid" != "0" ]; then \
+			echo "  Port $$port: STILL ENGAGED  (PID $$pid)"; \
+		else \
+			echo "  Port $$port: FREE"; \
+		fi; \
+	done
+else
 	@engaged=""; \
 	for port in 8000 3000; do \
 		pid=$$(lsof -ti:$$port 2>/dev/null); \
@@ -311,10 +354,10 @@ kill: ## Kill processes on ports 8000 (backend) and 3000 (frontend)
 			pid=$$(lsof -ti:$$port 2>/dev/null); \
 			if [ -n "$$pid" ]; then \
 				kill -9 $$pid 2>/dev/null || true; \
-				echo "  ✗ Killed PID $$pid on port $$port"; \
+				echo "  Killed PID $$pid on port $$port"; \
 			fi; \
 		done; \
-		sleep 0.3; \
+		sleep 1; \
 		echo ""; \
 		echo "── Status after cleanup ─────────────────────────"; \
 		for port in 8000 3000; do \
@@ -326,9 +369,10 @@ kill: ## Kill processes on ports 8000 (backend) and 3000 (frontend)
 			fi; \
 		done; \
 	fi
+endif
 	@if [ -f "$(FRONTEND_DIR)/.next/dev/lock" ]; then \
 		rm -f "$(FRONTEND_DIR)/.next/dev/lock"; \
-		echo "  ✗ Removed stale Next.js dev lock file"; \
+		echo "  Removed stale Next.js dev lock file"; \
 	fi
 
 # ═════════════════════════════════════════════════════════════════
