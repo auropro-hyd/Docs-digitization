@@ -1,24 +1,28 @@
 "use client";
 
-import { cn, formatConfidence, getConfidenceColor, getConfidenceLabel } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 interface ConfidenceBadgeProps {
   score: number;
-  showLabel?: boolean;
   className?: string;
 }
 
-export function ConfidenceBadge({ score, showLabel = true, className }: ConfidenceBadgeProps) {
+export function ConfidenceBadge({ score, className }: ConfidenceBadgeProps) {
+  const pct = Math.round(score * 100);
+  const tier = score >= 0.8 ? "high" : score >= 0.6 ? "medium" : "low";
+
+  const styles = {
+    high: "border-success/30 bg-success/10 text-success",
+    medium: "border-warning/30 bg-warning/10 text-warning",
+    low: "border-destructive/30 bg-destructive/10 text-destructive",
+  };
+
+  const labels = { high: "High", medium: "Medium", low: "Low" };
+
   return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium",
-        getConfidenceColor(score),
-        className
-      )}
-    >
-      {formatConfidence(score)}
-      {showLabel && <span className="opacity-75">({getConfidenceLabel(score)})</span>}
-    </span>
+    <Badge variant="outline" className={cn("gap-1.5 text-[11px] font-medium", styles[tier], className)}>
+      {labels[tier]} {pct}%
+    </Badge>
   );
 }

@@ -166,14 +166,41 @@ def classify_confidence(self, score: float) -> str:
 
 ## Integration Point
 
-The composite scorer is called inside `merge_ocr_results` in the [document processing workflow](../workflow/document-processing.md) via the helper `_compute_page_confidence`:
+The composite scorer is called inside the mode-specific merge nodes in the [document processing workflow](../workflow/document-processing.md):
+
+### `merge_azure_di_results` (azure_di mode)
+
+Uses Azure DI word-level confidence as the primary OCR signal alongside Docling quality scores:
 
 ```python
-def _compute_page_confidence(quality_page, azure_page, marker_page) -> float:
-    scorer = CompositeConfidenceScorer()
+def _compute_azure_di_page_confidence(quality_page, azure_page) -> float:
+    scorer = CompositeConfidenceScorer(weights=CompositeConfidenceWeights(
+        azure_di_min_word=0.35,
+        docling_mean=0.35,
+        marker_table=0.0,
+        validation=0.30,
+    ))
     return scorer.score_page(
         docling_page=quality_page,
         azure_di_word_confidences=azure_page.get("word_confidences"),
+        validation_results=validate_page_extraction(extraction),
+    )
+```
+
+### `merge_marker_results` (marker_docling mode)
+
+Uses Docling quality scores as the primary signal alongside Marker's table quality:
+
+```python
+def _compute_marker_page_confidence(quality_page, marker_page) -> float:
+    scorer = CompositeConfidenceScorer(weights=CompositeConfidenceWeights(
+        azure_di_min_word=0.0,
+        docling_mean=0.40,
+        marker_table=0.30,
+        validation=0.30,
+    ))
+    return scorer.score_page(
+        docling_page=quality_page,
         marker_table_score=marker_page.get("table_score"),
         validation_results=validate_page_extraction(extraction),
     )

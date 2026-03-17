@@ -1,119 +1,88 @@
-# Multi-Engine OCR Strategy
+# OCR Engine Strategy
 
-## Why Multiple Engines?
+## Pipeline Modes
 
-No single OCR engine excels at every document processing task. Handwriting detection, barcode reading, cross-page table reconstruction, and quality scoring each have a clear best-in-class tool — but that tool is never the same one. The Auto Transcription pipeline therefore runs **three engines in parallel** and composites their outputs to maximise accuracy, coverage, and confidence.
+The system supports two independent processing flows, selected via `pipeline.mode` config.
+Each mode uses a different OCR engine with its own confidence scoring approach.
 
-| Concern | Best engine |
-|---|---|
-| PDF → Markdown (structure preservation) | **Marker** |
-| Handwriting detection (per-word flag) | **Azure DI** |
-| Barcode / QR-code reading | **Azure DI** |
-| Selection marks (checkboxes, radio buttons) | **Azure DI** |
-| Cross-page table merging with LLM verification | **Marker** |
-| Quality scoring (layout / table / OCR / parse) | **Docling** |
+| Mode | OCR Engine | Quality/Confidence Source | Cloud Dependency |
+|------|-----------|-------------------------|-----------------|
+| `azure_di` (default) | Azure Document Intelligence | Per-word confidence scores from DI | Cloud API or disconnected container |
+| `marker_docling` | Marker + Docling | Docling quality scores per page | None (fully offline) |
 
 ---
 
-## Engine Roles
+## Engine Capabilities
 
-### Marker — Primary Extraction Engine
-
-Marker converts the PDF into paginated Markdown using 9 LLM-powered processors. It produces the **canonical Markdown** that downstream stages (field extraction, LLM analysis) consume. Its table handling is the strongest of the three engines — including cross-page merge via `LLMTableMergeProcessor` — and it provides an iterative table quality score (1–5).
-
-See [marker.md](marker.md) for full details.
-
-### Azure Document Intelligence — Supplementary Extraction Engine
-
-Azure DI enriches the extraction with per-word metadata that Marker cannot provide: `is_handwritten` flags, per-word `confidence` scores, barcode decoding (17+ symbologies), and selection-mark detection. In the composite result the pipeline merges Azure DI word-level data with Marker's structural Markdown.
-
-Two deployment modes are supported with the **same adapter class**:
-
-| Mode | Use-case | Endpoint |
-|---|---|---|
-| Cloud API (Azure AI Foundry) | Dev / staging | `https://<resource>.cognitiveservices.azure.com` |
-| Disconnected container | Production on-prem | `http://localhost:<port>` |
-
-See [azure-di.md](azure-di.md) for full details.
-
-### Docling — Quality Scoring Engine
-
-Docling (MIT, by IBM) does **not** contribute extraction content. It runs a separate analysis pass and produces four per-page quality scores: `layout_score`, `table_score`, `ocr_score`, and `parse_score`. These scores feed into the composite confidence report and help the pipeline flag pages that need human review.
-
-See [docling.md](docling.md) for full details.
+| Capability | Azure DI | Marker | Docling |
+|---|---|---|---|
+| **PDF → Markdown** | Full content string | Paginated Markdown with structure | Quality report only |
+| **Handwriting** | Per-word `is_handwritten` flag | Via LLM (when `use_llm: true`) | No |
+| **Tables** | Native cross-page via `bounding_regions` | LLM-powered cross-page merge | Page-by-page only |
+| **Barcodes** | 17+ symbologies | No | No |
+| **Selection marks** | Checkbox / radio state + confidence | No | No |
+| **Confidence** | Per-word 0.0–1.0 | Table score 1–5 | layout, table, OCR, parse (0.0–1.0) |
+| **License** | Azure pricing / disconnected container | GPL-3.0 (commercial available) | MIT |
 
 ---
 
-## Parallel Execution via LangGraph `Send`
+## azure_di Mode (Default)
 
-All three engines run concurrently. The LangGraph orchestration graph dispatches each engine via `Send` nodes:
+Azure Document Intelligence handles the full extraction. Confidence scoring uses
+DI's per-word scores combined with validation rules:
 
-```text
-                ┌──────────────┐
-                │  Load PDF    │
-                └──────┬───────┘
-                       │
-          ┌────────────┼────────────┐
-          ▼            ▼            ▼
-   ┌────────────┐ ┌──────────┐ ┌─────────┐
-   │   Marker   │ │ Azure DI │ │ Docling │
-   └─────┬──────┘ └────┬─────┘ └────┬────┘
-         │             │             │
-         └─────────────┼─────────────┘
-                       ▼
-              ┌─────────────────┐
-              │ Merge / Compose │
-              └────────┬────────┘
-                       ▼
-              ┌─────────────────┐
-              │ Composite Result│
-              └─────────────────┘
+```
+Confidence = 0.50 × avg_word_confidence + 0.20 × min_word_confidence + 0.30 × validation_pass_rate
 ```
 
-Because none of the three engines depends on another's output, the wall-clock time is roughly `max(marker_time, azure_di_time, docling_time)` rather than the sum.
+**Flow:**
+```
+PDF → Azure DI → merge_azure_di_results → confidence routing → HITL / auto-approve → store
+```
+
+**Strengths:** Fast, no local ML, native handwriting/barcode/selection-mark support.
+**Requires:** Azure DI endpoint (cloud API or disconnected container).
 
 ---
 
-## Composite Confidence Score
+## marker_docling Mode
 
-The merge stage builds a **per-page** and **document-level** composite confidence from all three sources:
+Marker OCR extracts content; Docling provides independent quality scores.
+Confidence uses Docling's per-page quality dimensions:
 
-| Source | Metric | Range | What it measures |
-|---|---|---|---|
-| Marker | Table quality score | 1–5 (integer) | LLM-assessed table accuracy after iterative correction |
-| Azure DI | Per-word confidence | 0.0–1.0 | OCR recognition certainty for each word |
-| Docling | `layout_score` | 0.0–1.0 | Page layout detection quality |
-| Docling | `table_score` | 0.0–1.0 | Table structure detection quality |
-| Docling | `ocr_score` | 0.0–1.0 | Character recognition quality |
-| Docling | `parse_score` | 0.0–1.0 | Document parsing fidelity |
+```
+Confidence = 0.60 × docling_quality_mean + 0.40 × validation_pass_rate
+```
 
-Docling scores are graded per page and per document:
+**Flow:**
+```
+PDF → Marker OCR → Docling quality scoring → merge_marker_results → confidence routing → HITL / auto-approve → store
+```
 
-| Grade | Mean score range |
-|---|---|
-| EXCELLENT | ≥ 0.9 |
-| GOOD | ≥ 0.7 |
-| FAIR | ≥ 0.5 |
-| POOR | < 0.5 |
+**Strengths:** Fully offline, zero cloud dependency, strong LLM-powered table handling.
+**Requires:** Ollama (gemma2:9b, ~7 GB), Marker, Docling.
 
 ---
 
-## Engine Comparison Table
+## Switching Modes
 
-| Capability | Marker | Azure DI | Docling |
-|---|---|---|---|
-| **Handwriting** | Via LLM (when `use_llm: True`) | Per-word `is_handwritten` flag | No |
-| **Tables** | Excellent — cross-page merge via LLM | Good — native cross-page via `bounding_regions` | Page-by-page only |
-| **Barcodes** | No | 17+ symbologies (Code 128, QR, EAN-13, …) | No |
-| **Selection marks** | No | Checkbox / radio state + confidence | No |
-| **Confidence metric** | Table score 1–5 | Per-word 0.0–1.0 | `layout_score`, `table_score`, `ocr_score`, `parse_score` (0.0–1.0 each) |
-| **Output format** | Paginated Markdown | Per-word JSON + full content string | Quality report only |
-| **License** | GPL-3.0 (commercial license available for on-prem) | Azure pricing / disconnected container license | MIT — free |
+One config change, no code changes:
+
+```yaml
+pipeline:
+  mode: azure_di       # or marker_docling
+```
+
+Or via environment variable:
+```bash
+AT_PIPELINE__MODE=marker_docling
+```
 
 ---
 
 ## Related Pages
 
-- [Marker adapter details](marker.md)
 - [Azure DI adapter details](azure-di.md)
+- [Marker adapter details](marker.md)
 - [Docling quality adapter details](docling.md)
+- [Pipeline modes guide](../../pipeline-modes.md)

@@ -1,46 +1,21 @@
 """Dependency injection container.
 
 Central wiring that connects ports to adapters based on the active configuration.
-Swapping an engine = changing one value in settings.yaml; this module resolves
-the concrete adapter at runtime.
+Pipeline mode determines which OCR engine(s) to instantiate:
+  - azure_di:       Only AzureDIOCRAdapter (cloud or disconnected container)
+  - marker_docling: MarkerOCRAdapter + DoclingQualityAdapter
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
 
-from app.config.settings import AppSettings, get_settings
+from app.config.settings import AppSettings, ComplianceConfig, ComplianceLLMConfig, LLMConfig, get_settings
 from app.core.ports.llm import LLMProvider
 from app.core.ports.notification import NotificationPort
 from app.core.ports.ocr import OCREngine
 from app.core.ports.quality import QualityScorer
 from app.core.ports.storage import DocumentStore
-
-
-def create_ocr_engine(engine_name: str, settings: AppSettings | None = None) -> OCREngine:
-    settings = settings or get_settings()
-    match engine_name:
-        case "marker":
-            from app.adapters.ocr.marker import MarkerOCRAdapter
-
-            return MarkerOCRAdapter(settings.marker)
-        case "azure_di":
-            from app.adapters.ocr.azure_di import AzureDIOCRAdapter
-
-            return AzureDIOCRAdapter(settings.azure_di)
-        case _:
-            raise ValueError(f"Unknown OCR engine: {engine_name}")
-
-
-def create_quality_scorer(settings: AppSettings | None = None) -> QualityScorer:
-    settings = settings or get_settings()
-    match settings.ocr.quality_scorer:
-        case "docling":
-            from app.adapters.quality.docling import DoclingQualityAdapter
-
-            return DoclingQualityAdapter()
-        case _:
-            raise ValueError(f"Unknown quality scorer: {settings.ocr.quality_scorer}")
 
 
 def create_llm_provider(settings: AppSettings | None = None) -> LLMProvider:
@@ -56,6 +31,69 @@ def create_llm_provider(settings: AppSettings | None = None) -> LLMProvider:
             return AzureOpenAILLMAdapter(settings.llm)
         case _:
             raise ValueError(f"Unknown LLM provider: {settings.llm.provider}")
+
+
+def _resolve_compliance_llm_config(
+    comp: ComplianceConfig,
+    override: ComplianceLLMConfig,
+    default_model: str,
+    default_deployment: str,
+    fallback: LLMConfig,
+) -> LLMConfig:
+    """Build an LLMConfig for a compliance component by cascading overrides.
+
+    Cascade: per-component override → ComplianceConfig defaults → main LLMConfig fallback.
+    """
+    return LLMConfig(
+        provider=override.provider or comp.llm_provider or fallback.provider,
+        api_key=override.api_key or comp.api_key or fallback.api_key,
+        azure_endpoint=override.azure_endpoint or comp.azure_endpoint or fallback.azure_endpoint,
+        azure_deployment=override.azure_deployment or default_deployment or fallback.azure_deployment,
+        model=override.model or default_model or fallback.model,
+        base_url=fallback.base_url,
+    )
+
+
+def create_compliance_llm(
+    role: str, settings: AppSettings | None = None,
+) -> LLMProvider:
+    """Create an LLM provider for a compliance component.
+
+    Args:
+        role: ``"evaluator"`` or ``"orchestrator"``.
+    """
+    settings = settings or get_settings()
+    comp = settings.compliance
+    fallback = settings.llm
+
+    if role == "evaluator":
+        cfg = _resolve_compliance_llm_config(
+            comp, comp.evaluator_llm, comp.evaluator_model, comp.evaluator_deployment, fallback,
+        )
+    elif role == "orchestrator":
+        cfg = _resolve_compliance_llm_config(
+            comp, comp.orchestrator_llm, comp.orchestrator_model, comp.orchestrator_deployment, fallback,
+        )
+    elif role == "cross_page":
+        cfg = _resolve_compliance_llm_config(
+            comp,
+            ComplianceLLMConfig(),
+            comp.cross_page_model or comp.evaluator_model,
+            comp.cross_page_deployment or comp.evaluator_deployment,
+            fallback,
+        )
+    else:
+        raise ValueError(f"Unknown compliance LLM role: {role}")
+
+    match cfg.provider:
+        case "ollama":
+            from app.adapters.llm.ollama import OllamaLLMAdapter
+            return OllamaLLMAdapter(cfg)
+        case "azure_openai":
+            from app.adapters.llm.azure_openai import AzureOpenAILLMAdapter
+            return AzureOpenAILLMAdapter(cfg)
+        case _:
+            raise ValueError(f"Unknown compliance LLM provider: {cfg.provider}")
 
 
 def create_document_store(settings: AppSettings | None = None) -> DocumentStore:
@@ -80,33 +118,52 @@ def create_notification_port() -> NotificationPort:
 
 
 class Container:
-    """Lazy-initializing DI container. Holds singleton adapter instances."""
+    """Lazy-initializing DI container. Holds singleton adapter instances.
+
+    Pipeline mode controls which OCR engines are created:
+      azure_di:       self.ocr_engine → AzureDIOCRAdapter
+      marker_docling: self.ocr_engine → MarkerOCRAdapter, self.quality_scorer → DoclingQualityAdapter
+    """
 
     def __init__(self, settings: AppSettings | None = None):
         self._settings = settings or get_settings()
-        self._primary_ocr: OCREngine | None = None
-        self._secondary_ocr: OCREngine | None = None
+        self._ocr_engine: OCREngine | None = None
         self._quality_scorer: QualityScorer | None = None
         self._llm_provider: LLMProvider | None = None
         self._document_store: DocumentStore | None = None
         self._notification: NotificationPort | None = None
+        self._compliance_evaluator_llm: LLMProvider | None = None
+        self._compliance_orchestrator_llm: LLMProvider | None = None
+        self._compliance_cross_page_llm: LLMProvider | None = None
 
     @property
-    def primary_ocr(self) -> OCREngine:
-        if self._primary_ocr is None:
-            self._primary_ocr = create_ocr_engine(self._settings.ocr.primary_engine, self._settings)
-        return self._primary_ocr
+    def pipeline_mode(self) -> str:
+        return self._settings.pipeline.mode
 
     @property
-    def secondary_ocr(self) -> OCREngine:
-        if self._secondary_ocr is None:
-            self._secondary_ocr = create_ocr_engine(self._settings.ocr.secondary_engine, self._settings)
-        return self._secondary_ocr
+    def ocr_engine(self) -> OCREngine:
+        """Primary OCR engine for the active pipeline mode."""
+        if self._ocr_engine is None:
+            match self._settings.pipeline.mode:
+                case "azure_di":
+                    from app.adapters.ocr.azure_di import AzureDIOCRAdapter
+
+                    self._ocr_engine = AzureDIOCRAdapter(self._settings.azure_di)
+                case "marker_docling":
+                    from app.adapters.ocr.marker import MarkerOCRAdapter
+
+                    self._ocr_engine = MarkerOCRAdapter(self._settings.marker)
+                case _:
+                    raise ValueError(f"Unknown pipeline mode: {self._settings.pipeline.mode}")
+        return self._ocr_engine
 
     @property
     def quality_scorer(self) -> QualityScorer:
+        """Quality scorer (only used in marker_docling mode)."""
         if self._quality_scorer is None:
-            self._quality_scorer = create_quality_scorer(self._settings)
+            from app.adapters.quality.docling import DoclingQualityAdapter
+
+            self._quality_scorer = DoclingQualityAdapter()
         return self._quality_scorer
 
     @property
@@ -126,6 +183,24 @@ class Container:
         if self._notification is None:
             self._notification = create_notification_port()
         return self._notification
+
+    @property
+    def compliance_evaluator_llm(self) -> LLMProvider:
+        if self._compliance_evaluator_llm is None:
+            self._compliance_evaluator_llm = create_compliance_llm("evaluator", self._settings)
+        return self._compliance_evaluator_llm
+
+    @property
+    def compliance_orchestrator_llm(self) -> LLMProvider:
+        if self._compliance_orchestrator_llm is None:
+            self._compliance_orchestrator_llm = create_compliance_llm("orchestrator", self._settings)
+        return self._compliance_orchestrator_llm
+
+    @property
+    def compliance_cross_page_llm(self) -> LLMProvider:
+        if self._compliance_cross_page_llm is None:
+            self._compliance_cross_page_llm = create_compliance_llm("cross_page", self._settings)
+        return self._compliance_cross_page_llm
 
 
 @lru_cache

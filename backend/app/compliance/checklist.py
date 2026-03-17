@@ -1,62 +1,54 @@
 """Checklist-based compliance review agent.
 
-Auto-verifies completed checklists, flags missing checkboxes and signatures.
+Thin wrapper over the shared RuleBatchEvaluator.
 """
 
 from __future__ import annotations
 
-from app.compliance.alcoa import ComplianceFinding
+import logging
+
+from app.compliance.evaluator import assemble_agent_report, run_agent_evaluation
+from app.compliance.models import AgentReport
+from app.compliance.rules.registry import RuleRegistry
+from app.config.settings import ComplianceConfig
 from app.core.ports.llm import LLMProvider
 
-CHECKLIST_REVIEW_PROMPT = """You are a checklist verification specialist for pharmaceutical documents.
+logger = logging.getLogger(__name__)
 
-Review the following document content and check:
-- Are all checklist items marked (checked/unchecked)?
-- Are all required signatures present?
-- Are all date fields filled?
-- Are there any blank fields that should have been completed?
-
-**Document content (page {page_num}):**
-```
-{content}
-```
-
-List any incomplete items with severity and recommendations.
-If all items are complete, state "No findings."
-"""
+AGENT_NAME = "checklist"
 
 
 class ChecklistAgent:
-    def __init__(self, llm: LLMProvider):
+    def __init__(self, llm: LLMProvider, registry: RuleRegistry, config: ComplianceConfig):
         self._llm = llm
+        self._registry = registry
+        self._config = config
 
-    async def review_page(self, page_num: int, content: str) -> list[ComplianceFinding]:
-        prompt = CHECKLIST_REVIEW_PROMPT.format(page_num=page_num, content=content[:4000])
-        response = await self._llm.generate(
-            prompt,
-            system="You are a pharmaceutical documentation checklist reviewer.",
+    async def review_document(
+        self,
+        extractions: list[dict],
+        progress_callback=None,
+        section_map: dict[int, dict] | None = None,
+        global_kv_pairs: list[dict] | None = None,
+    ) -> AgentReport:
+        batches = self._registry.get_batches(
+            AGENT_NAME,
+            self._config.rule_batch_size,
+            self._config.batch_by_category,
+            scope_filter="page",
+        )
+        all_rules = self._registry.get_rules(AGENT_NAME)
+        pages = [ext.get("page_num", 0) for ext in extractions]
+
+        results = await run_agent_evaluation(
+            AGENT_NAME,
+            batches,
+            extractions,
+            self._llm,
+            max_concurrent=self._config.max_concurrent_batches,
+            progress_callback=progress_callback,
+            section_map=section_map,
+            global_kv_pairs=global_kv_pairs,
         )
 
-        if "no findings" in response.lower() or "all items" in response.lower():
-            return []
-
-        return [
-            ComplianceFinding(
-                rule_id=f"CHK-P{page_num}",
-                rule_category="checklist",
-                severity="major",
-                page_num=page_num,
-                description=response[:500],
-                recommendation="Complete all required checklist items",
-            )
-        ]
-
-    async def review_document(self, extractions: list[dict]) -> list[ComplianceFinding]:
-        all_findings: list[ComplianceFinding] = []
-        for ext in extractions:
-            page_num = ext.get("page_num", 0)
-            markdown = ext.get("markdown", "")
-            if markdown.strip():
-                findings = await self.review_page(page_num, markdown)
-                all_findings.extend(findings)
-        return all_findings
+        return assemble_agent_report(AGENT_NAME, all_rules, results, pages)

@@ -91,7 +91,7 @@ The application requires the following Azure resources for staging/production:
 | **Database** | Azure Database for PostgreSQL | Document metadata and processing state |
 | **Container Instance** | Azure Container Instances | Runs Ollama for local LLM inference |
 | **Static Web Apps** | Azure Static Web Apps | Hosts the Next.js frontend |
-| **Document Intelligence** | Azure AI Services | Secondary OCR engine |
+| **Document Intelligence** | Azure AI Services | OCR engine for `azure_di` pipeline mode |
 | **Blob Storage** | Azure Storage | Document file storage (when `storage.backend = azure_blob`) |
 
 ## Pipeline Variables

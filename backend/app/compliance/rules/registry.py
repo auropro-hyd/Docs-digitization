@@ -1,0 +1,555 @@
+"""Rule registry: loads audit rules from markdown files, groups by category, creates batches.
+
+Supports read and write operations. Writes serialize structured data back to markdown
+and persist agent metadata to agents_meta.json.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import threading
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+_RULES_DIR = Path(__file__).resolve().parent
+_META_FILE = _RULES_DIR / "agents_meta.json"
+
+_CATEGORY_RE = re.compile(r"^(?:Category:\s*)?(.+?)(?:\s+Rules?)?:?\s*$", re.IGNORECASE)
+_RULE_RE = re.compile(r"^(\d+)\.\s+(.+)$")
+
+_SEVERITY_HINTS: dict[str, str] = {
+    "attributable": "major",
+    "legible": "minor",
+    "contemporaneous": "major",
+    "original": "major",
+    "accurate": "critical",
+    "complete": "major",
+    "consistent": "major",
+    "enduring": "minor",
+    "available": "minor",
+    "equipment identification": "major",
+    "sop references": "major",
+    "environmental conditions": "major",
+    "corrections and amendments": "critical",
+    "material reconciliation": "critical",
+    "yield calculations": "major",
+    "in-process controls": "major",
+    "checkbox completeness": "major",
+    "signature verification": "critical",
+    "date completeness": "major",
+    "blank field detection": "major",
+    "attachment verification": "minor",
+    "cross-contamination checklists": "major",
+    "equipment operation checklists": "minor",
+    "sop reference validation": "major",
+    "step alignment": "major",
+    "deviation documentation": "critical",
+    "parameter compliance": "major",
+    "material handling": "major",
+}
+
+
+@dataclass
+class AgentMeta:
+    id: str
+    label: str
+    description: str = ""
+
+
+_SECTIONS_RE = re.compile(r"\[sections:\s*(.+?)\]")
+
+
+_DOCUMENT_SCOPE_CATEGORIES = frozenset({
+    "enduring", "available",
+})
+
+
+@dataclass
+class AuditRule:
+    id: str
+    number: int
+    category: str
+    category_display: str
+    agent: str
+    text: str
+    severity_hint: str = "observation"
+    scope: str = "page"  # "page" | "document" | "section"
+    context_sections: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RuleBatch:
+    batch_id: str
+    category: str
+    agent: str
+    rules: list[AuditRule] = field(default_factory=list)
+
+
+# ── Parsing helpers ──────────────────────────────────────────
+
+
+def _slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+
+
+def _finalise_rule(
+    agent: str,
+    num: int,
+    raw_text: str,
+    category: str,
+    category_display: str,
+    severity: str,
+) -> AuditRule:
+    """Build an AuditRule from accumulated text, extracting [sections: ...] if present."""
+    context_sections: list[str] = []
+    sec_match = _SECTIONS_RE.search(raw_text)
+    if sec_match:
+        context_sections = [s.strip() for s in sec_match.group(1).split(",")]
+        raw_text = _SECTIONS_RE.sub("", raw_text).strip()
+
+    prefix = agent.upper()[:3]
+    cat_short = category[:3].upper()
+    rule_id = f"{prefix}-{cat_short}{num}"
+
+    scope = "document" if category in _DOCUMENT_SCOPE_CATEGORIES else "page"
+
+    return AuditRule(
+        id=rule_id,
+        number=num,
+        category=category,
+        category_display=category_display,
+        agent=agent,
+        text=raw_text,
+        severity_hint=severity,
+        scope=scope,
+        context_sections=context_sections,
+    )
+
+
+def _parse_rules_file(path: Path, agent: str) -> list[AuditRule]:
+    """Parse a markdown rules file into a list of AuditRule objects.
+
+    Supports multi-line rules: continuation lines (indented or plain text that
+    doesn't start a new rule/category/separator) are appended to the current rule.
+    """
+    rules: list[AuditRule] = []
+    current_category = "general"
+    current_display = "General"
+
+    pending_num: int | None = None
+    pending_text: str = ""
+
+    def _flush() -> None:
+        nonlocal pending_num, pending_text
+        if pending_num is not None and pending_text:
+            severity = _SEVERITY_HINTS.get(current_display.lower(), "observation")
+            rules.append(_finalise_rule(
+                agent, pending_num, pending_text,
+                current_category, current_display, severity,
+            ))
+        pending_num = None
+        pending_text = ""
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("--") or stripped.startswith("You are"):
+            _flush()
+            continue
+
+        cat_match = _CATEGORY_RE.match(stripped)
+        if cat_match and not _RULE_RE.match(stripped):
+            _flush()
+            current_display = cat_match.group(1).strip()
+            current_category = _slugify(current_display)
+            continue
+
+        rule_match = _RULE_RE.match(stripped)
+        if rule_match:
+            _flush()
+            pending_num = int(rule_match.group(1))
+            pending_text = rule_match.group(2).strip()
+            continue
+
+        if pending_num is not None:
+            pending_text += " " + stripped
+
+    _flush()
+    return rules
+
+
+def _load_agents_meta() -> list[AgentMeta]:
+    if _META_FILE.exists():
+        data = json.loads(_META_FILE.read_text(encoding="utf-8"))
+        return [AgentMeta(**item) for item in data]
+    return []
+
+
+def _save_agents_meta(meta: list[AgentMeta]) -> None:
+    _META_FILE.write_text(
+        json.dumps([asdict(m) for m in meta], indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _rule_file_path(agent_id: str) -> Path:
+    return _RULES_DIR / f"{agent_id}_rules.md"
+
+
+# ── Registry ─────────────────────────────────────────────────
+
+
+class RuleRegistry:
+    """Loads and manages all audit rules with full CRUD support."""
+
+    def __init__(self) -> None:
+        self._rules: dict[str, list[AuditRule]] = {}
+        self._meta: list[AgentMeta] = []
+        self._locks: dict[str, threading.Lock] = {}
+        self._global_lock = threading.Lock()
+        self._load_all()
+
+    def _load_all(self) -> None:
+        self._meta = _load_agents_meta()
+        self._rules.clear()
+
+        for meta in self._meta:
+            path = _rule_file_path(meta.id)
+            if path.exists():
+                self._rules[meta.id] = _parse_rules_file(path, meta.id)
+            else:
+                self._rules[meta.id] = []
+
+        for md_file in _RULES_DIR.glob("*_rules.md"):
+            agent_id = md_file.stem.replace("_rules", "")
+            if agent_id not in self._rules:
+                self._rules[agent_id] = _parse_rules_file(md_file, agent_id)
+                if not any(m.id == agent_id for m in self._meta):
+                    self._meta.append(AgentMeta(id=agent_id, label=agent_id.upper()))
+
+    def _get_lock(self, agent: str) -> threading.Lock:
+        with self._global_lock:
+            if agent not in self._locks:
+                self._locks[agent] = threading.Lock()
+            return self._locks[agent]
+
+    # ── Read methods ─────────────────────────────────────────
+
+    def get_rules(self, agent: str) -> list[AuditRule]:
+        return list(self._rules.get(agent, []))
+
+    def get_categories(self, agent: str) -> list[str]:
+        seen: dict[str, None] = {}
+        for r in self.get_rules(agent):
+            seen.setdefault(r.category, None)
+        return list(seen)
+
+    def get_category_display(self, agent: str) -> dict[str, str]:
+        return {r.category: r.category_display for r in self.get_rules(agent)}
+
+    def get_batches(
+        self, agent: str, batch_size: int = 7, by_category: bool = True,
+        scope_filter: str | None = None,
+    ) -> list[RuleBatch]:
+        rules = self.get_rules(agent)
+        if scope_filter:
+            rules = [r for r in rules if r.scope == scope_filter]
+        if not rules:
+            return []
+
+        batches: list[RuleBatch] = []
+
+        if by_category:
+            groups: dict[str, list[AuditRule]] = {}
+            for r in rules:
+                groups.setdefault(r.category, []).append(r)
+            for cat, cat_rules in groups.items():
+                for i in range(0, len(cat_rules), batch_size):
+                    chunk = cat_rules[i : i + batch_size]
+                    batch_id = f"{agent}-{cat}-{i // batch_size}"
+                    batches.append(RuleBatch(
+                        batch_id=batch_id, category=cat, agent=agent, rules=chunk,
+                    ))
+        else:
+            for i in range(0, len(rules), batch_size):
+                chunk = rules[i : i + batch_size]
+                batch_id = f"{agent}-batch-{i // batch_size}"
+                cat = chunk[0].category if chunk else "general"
+                batches.append(RuleBatch(
+                    batch_id=batch_id, category=cat, agent=agent, rules=chunk,
+                ))
+
+        return batches
+
+    @property
+    def agents(self) -> list[str]:
+        return list(self._rules.keys())
+
+    def summary(self) -> dict[str, int]:
+        return {agent: len(rules) for agent, rules in self._rules.items()}
+
+    def get_agent_meta(self, agent: str) -> AgentMeta | None:
+        return next((m for m in self._meta if m.id == agent), None)
+
+    def get_all_agents_meta(self) -> list[AgentMeta]:
+        return list(self._meta)
+
+    # ── Write: agents ────────────────────────────────────────
+
+    def add_agent(self, agent_id: str, label: str, description: str = "") -> AgentMeta:
+        if any(m.id == agent_id for m in self._meta):
+            raise ValueError(f"Agent '{agent_id}' already exists")
+
+        meta = AgentMeta(id=agent_id, label=label, description=description)
+        self._meta.append(meta)
+        self._rules[agent_id] = []
+
+        path = _rule_file_path(agent_id)
+        path.write_text(
+            f"{'─' * 50}\n{label.upper()} RULES\n{'─' * 50}\n\n",
+            encoding="utf-8",
+        )
+
+        _save_agents_meta(self._meta)
+        return meta
+
+    def update_agent_meta(
+        self, agent_id: str, label: str | None = None, description: str | None = None,
+    ) -> AgentMeta:
+        meta = self.get_agent_meta(agent_id)
+        if meta is None:
+            raise ValueError(f"Agent '{agent_id}' not found")
+
+        if label is not None:
+            meta.label = label
+        if description is not None:
+            meta.description = description
+
+        _save_agents_meta(self._meta)
+        return meta
+
+    def delete_agent(self, agent_id: str) -> bool:
+        meta = self.get_agent_meta(agent_id)
+        if meta is None:
+            raise ValueError(f"Agent '{agent_id}' not found")
+
+        self._meta = [m for m in self._meta if m.id != agent_id]
+        self._rules.pop(agent_id, None)
+
+        path = _rule_file_path(agent_id)
+        if path.exists():
+            path.unlink()
+
+        _save_agents_meta(self._meta)
+        return True
+
+    # ── Write: categories ────────────────────────────────────
+
+    def add_category(self, agent: str, category_display: str) -> str:
+        if agent not in self._rules:
+            raise ValueError(f"Agent '{agent}' not found")
+
+        category_id = _slugify(category_display)
+        existing = self.get_categories(agent)
+        if category_id in existing:
+            raise ValueError(f"Category '{category_id}' already exists in agent '{agent}'")
+
+        with self._get_lock(agent):
+            self._write_file(agent)
+
+            path = _rule_file_path(agent)
+            content = path.read_text(encoding="utf-8") if path.exists() else ""
+            content = content.rstrip() + f"\n\n---\n\nCategory: {category_display}\n\n"
+            path.write_text(content, encoding="utf-8")
+
+            self._rules[agent] = _parse_rules_file(path, agent)
+
+        return category_id
+
+    # ── Write: rules ─────────────────────────────────────────
+
+    def add_rule(
+        self,
+        agent: str,
+        category: str,
+        category_display: str,
+        text: str,
+        severity_hint: str = "observation",
+    ) -> AuditRule:
+        if agent not in self._rules:
+            raise ValueError(f"Agent '{agent}' not found")
+
+        with self._get_lock(agent):
+            existing_in_cat = [r for r in self._rules[agent] if r.category == category]
+            next_num = max((r.number for r in existing_in_cat), default=0) + 1
+
+            prefix = agent.upper()[:3]
+            cat_short = category[:3].upper()
+            rule_id = f"{prefix}-{cat_short}{next_num}"
+
+            rule = AuditRule(
+                id=rule_id,
+                number=next_num,
+                category=category,
+                category_display=category_display,
+                agent=agent,
+                text=text,
+                severity_hint=severity_hint,
+            )
+            self._rules[agent].append(rule)
+            self._write_file(agent)
+
+        return rule
+
+    def bulk_add_rules(
+        self,
+        agent: str,
+        category: str,
+        category_display: str,
+        texts: list[str],
+        severity_hint: str = "observation",
+    ) -> list[AuditRule]:
+        if agent not in self._rules:
+            raise ValueError(f"Agent '{agent}' not found")
+        if not texts:
+            return []
+
+        added: list[AuditRule] = []
+        with self._get_lock(agent):
+            existing_in_cat = [r for r in self._rules[agent] if r.category == category]
+            next_num = max((r.number for r in existing_in_cat), default=0) + 1
+            prefix = agent.upper()[:3]
+            cat_short = category[:3].upper()
+
+            for text in texts:
+                text = text.strip()
+                if not text:
+                    continue
+                rule_id = f"{prefix}-{cat_short}{next_num}"
+                rule = AuditRule(
+                    id=rule_id,
+                    number=next_num,
+                    category=category,
+                    category_display=category_display,
+                    agent=agent,
+                    text=text,
+                    severity_hint=severity_hint,
+                )
+                self._rules[agent].append(rule)
+                added.append(rule)
+                next_num += 1
+
+            self._write_file(agent)
+
+        return added
+
+    def update_rule(
+        self,
+        rule_id: str,
+        text: str | None = None,
+        severity_hint: str | None = None,
+    ) -> AuditRule:
+        for agent, rules in self._rules.items():
+            for rule in rules:
+                if rule.id == rule_id:
+                    with self._get_lock(agent):
+                        if text is not None:
+                            rule.text = text
+                        if severity_hint is not None:
+                            rule.severity_hint = severity_hint
+                        self._write_file(agent)
+                    return rule
+
+        raise ValueError(f"Rule '{rule_id}' not found")
+
+    def delete_rule(self, rule_id: str) -> bool:
+        for agent, rules in self._rules.items():
+            for i, rule in enumerate(rules):
+                if rule.id == rule_id:
+                    category = rule.category
+                    with self._get_lock(agent):
+                        rules.pop(i)
+                        self._renumber_category(agent, category)
+                        self._write_file(agent)
+                    return True
+
+        raise ValueError(f"Rule '{rule_id}' not found")
+
+    def _renumber_category(self, agent: str, category: str) -> None:
+        """Re-number rules within a category and regenerate IDs."""
+        prefix = agent.upper()[:3]
+        cat_short = category[:3].upper()
+        num = 1
+        for rule in self._rules[agent]:
+            if rule.category == category:
+                rule.number = num
+                rule.id = f"{prefix}-{cat_short}{num}"
+                num += 1
+
+    # ── Serialization ────────────────────────────────────────
+
+    def _write_file(self, agent: str) -> None:
+        path = _rule_file_path(agent)
+        content = self._serialize_to_markdown(agent)
+        path.write_text(content, encoding="utf-8")
+
+    def _serialize_to_markdown(self, agent: str) -> str:
+        rules = self._rules.get(agent, [])
+        meta = self.get_agent_meta(agent)
+        title = meta.label.upper() if meta else agent.upper()
+
+        lines: list[str] = [
+            "─" * 50,
+            f"{title} RULES",
+            "─" * 50,
+            "",
+        ]
+
+        categories_ordered: list[str] = []
+        cat_display: dict[str, str] = {}
+        cat_rules: dict[str, list[AuditRule]] = {}
+        for r in rules:
+            if r.category not in cat_rules:
+                categories_ordered.append(r.category)
+                cat_display[r.category] = r.category_display
+                cat_rules[r.category] = []
+            cat_rules[r.category].append(r)
+
+        for idx, cat in enumerate(categories_ordered):
+            if idx > 0:
+                lines.append("---")
+                lines.append("")
+            lines.append(f"Category: {cat_display[cat]}")
+            lines.append("")
+            for rule in cat_rules[cat]:
+                rule_line = f"{rule.number}. {rule.text}"
+                if rule.context_sections:
+                    rule_line += f" [sections: {', '.join(rule.context_sections)}]"
+                lines.append(rule_line)
+            lines.append("")
+
+        return "\n".join(lines)
+
+
+# ── Singleton access ─────────────────────────────────────────
+
+_registry: RuleRegistry | None = None
+_registry_lock = threading.Lock()
+
+
+def get_registry() -> RuleRegistry:
+    global _registry
+    if _registry is None:
+        with _registry_lock:
+            if _registry is None:
+                _registry = RuleRegistry()
+    return _registry
+
+
+def invalidate_registry() -> None:
+    global _registry
+    with _registry_lock:
+        _registry = None

@@ -1,119 +1,126 @@
 # Quick Commands Reference
 
-Copy-paste commands for common Auto Transcription development tasks.
+Copy-paste commands for common development tasks.
 
-> **Tip:** A project-root [Makefile](../Makefile) wraps most of these -- run `make help` to see all targets.
+> **Tip:** The root [Makefile](../Makefile) wraps most of these — run `make help` to see all targets.
+
+---
+
+## First-Time Setup
+
+```bash
+make setup                                # Full setup: venv + deps + infra
+```
+
+Or step by step:
+
+```bash
+make venv                                 # Create Python virtual environment
+make install                              # Install backend + frontend deps
+make infra-up                             # Start PostgreSQL + Ollama containers
+cp backend/.env.example backend/.env      # Create .env from template
+cp frontend/.env.example frontend/.env.local  # Create frontend .env
+# Edit backend/.env with your Azure DI credentials
+```
+
+---
+
+## Development
+
+```bash
+make dev                                  # Start backend + frontend (Ctrl+C stops both)
+make backend                              # Start backend only (port 8000)
+make frontend                             # Start frontend only (port 3000)
+```
+
+---
+
+## Pipeline Mode
+
+```bash
+# Switch to Azure DI (default — fast, no local ML)
+export AT_PIPELINE__MODE=azure_di
+
+# Switch to Marker + Docling (fully offline)
+export AT_PIPELINE__MODE=marker_docling
+```
+
+Or set in `backend/.env`:
+```
+AT_PIPELINE__MODE=azure_di
+```
+
+---
+
+## Processing Documents
+
+```bash
+# Health check
+curl http://localhost:8000/api/documents/health
+
+# Upload and process a PDF
+curl -X POST http://localhost:8000/api/documents/process-file \
+  -F "file=@path/to/document.pdf"
+
+# Check results (replace DOC_ID)
+curl http://localhost:8000/api/documents/DOC_ID
+
+# List all documents
+curl http://localhost:8000/api/documents/
+```
+
+---
+
+## Testing
+
+```bash
+make test                                 # Run unit tests
+make test-all                             # Run unit + integration tests
+make test-cov                             # Run with coverage report
+```
+
+---
+
+## Code Quality
+
+```bash
+make lint                                 # Lint backend (ruff)
+make lint-fix                             # Auto-fix lint issues
+make format                               # Auto-format backend
+make format-check                         # Check formatting (no changes)
+make lint-frontend                        # Lint frontend (ESLint)
+make check-all                            # Run ALL checks (lint + format + types + tests)
+```
 
 ---
 
 ## Infrastructure
 
 ```bash
-cd backend && docker compose up -d          # Start PostgreSQL + Ollama
-```
-
-```bash
-cd backend && docker compose down           # Stop all Docker services
-```
-
-```bash
-cd backend && docker compose logs -f postgres   # Tail PostgreSQL logs
-```
-
-```bash
-cd backend && docker compose logs -f ollama     # Tail Ollama logs
+make infra-up                             # Start PostgreSQL + Ollama
+make infra-down                           # Stop containers
+make infra-status                         # Show container status
+make infra-logs                           # Tail all container logs
 ```
 
 ---
 
-## Backend
+## Database
 
 ```bash
-cd backend && pip install -e ".[dev]"       # Install backend deps (editable)
-```
-
-```bash
-cd backend && uvicorn app.main:app --reload # Start backend (dev with hot-reload)
-```
-
-```bash
-cd backend && uvicorn app.main:app --host 0.0.0.0 --port 8000   # Start backend (prod-like)
-```
-
-```bash
-PYTHONPATH=backend pytest backend/tests/unit -v         # Run unit tests
-```
-
-```bash
-PYTHONPATH=backend pytest backend/tests/integration -v  # Run integration tests
-```
-
-```bash
-cd backend && ruff check app/              # Lint
-```
-
-```bash
-cd backend && ruff format app/             # Auto-format
-```
-
-```bash
-cd backend && pyright                      # Type check
+make db-shell                             # Open psql shell
+make db-logs                              # Tail PostgreSQL logs
+make db-reset                             # Drop and recreate database (destructive!)
 ```
 
 ---
 
-## Frontend
+## Ollama (marker_docling mode only)
 
 ```bash
-cd frontend && npm install                 # Install frontend deps
-```
-
-```bash
-cd frontend && npm run dev                 # Start frontend (dev at localhost:3000)
-```
-
-```bash
-cd frontend && npm run build               # Production build
-```
-
-```bash
-cd frontend && npm run lint                # Lint
-```
-
----
-
-## Ollama Models
-
-```bash
-ollama pull gemma2:9b                      # Pull main model
-```
-
-```bash
-ollama pull gemma2:2b                      # Pull lighter model
-```
-
-```bash
-ollama list                                # List installed models
-```
-
-```bash
-curl http://localhost:11434/api/tags       # Check Ollama via API
-```
-
----
-
-## Environment
-
-```bash
-export AT_ENV=dev                          # Set environment to dev
-```
-
-```bash
-export AT_ENV=test                         # Set environment to test
-```
-
-```bash
-cat backend/.env                           # Check current env vars
+make ollama-pull                          # Pull required models (gemma2:9b + 2b)
+make ollama-list                          # List installed models
+make ollama-logs                          # Tail Ollama logs
 ```
 
 ---
@@ -121,11 +128,40 @@ cat backend/.env                           # Check current env vars
 ## Docker (Production)
 
 ```bash
-docker build -t autotranscription-backend backend/     # Build backend image
+make docker-build                         # Build backend Docker image
+make docker-up                            # Start full stack in Docker
+make docker-down                          # Stop full stack
+make docker-logs                          # Tail backend container logs
 ```
 
+---
+
+## Troubleshooting
+
 ```bash
-docker run -p 8000:8000 autotranscription-backend      # Run backend container
+make kill                                 # Kill dev servers + clear stale lock files
+make clean                                # Remove caches and build artifacts
+```
+
+If `make dev` fails with "Unable to acquire lock", run `make kill` first — it removes the stale Next.js lock file even when no process is running.
+
+---
+
+## Cleanup
+
+```bash
+make clean                                # Remove caches and build artifacts
+make deep-clean                           # Also remove venv + node_modules
+make reset                                # Full reset (deps + infra + database)
+```
+
+---
+
+## Environment
+
+```bash
+export AT_ENV=dev                         # Set environment (dev/staging/prod/test)
+cat backend/.env                          # Check current env vars
 ```
 
 ---
@@ -135,6 +171,7 @@ docker run -p 8000:8000 autotranscription-backend      # Run backend container
 | Service | URL |
 |---------|-----|
 | Backend API | <http://localhost:8000> |
+| Health check | <http://localhost:8000/api/documents/health> |
 | Swagger docs | <http://localhost:8000/docs> |
 | ReDoc | <http://localhost:8000/redoc> |
 | Frontend | <http://localhost:3000> |

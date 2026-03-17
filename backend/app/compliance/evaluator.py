@@ -1,0 +1,523 @@
+"""Rule-batch evaluator: shared engine for all compliance agents.
+
+Each call evaluates a small batch of rules against a single page of content
+using ``generate_structured()`` with the ``RuleBatchResult`` schema.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import defaultdict
+
+from app.compliance.context_builder import build_enriched_context, classify_page_type
+from app.compliance.models import (
+    AGENT_DISPLAY_NAMES,
+    SEVERITY_WEIGHTS,
+    AgentReport,
+    CategoryScore,
+    ComplianceFinding,
+    RuleBatchResult,
+    RuleEvaluation,
+    RuleResult,
+)
+from app.config.settings import get_settings
+from app.compliance.rules.registry import AuditRule, RuleBatch
+from app.core.ports.llm import LLMProvider
+
+logger = logging.getLogger(__name__)
+
+_STATUS_SEVERITY = {
+    "non_compliant": 4,
+    "uncertain": 3,
+    "error": 2,
+    "compliant": 1,
+    "not_applicable": 0,
+}
+
+_VALID_STATUSES = {"compliant", "non_compliant", "not_applicable", "uncertain", "error"}
+
+_SIGNATURE_KEYWORDS = frozenset({
+    "signature", "initial", "initials", "initialed", "initialled",
+    "sign", "signed", "countersign", "countersigned",
+})
+
+
+def _is_signature_rule(rule: AuditRule) -> bool:
+    text_lower = rule.text.lower()
+    return any(kw in text_lower for kw in _SIGNATURE_KEYWORDS)
+
+_SYSTEM_PROMPTS: dict[str, str] = {
+    "alcoa": (
+        "You are an ALCOA++ compliance reviewer for pharmaceutical batch production records. "
+        "You evaluate data-integrity rules against OCR-extracted markdown content. "
+        "Base decisions strictly on explicit evidence visible in the content. "
+        "If a rule cannot be evaluated from the given page, mark it not_applicable."
+    ),
+    "gmp": (
+        "You are a GMP (Good Manufacturing Practice) compliance reviewer. "
+        "You evaluate GMP documentation rules against pharmaceutical manufacturing records. "
+        "Base decisions strictly on explicit evidence visible in the content."
+    ),
+    "checklist": (
+        "You are a checklist verification specialist for pharmaceutical documents. "
+        "You verify completeness of checklists, signatures, dates, and required fields. "
+        "Base decisions strictly on explicit evidence visible in the content."
+    ),
+    "sop": (
+        "You are an SOP compliance reviewer for pharmaceutical manufacturing. "
+        "You verify that manufacturing steps align with Standard Operating Procedures. "
+        "Base decisions strictly on explicit evidence visible in the content."
+    ),
+}
+
+
+def _build_batch_prompt(
+    rules: list[AuditRule],
+    enriched_content: str,
+    page_num: int,
+    section_info: dict | None = None,
+) -> str:
+    rules_section = "\n".join(
+        f"- [{r.id}] {r.text}" for r in rules
+    )
+
+    context_header = ""
+    if section_info:
+        sec_name = section_info.get("section_name", "Unknown")
+        sec_type = section_info.get("section_type", "unknown")
+        start = section_info.get("start_page", "?")
+        end = section_info.get("end_page", "?")
+        try:
+            page_pos = page_num - int(start) + 1
+            total_in_sec = int(end) - int(start) + 1
+        except (ValueError, TypeError):
+            page_pos = page_num
+            total_in_sec = "?"
+        context_header = (
+            f"DOCUMENT CONTEXT:\n"
+            f'This page belongs to section: "{sec_name}" '
+            f"(type: {sec_type}, pages {start}-{end}).\n"
+            f"This is page {page_pos} of {total_in_sec} within this section.\n\n"
+        )
+
+    return (
+        f"{context_header}"
+        f"Evaluate ONLY the following {len(rules)} rules against this page.\n\n"
+        f"You are given BOTH the OCR markdown AND structured metadata extracted by "
+        f"document intelligence. USE BOTH to make your assessment:\n"
+        f"- The STRUCTURED METADATA section contains machine-detected signatures, "
+        f"handwriting indicators, form field key-value pairs, and checkbox states.\n"
+        f"- If metadata says 'Signatures detected: 0', do NOT flag missing signatures "
+        f"unless the page content clearly requires them (e.g., a sign-off section).\n"
+        f"- If metadata says 'Handwritten regions: 0', the page is likely printed/typed.\n"
+        f"- Use key-value pairs to verify form fields (e.g., 'Done By', 'Date', 'Checked By').\n"
+        f"- Empty key-value fields (value is [empty/blank]) indicate missing entries.\n\n"
+        f"For each rule, return a JSON object with:\n"
+        f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
+        f"  confidence (float 0.0-1.0),\n"
+        f"  severity (only if non_compliant: \"critical\"|\"major\"|\"minor\"|\"observation\"),\n"
+        f"  reasoning (REQUIRED for ALL statuses: 1-3 sentence explanation of WHY, "
+        f"referencing specific elements from the page content or metadata),\n"
+        f"  evidence (REQUIRED for ALL statuses: verbatim quote or metadata reference),\n"
+        f"  description (what the issue is — empty only if compliant),\n"
+        f"  recommendation (remediation guidance — empty only if compliant).\n\n"
+        f"IMPORTANT: If a rule is about signatures/initials/dates but the page has no "
+        f"sign-off sections or form fields requiring them, mark it not_applicable — "
+        f"not every page needs signatures.\n\n"
+        f"Confidence guidelines:\n"
+        f"  1.0 = Absolutely certain based on clear evidence\n"
+        f"  0.8-0.99 = High confidence with strong evidence\n"
+        f"  0.6-0.79 = Moderate confidence, some ambiguity\n"
+        f"  0.4-0.59 = Low confidence, significant ambiguity\n"
+        f"  <0.4 = Very uncertain, insufficient evidence\n\n"
+        f"Additionally, note any cross-page references (material names, equipment IDs, "
+        f"batch numbers, values to verify against other sections) as cross_references.\n\n"
+        f"RULES TO EVALUATE:\n{rules_section}\n\n"
+        f"{enriched_content}"
+    )
+
+
+class RuleBatchEvaluator:
+    """Evaluates a batch of rules against one page with retry on failure."""
+
+    _MAX_RETRIES = 1
+
+    async def evaluate_batch(
+        self,
+        batch: RuleBatch,
+        page_content: str,
+        page_num: int,
+        llm: LLMProvider,
+        section_info: dict | None = None,
+    ) -> tuple[str, int, RuleBatchResult]:
+        """Returns (batch_id, page_num, result)."""
+        if not page_content.strip():
+            evals = [
+                RuleEvaluation(rule_id=r.id, status="not_applicable")
+                for r in batch.rules
+            ]
+            return batch.batch_id, page_num, RuleBatchResult(evaluations=evals)
+
+        system = _SYSTEM_PROMPTS.get(batch.agent, _SYSTEM_PROMPTS["alcoa"])
+        last_error: Exception | None = None
+
+        for attempt in range(1 + self._MAX_RETRIES):
+            rules_to_eval = batch.rules
+            if attempt > 0 and len(batch.rules) > 3:
+                rules_to_eval = batch.rules[:3]
+                logger.info(
+                    "Retry %d for batch %s page %d with reduced rules (%d→%d)",
+                    attempt, batch.batch_id, page_num, len(batch.rules), len(rules_to_eval),
+                )
+
+            prompt = _build_batch_prompt(rules_to_eval, page_content, page_num, section_info)
+
+            try:
+                result = await llm.generate_structured(prompt, RuleBatchResult, system=system)
+                if not isinstance(result, RuleBatchResult):
+                    result = RuleBatchResult.model_validate(result)
+
+                if attempt > 0 and len(rules_to_eval) < len(batch.rules):
+                    evaluated_ids = {ev.rule_id for ev in result.evaluations}
+                    for r in batch.rules:
+                        if r.id not in evaluated_ids:
+                            result.evaluations.append(RuleEvaluation(
+                                rule_id=r.id, status="error",
+                                description="Skipped during retry (batch reduced)",
+                            ))
+
+                return batch.batch_id, page_num, result
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Batch %s page %d attempt %d failed: %s",
+                    batch.batch_id, page_num, attempt + 1, exc,
+                )
+
+        logger.error("Batch %s page %d exhausted retries", batch.batch_id, page_num)
+        evals = [
+            RuleEvaluation(rule_id=r.id, status="error", description="Evaluation failed after retry")
+            for r in batch.rules
+        ]
+        return batch.batch_id, page_num, RuleBatchResult(evaluations=evals)
+
+
+async def run_agent_evaluation(
+    agent: str,
+    batches: list[RuleBatch],
+    extractions: list[dict],
+    llm: LLMProvider,
+    max_concurrent: int = 10,
+    progress_callback=None,
+    section_map: dict[int, dict] | None = None,
+    global_kv_pairs: list[dict] | None = None,
+) -> list[tuple[str, int, RuleBatchResult]]:
+    """Fan-out all (batch x page) combos for one agent, with concurrency limit."""
+    evaluator = RuleBatchEvaluator()
+    semaphore = asyncio.Semaphore(max_concurrent)
+    results: list[tuple[str, int, RuleBatchResult]] = []
+    total_tasks = len(batches) * len(extractions)
+    completed = 0
+
+    page_type_cache: dict[int, str] = {}
+
+    async def _run(batch: RuleBatch, ext: dict) -> tuple[str, int, RuleBatchResult]:
+        nonlocal completed
+        page_num = ext.get("page_num", 0)
+
+        if page_num not in page_type_cache:
+            page_type_cache[page_num] = classify_page_type(ext)
+        page_type = page_type_cache[page_num]
+
+        if page_type in ("printed", "cover", "index"):
+            sig_rules = [r for r in batch.rules if _is_signature_rule(r)]
+            if sig_rules and len(sig_rules) == len(batch.rules):
+                evals = [
+                    RuleEvaluation(
+                        rule_id=r.id, status="not_applicable",
+                        reasoning=f"Page {page_num} is a {page_type} page with no form fields or signature areas.",
+                    )
+                    for r in batch.rules
+                ]
+                completed += 1
+                result = (batch.batch_id, page_num, RuleBatchResult(evaluations=evals))
+                if progress_callback:
+                    await progress_callback(completed, total_tasks, batch, result)
+                return result
+
+        sec_info = section_map.get(page_num) if section_map else None
+        enriched = build_enriched_context(ext, page_num, global_kv_pairs=global_kv_pairs)
+        async with semaphore:
+            res = await evaluator.evaluate_batch(
+                batch, enriched, page_num, llm,
+                section_info=sec_info,
+            )
+            completed += 1
+            if progress_callback:
+                await progress_callback(completed, total_tasks, batch, res)
+            return res
+
+    tasks = [_run(batch, ext) for batch in batches for ext in extractions]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    valid: list[tuple[str, int, RuleBatchResult]] = []
+    for r in results:
+        if isinstance(r, Exception):
+            logger.error("Batch evaluation failed: %s", r)
+        else:
+            valid.append(r)
+
+    return valid
+
+
+def _build_document_scope_prompt(
+    rules: list[AuditRule],
+    summary_content: str,
+) -> str:
+    """Prompt for document-level rules (not per-page)."""
+    rules_section = "\n".join(f"- [{r.id}] {r.text}" for r in rules)
+    return (
+        f"Evaluate ONLY the following {len(rules)} rules against this DOCUMENT-LEVEL summary.\n\n"
+        f"These rules are about document-wide properties (archival, retention, "
+        f"availability, backup) — NOT about individual page content.\n"
+        f"Assess whether the document as a whole satisfies each rule based on the "
+        f"summary information provided.\n\n"
+        f"For each rule, return a JSON object with:\n"
+        f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
+        f"  confidence (float 0.0-1.0),\n"
+        f"  severity (only if non_compliant),\n"
+        f"  reasoning (REQUIRED: 1-3 sentence explanation),\n"
+        f"  evidence (REQUIRED: reference specific content from the summary),\n"
+        f"  description (what the issue is — empty only if compliant),\n"
+        f"  recommendation (empty only if compliant).\n\n"
+        f"RULES TO EVALUATE:\n{rules_section}\n\n"
+        f"{summary_content}"
+    )
+
+
+async def run_document_scope_evaluation(
+    agent: str,
+    batches: list[RuleBatch],
+    extractions: list[dict],
+    llm: LLMProvider,
+) -> list[tuple[str, int | None, RuleBatchResult]]:
+    """Evaluate document-scope rules once against a document summary."""
+    if not batches or not extractions:
+        return []
+
+    first = extractions[0]
+    last = extractions[-1] if len(extractions) > 1 else first
+    total_pages = len(extractions)
+
+    summary_parts = [
+        f"DOCUMENT SUMMARY ({total_pages} pages total):\n",
+        f"--- First page (page {first.get('page_num', 1)}) ---\n{first.get('markdown', '')[:2000]}\n",
+    ]
+    if last is not first:
+        summary_parts.append(
+            f"--- Last page (page {last.get('page_num', total_pages)}) ---\n{last.get('markdown', '')[:2000]}\n"
+        )
+
+    hw_total = sum(e.get("handwritten_count", 0) for e in extractions)
+    sig_total = sum(len(e.get("signatures", [])) for e in extractions)
+    summary_parts.append(
+        f"--- Document-level stats ---\n"
+        f"Total pages: {total_pages}\n"
+        f"Total handwritten words across document: {hw_total}\n"
+        f"Total signature fields across document: {sig_total}\n"
+    )
+
+    summary_content = "\n".join(summary_parts)
+    system = _SYSTEM_PROMPTS.get(agent, _SYSTEM_PROMPTS["alcoa"])
+
+    results: list[tuple[str, int | None, RuleBatchResult]] = []
+    for batch in batches:
+        prompt = _build_document_scope_prompt(batch.rules, summary_content)
+        try:
+            result = await llm.generate_structured(prompt, RuleBatchResult, system=system)
+            if not isinstance(result, RuleBatchResult):
+                result = RuleBatchResult.model_validate(result)
+        except Exception:
+            logger.exception("Document-scope batch %s failed", batch.batch_id)
+            result = RuleBatchResult(evaluations=[
+                RuleEvaluation(rule_id=r.id, status="error", description="Evaluation failed")
+                for r in batch.rules
+            ])
+        results.append((batch.batch_id, None, result))
+
+    return results
+
+
+def _compute_hitl_status(confidence: float) -> str:
+    """Determine HITL status from confidence score."""
+    settings = get_settings()
+    threshold = settings.hitl.auto_approve_threshold
+    if confidence >= threshold:
+        return "auto_approved"
+    return "needs_review"
+
+
+def assemble_agent_report(
+    agent: str,
+    all_rules: list[AuditRule],
+    batch_results: list[tuple[str, int | None, RuleBatchResult]],
+    pages_reviewed: list[int],
+) -> AgentReport:
+    """Assemble an AgentReport from batch evaluation results."""
+    rule_map = {r.id: r for r in all_rules}
+
+    finding_counter = 0
+    all_findings: list[ComplianceFinding] = []
+    raw_eval_map: dict[str, RuleResult] = {}
+    per_rule_worst: dict[str, str] = {}
+
+    for _batch_id, page_num, result in batch_results:
+        for ev in result.evaluations:
+            rule = rule_map.get(ev.rule_id)
+            if not rule:
+                continue
+
+            status = ev.status if ev.status in _VALID_STATUSES else "uncertain"
+            confidence = max(0.0, min(1.0, ev.confidence))
+            pn_list: list[int] = [page_num] if page_num is not None else []
+
+            # Track worst status per rule for scoring (M1)
+            prev = per_rule_worst.get(ev.rule_id, "not_applicable")
+            if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(prev, 0):
+                per_rule_worst[ev.rule_id] = status
+
+            # Merge into audit trail (H2: keep worst status)
+            if ev.rule_id in raw_eval_map:
+                existing_re = raw_eval_map[ev.rule_id]
+                for pn in pn_list:
+                    if pn not in existing_re.page_numbers:
+                        existing_re.page_numbers.append(pn)
+                if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(existing_re.status, 0):
+                    existing_re.status = status
+                existing_re.confidence = min(existing_re.confidence, confidence)
+                if ev.reasoning and not existing_re.reasoning:
+                    existing_re.reasoning = ev.reasoning
+                if ev.evidence and not existing_re.evidence:
+                    existing_re.evidence = ev.evidence
+            else:
+                raw_eval_map[ev.rule_id] = RuleResult(
+                    rule_id=ev.rule_id,
+                    rule_text=rule.text,
+                    rule_category=rule.category,
+                    agent=agent,
+                    status=status,
+                    confidence=confidence,
+                    reasoning=ev.reasoning,
+                    evidence=ev.evidence,
+                    page_numbers=pn_list,
+                )
+
+            # H1: only create findings for real compliance issues, not errors
+            if status in ("non_compliant", "uncertain"):
+                finding_counter += 1
+                hitl_status = _compute_hitl_status(confidence)
+                finding = ComplianceFinding(
+                    finding_id=f"{agent}-{finding_counter}",
+                    rule_id=ev.rule_id,
+                    rule_text=rule.text,
+                    rule_category=rule.category,
+                    rule_category_display=rule.category_display,
+                    agent=agent,
+                    severity=ev.severity or rule.severity_hint,
+                    status=status,
+                    confidence=confidence,
+                    page_numbers=pn_list,
+                    reasoning=ev.reasoning,
+                    evidence=ev.evidence,
+                    description=ev.description,
+                    recommendation=ev.recommendation,
+                    hitl_status=hitl_status,
+                )
+                all_findings.append(finding)
+
+    deduped = _deduplicate_findings(all_findings)
+
+    severity_counts: dict[str, int] = defaultdict(int)
+    for f in deduped:
+        severity_counts[f.severity] += 1
+
+    # M1: Per-rule scoring — group by category, use worst-status per rule
+    cat_rule_statuses: dict[str, dict[str, str]] = defaultdict(dict)
+    for rule_id, worst in per_rule_worst.items():
+        rule = rule_map.get(rule_id)
+        if rule:
+            cat_rule_statuses[rule.category][rule_id] = worst
+
+    cat_displays = {r.category: r.category_display for r in all_rules}
+    cat_scores: list[CategoryScore] = []
+    for cat_id, rule_statuses in cat_rule_statuses.items():
+        compliant = sum(1 for s in rule_statuses.values() if s == "compliant")
+        non_compliant = sum(1 for s in rule_statuses.values() if s == "non_compliant")
+        not_applicable = sum(1 for s in rule_statuses.values() if s == "not_applicable")
+        uncertain = sum(1 for s in rule_statuses.values() if s == "uncertain")
+        error_count = sum(1 for s in rule_statuses.values() if s == "error")
+        applicable = len(rule_statuses) - not_applicable - error_count
+        score = (compliant / max(applicable, 1)) * 100.0 if applicable > 0 else 100.0
+
+        cat_finding_ids = [f.finding_id for f in deduped if f.rule_category == cat_id]
+
+        cat_scores.append(CategoryScore(
+            category_id=cat_id,
+            category_display=cat_displays.get(cat_id, cat_id),
+            agent=agent,
+            score=round(score, 1),
+            total_rules=len(rule_statuses),
+            compliant=compliant,
+            non_compliant=non_compliant,
+            not_applicable=not_applicable,
+            uncertain=uncertain,
+            finding_ids=cat_finding_ids,
+        ))
+
+    total_rules_scored = len(per_rule_worst)
+    total_compliant = sum(1 for s in per_rule_worst.values() if s == "compliant")
+    total_na = sum(1 for s in per_rule_worst.values() if s == "not_applicable")
+    total_error = sum(1 for s in per_rule_worst.values() if s == "error")
+    applicable = total_rules_scored - total_na - total_error
+    agent_score = (total_compliant / max(applicable, 1)) * 100.0 if applicable > 0 else 100.0
+
+    return AgentReport(
+        agent=agent,
+        agent_display=AGENT_DISPLAY_NAMES.get(agent, agent),
+        score=round(agent_score, 1),
+        total_rules=len(all_rules),
+        total_findings=len(deduped),
+        severity_counts=dict(severity_counts),
+        category_scores=cat_scores,
+        findings=deduped,
+        all_evaluations=sorted(raw_eval_map.values(), key=lambda r: r.rule_id),
+        pages_reviewed=sorted(set(pages_reviewed)),
+    )
+
+
+def _deduplicate_findings(findings: list[ComplianceFinding]) -> list[ComplianceFinding]:
+    """Merge findings for the same rule across different pages."""
+    by_rule: dict[str, ComplianceFinding] = {}
+    for f in findings:
+        if f.rule_id in by_rule:
+            existing = by_rule[f.rule_id]
+            for pn in f.page_numbers:
+                if pn not in existing.page_numbers:
+                    existing.page_numbers.append(pn)
+            if f.severity in SEVERITY_WEIGHTS and existing.severity in SEVERITY_WEIGHTS:
+                if SEVERITY_WEIGHTS[f.severity] > SEVERITY_WEIGHTS[existing.severity]:
+                    existing.severity = f.severity
+            if f.evidence and not existing.evidence:
+                existing.evidence = f.evidence
+            if f.reasoning and not existing.reasoning:
+                existing.reasoning = f.reasoning
+            existing.confidence = min(existing.confidence, f.confidence)
+            existing.hitl_status = _compute_hitl_status(existing.confidence)
+        else:
+            by_rule[f.rule_id] = f.model_copy()
+    return sorted(
+        by_rule.values(),
+        key=lambda f: SEVERITY_WEIGHTS.get(f.severity, 0),
+        reverse=True,
+    )

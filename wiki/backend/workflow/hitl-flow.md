@@ -18,11 +18,12 @@ Pharmaceutical batch manufacturing records carry legal and regulatory weight. A 
 
 ## Confidence-Based Routing
 
-After `merge_ocr_results` computes a [composite confidence score](../confidence-scoring/composite-scorer.md) for each page, the `route_by_confidence` conditional edge determines the next step:
+After the mode-specific merge node (`merge_azure_di_results` or `merge_marker_results`) computes a [composite confidence score](../confidence-scoring/composite-scorer.md) for each page, the `route_by_confidence` conditional edge determines the next step:
 
 ```mermaid
 flowchart TD
-    merge_ocr_results --> route{route_by_confidence}
+    merge_azure_di_results --> route{route_by_confidence}
+    merge_marker_results --> route
 
     route -->|"score ≥ 0.9 for ALL pages"| auto_approve
     route -->|"any page < 0.9"| hitl_review
@@ -110,7 +111,7 @@ sequenceDiagram
     participant UI as Frontend
     participant Human as Reviewer
 
-    Graph->>Graph: merge_ocr_results
+    Graph->>Graph: merge_azure_di_results / merge_marker_results
     Graph->>Graph: route_by_confidence → hitl_review
     Graph->>WS: send_update("hitl_required", pages)
     Graph->>Graph: interrupt({pages, scores})

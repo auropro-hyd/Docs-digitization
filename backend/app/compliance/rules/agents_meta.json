@@ -1,0 +1,27 @@
+[
+  {
+    "id": "alcoa",
+    "label": "ALCOA+",
+    "description": "Attributable, Legible, Contemporaneous, Original, Accurate"
+  },
+  {
+    "id": "gmp",
+    "label": "GMP Validation",
+    "description": "Good Manufacturing Practice validation"
+  },
+  {
+    "id": "checklist",
+    "label": "Checklist Review",
+    "description": "Documentation completeness review"
+  },
+  {
+    "id": "sop",
+    "label": "SOP Compliance",
+    "description": "Standard Operating Procedure compliance"
+  },
+  {
+    "id": "reconciliation",
+    "label": "Cross-Page Reconciliation",
+    "description": "Verifies consistency and completeness across document sections"
+  }
+]

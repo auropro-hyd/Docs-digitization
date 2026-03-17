@@ -1,23 +1,20 @@
 # Central Configuration System
 
-The backend uses a layered configuration approach: Pydantic Settings models loaded from per-environment YAML files, with environment variable overrides on top.
+The backend uses a layered configuration approach: Pydantic Settings models loaded from per-environment YAML files, with `.env` and OS environment variable overrides on top.
 
 **File:** `backend/app/config/settings.py`
 
-## Architecture
+## Configuration Priority
 
-```
-Environment variable (AT_LLM__PROVIDER=azure_openai)
-          │  highest priority — overrides everything
-          ▼
-Per-environment YAML (config/settings.dev.yaml)
-          │  merged into Pydantic model
-          ▼
-Pydantic defaults (defined in code)
-          │  lowest priority — fallback values
-          ▼
-AppSettings instance (cached via @lru_cache)
-```
+Settings are resolved with a layered priority (highest wins):
+
+1. **OS environment variables** — deployment overrides (e.g. `export AT_AZURE_DI__ENDPOINT=...`)
+2. **`.env` file** — local development secrets (`backend/.env`)
+3. **YAML config** — environment-specific structural defaults (`config/settings.{env}.yaml`)
+4. **Pydantic field defaults** — code-level fallbacks in `settings.py`
+
+This priority is enforced by `settings_customise_sources()` in `AppSettings`, which
+reorders pydantic-settings sources so init kwargs (YAML) rank below env vars and `.env`.
 
 ## AppSettings Class
 
@@ -31,7 +28,7 @@ class AppSettings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    ocr: OCRConfig = Field(default_factory=OCRConfig)
+    pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     marker: MarkerConfig = Field(default_factory=MarkerConfig)
     azure_di: AzureDIConfig = Field(default_factory=AzureDIConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -39,14 +36,35 @@ class AppSettings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     hitl: HITLConfig = Field(default_factory=HITLConfig)
 
-    model_config = {"env_prefix": "AT_", "env_nested_delimiter": "__"}
+    model_config = {
+        "env_prefix": "AT_",
+        "env_nested_delimiter": "__",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore",
+    }
 ```
 
 ## Configuration Models
 
+### PipelineConfig
+
+Controls which processing flow the system uses. This is the primary architectural switch — it determines which OCR engine is instantiated and which merge/confidence path executes in the workflow graph.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `mode` | `str` | `"azure_di"` | Pipeline mode: `"azure_di"` or `"marker_docling"` |
+
+**Modes:**
+
+| Mode | OCR Engine | Confidence Source | Cloud Dependency |
+|------|-----------|-------------------|------------------|
+| `azure_di` | `AzureDIOCRAdapter` | DI per-word scores + validation rules | Cloud API or disconnected container |
+| `marker_docling` | `MarkerOCRAdapter` + `DoclingQualityAdapter` | Docling quality scores + validation rules | None (fully offline) |
+
 ### MarkerConfig
 
-Controls the Marker OCR engine:
+Controls the Marker OCR engine (only active when `pipeline.mode = marker_docling`):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -62,11 +80,11 @@ Controls the Marker OCR engine:
 
 ### AzureDIConfig
 
-Controls Azure Document Intelligence:
+Controls Azure Document Intelligence (active when `pipeline.mode = azure_di`):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `endpoint` | `str` | (placeholder) | Azure DI resource endpoint |
+| `endpoint` | `str` | (placeholder) | Azure DI resource endpoint (cloud URL or `http://localhost:5000` for disconnected container) |
 | `api_key` | `str` | (empty) | Azure DI API key |
 | `features` | `list[str]` | `["barcodes", "keyValuePairs"]` | Enabled DI features |
 
@@ -100,14 +118,6 @@ Controls the LLM provider for compliance analysis and other AI tasks:
 | `azure_connection_string` | `str` | (empty) | Azure Blob Storage connection string |
 | `azure_container` | `str` | `documents` | Azure Blob container name |
 
-### OCRConfig
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `primary_engine` | `str` | `marker` | Primary OCR engine name |
-| `secondary_engine` | `str` | `azure_di` | Secondary OCR engine name |
-| `quality_scorer` | `str` | `docling` | Quality scoring engine name |
-
 ### HITLConfig
 
 | Field | Type | Default | Description |
@@ -132,18 +142,31 @@ The active environment is determined by the `AT_ENV` environment variable (defau
 Example `settings.dev.yaml`:
 
 ```yaml
-debug: true
-ocr:
-  primary_engine: marker
-  secondary_engine: azure_di
-  quality_scorer: docling
+pipeline:
+  mode: azure_di
+
+azure_di:
+  features:
+    - barcodes
+    - keyValuePairs
+
+marker:
+  use_llm: true
+  paginate_output: true
+  extract_images: true
+  ollama_base_url: "http://localhost:11434"
+  ollama_model: "gemma2:9b"
+
 llm:
   provider: ollama
   model: gemma2:9b
+
 storage:
   backend: filesystem
   base_path: ./data/documents
 ```
+
+The `pipeline.mode` field is the primary architectural switch. In `azure_di` mode, the `marker` section is still present but ignored by the Container — only the `azure_di` and `llm` sections are active. In `marker_docling` mode, the `azure_di` section is ignored and `marker` drives the OCR.
 
 ## Environment Variable Overrides
 
@@ -154,7 +177,14 @@ Environment variables use the `AT_` prefix with double underscores (`__`) for ne
 AT_ENV=staging
 AT_DEBUG=false
 
-# Nested fields (double underscore = nesting)
+# Pipeline mode
+AT_PIPELINE__MODE=azure_di
+
+# Azure Document Intelligence credentials
+AT_AZURE_DI__ENDPOINT=https://my-resource.cognitiveservices.azure.com
+AT_AZURE_DI__API_KEY=your-api-key-here
+
+# LLM
 AT_LLM__PROVIDER=azure_openai
 AT_LLM__AZURE_ENDPOINT=https://my-openai.openai.azure.com
 AT_LLM__AZURE_DEPLOYMENT=gpt-4
@@ -187,9 +217,32 @@ def get_settings() -> AppSettings:
 
 1. Read `AT_ENV` from environment (default `dev`)
 2. Load `config/settings.{env}.yaml` if it exists
-3. Pass YAML values as keyword arguments to `AppSettings`
-4. Pydantic Settings automatically overlays any `AT_*` environment variables
+3. Pass YAML values as keyword arguments (`init` source) to `AppSettings`
+4. Pydantic-settings resolves all sources using `settings_customise_sources()`: OS env vars beat `.env`, which beats YAML init kwargs, which beat field defaults
 5. Result is cached via `@lru_cache` — one `AppSettings` instance per process
+
+## Pipeline Mode Switching
+
+To switch between pipeline modes, change the `pipeline.mode` value. Everything downstream — which OCR adapter is instantiated, which merge node runs, which confidence formula is used — follows automatically.
+
+**Via YAML:**
+
+```yaml
+# Use Azure Document Intelligence
+pipeline:
+  mode: azure_di
+
+# Or use Marker + Docling (fully offline)
+pipeline:
+  mode: marker_docling
+```
+
+**Via environment variable:**
+
+```bash
+AT_PIPELINE__MODE=azure_di       # Azure DI
+AT_PIPELINE__MODE=marker_docling # Marker + Docling
+```
 
 ## Usage in Code
 
@@ -197,14 +250,15 @@ def get_settings() -> AppSettings:
 from app.config.settings import get_settings
 
 settings = get_settings()
-print(settings.llm.provider)        # "ollama"
-print(settings.hitl.auto_approve_threshold)  # 0.9
+print(settings.pipeline.mode)               # "azure_di"
+print(settings.llm.provider)                # "ollama"
+print(settings.hitl.auto_approve_threshold) # 0.9
 ```
 
-The `Container` class in [Dependency Injection](./dependency-injection.md) uses these settings to instantiate the correct adapter implementations.
+The `Container` class in [Dependency Injection](./dependency-injection.md) uses `settings.pipeline.mode` to instantiate the correct adapter implementations.
 
 ## Related Pages
 
-- [Dependency Injection](./dependency-injection.md) — How settings drive adapter selection
+- [Dependency Injection](./dependency-injection.md) — How pipeline mode drives adapter selection
 - [Local Setup](../../devops/local-setup.md) — Environment variable reference for local development
 - [Azure DevOps Pipeline](../../devops/azure-devops-pipeline.md) — How settings differ per deployment environment

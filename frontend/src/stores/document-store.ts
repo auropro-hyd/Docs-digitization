@@ -23,7 +23,7 @@ export type ProcessingStatus =
   | "completed"
   | "error";
 
-interface PageData {
+export interface PageData {
   pageNum: number;
   confidence: number;
   status: PageStatus;
@@ -31,33 +31,76 @@ interface PageData {
   extraction?: Record<string, unknown>;
 }
 
+const STORAGE_KEY = "processing-doc";
+
+const TERMINAL_STATUSES = new Set(["idle", "completed", "error"]);
+
+function loadPersistedDoc(): { docId: string | null; filename: string | null } {
+  if (typeof window === "undefined") return { docId: null, filename: null };
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return { docId: parsed.docId || null, filename: parsed.filename || null };
+    }
+  } catch {}
+  return { docId: null, filename: null };
+}
+
+function persistDoc(docId: string | null, filename: string | null) {
+  try {
+    if (docId) {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ docId, filename }));
+    } else {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {}
+}
+
 interface DocumentState {
   docId: string | null;
   filename: string | null;
   totalPages: number;
   processingStatus: ProcessingStatus;
+  ocrProgress: number;
+  ocrProgressLabel: string;
   pages: Map<number, PageData>;
   error: string | null;
 
   setDocId: (docId: string, filename: string) => void;
   setProcessingStatus: (status: ProcessingStatus) => void;
+  setOcrProgress: (percent: number, label: string) => void;
   setTotalPages: (count: number) => void;
   updatePage: (pageNum: number, data: Partial<PageData>) => void;
   setError: (error: string | null) => void;
   reset: () => void;
 }
 
+const persisted = loadPersistedDoc();
+
 export const useDocumentStore = create<DocumentState>((set) => ({
-  docId: null,
-  filename: null,
+  docId: persisted.docId,
+  filename: persisted.filename,
   totalPages: 0,
-  processingStatus: "idle",
+  processingStatus: persisted.docId ? "ingested" : "idle",
+  ocrProgress: 0,
+  ocrProgressLabel: "",
   pages: new Map(),
   error: null,
 
-  setDocId: (docId, filename) => set({ docId, filename, processingStatus: "uploading" }),
+  setDocId: (docId, filename) => {
+    persistDoc(docId, filename);
+    set({ docId, filename, processingStatus: "uploading", error: null, pages: new Map(), totalPages: 0, ocrProgress: 0, ocrProgressLabel: "" });
+  },
 
-  setProcessingStatus: (status) => set({ processingStatus: status }),
+  setProcessingStatus: (status) => {
+    if (TERMINAL_STATUSES.has(status)) {
+      persistDoc(null, null);
+    }
+    set({ processingStatus: status });
+  },
+
+  setOcrProgress: (percent, label) => set({ ocrProgress: percent, ocrProgressLabel: label }),
 
   setTotalPages: (count) =>
     set((state) => {
@@ -78,15 +121,22 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       return { pages };
     }),
 
-  setError: (error) => set({ error, processingStatus: "error" }),
+  setError: (error) => {
+    persistDoc(null, null);
+    set({ error, processingStatus: "error" });
+  },
 
-  reset: () =>
+  reset: () => {
+    persistDoc(null, null);
     set({
       docId: null,
       filename: null,
       totalPages: 0,
       processingStatus: "idle",
+      ocrProgress: 0,
+      ocrProgressLabel: "",
       pages: new Map(),
       error: null,
-    }),
+    });
+  },
 }));
