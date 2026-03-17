@@ -94,3 +94,7 @@ data/output/
 
 # ── Next.js generated ────────────────────────────────────────
 next-env.d.ts
+
+# POC experiment secrets
+context/poc/experiments/.env.*
+!context/poc/experiments/.env.example
