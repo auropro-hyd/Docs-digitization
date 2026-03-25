@@ -1,4 +1,4 @@
-const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+const WS_BASE = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8100";
 
 export type WSMessage = {
   type: string;

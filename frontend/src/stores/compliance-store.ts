@@ -11,9 +11,18 @@ export interface RuleProgress {
   confidence: number;
 }
 
+export interface PrescreenProgress {
+  pagesDone: number;
+  pagesTotal: number;
+  percent: number;
+  totalRules: number;
+  avgApplicable: number | null;
+  status: "idle" | "running" | "complete";
+}
+
 export interface AgentProgress {
   agent: string;
-  status: "pending" | "running" | "complete" | "skipped";
+  status: "pending" | "prescreening" | "running" | "complete" | "skipped";
   batchesComplete: number;
   batchesTotal: number;
   percent: number;
@@ -22,6 +31,7 @@ export interface AgentProgress {
   needsReviewCount: number;
   skipReason?: string;
   rules: RuleProgress[];
+  prescreen: PrescreenProgress;
 }
 
 export interface ComplianceProgressState {
@@ -35,6 +45,8 @@ export interface ComplianceProgressState {
   overallScore: number | null;
   totalFindings: number;
   startedAt: number | null;
+  segmentationLabel: string;
+  segmentationSections: number;
 }
 
 interface ComplianceStore extends ComplianceProgressState {
@@ -44,6 +56,15 @@ interface ComplianceStore extends ComplianceProgressState {
 }
 
 const ALL_AGENTS = ["alcoa", "gmp", "checklist", "sop", "reconciliation"];
+
+const defaultPrescreen = (): PrescreenProgress => ({
+  pagesDone: 0,
+  pagesTotal: 0,
+  percent: 0,
+  totalRules: 0,
+  avgApplicable: null,
+  status: "idle",
+});
 
 const initialAgents = (): Record<string, AgentProgress> =>
   Object.fromEntries(
@@ -59,6 +80,7 @@ const initialAgents = (): Record<string, AgentProgress> =>
         findingsCount: 0,
         needsReviewCount: 0,
         rules: [],
+        prescreen: defaultPrescreen(),
       },
     ]),
   );
@@ -74,6 +96,8 @@ const INITIAL: ComplianceProgressState = {
   overallScore: null,
   totalFindings: 0,
   startedAt: null,
+  segmentationLabel: "",
+  segmentationSections: 0,
 };
 
 export const useComplianceStore = create<ComplianceStore>((set, get) => ({
@@ -119,11 +143,19 @@ export const useComplianceStore = create<ComplianceStore>((set, get) => ({
 
     if (phase === "segmentation") {
       if (status === "running") {
-        set({ phase: "segmentation", label: (data.label as string) || "Identifying document sections...", overallPercent: 8 });
-      } else if (status === "complete") {
         set({
           phase: "segmentation",
-          label: (data.label as string) || `Identified ${(data.sections_count as number) || 0} sections`,
+          label: (data.label as string) || "Identifying document sections...",
+          segmentationLabel: (data.label as string) || "Identifying document sections...",
+          overallPercent: 8,
+        });
+      } else if (status === "complete") {
+        const sections = (data.sections_count as number) || 0;
+        set({
+          phase: "evaluation",
+          label: "Starting agent evaluation...",
+          segmentationLabel: (data.label as string) || `Identified ${sections} sections`,
+          segmentationSections: sections,
           overallPercent: 10,
         });
       }
@@ -134,8 +166,59 @@ export const useComplianceStore = create<ComplianceStore>((set, get) => ({
       const agentName = data.agent as string;
       if (!agentName) return;
 
+      if (get().phase !== "evaluation") {
+        set({ phase: "evaluation" });
+      }
+
       const agents = { ...get().agents };
       const prev = agents[agentName] || initialAgents()[agentName];
+
+      if (status === "prescreening") {
+        const pagesDone = (data.prescreen_pages_done as number) || 0;
+        const pagesTotal = (data.prescreen_pages_total as number) || 0;
+        const prescreenPct = (data.prescreen_percent as number) || 0;
+        const totalRules = (data.prescreen_total_rules as number) || 0;
+
+        agents[agentName] = {
+          ...prev,
+          status: "prescreening",
+          label: (data.label as string) || prev.label,
+          prescreen: {
+            pagesDone,
+            pagesTotal,
+            percent: prescreenPct,
+            totalRules,
+            avgApplicable: null,
+            status: "running",
+          },
+        };
+
+        set({ agents, label: (data.label as string) || get().label });
+        return;
+      }
+
+      if (status === "prescreen_complete") {
+        const totalRules = (data.prescreen_total_rules as number) || 0;
+        const avgApplicable = (data.prescreen_avg_applicable as number) ?? null;
+        const pagesTotal = (data.prescreen_pages_total as number) || 0;
+
+        agents[agentName] = {
+          ...prev,
+          status: "prescreening",
+          label: (data.label as string) || prev.label,
+          prescreen: {
+            pagesDone: pagesTotal,
+            pagesTotal,
+            percent: 100,
+            totalRules,
+            avgApplicable,
+            status: "complete",
+          },
+        };
+
+        set({ agents, label: (data.label as string) || get().label });
+        return;
+      }
 
       if (status === "running") {
         let rules = prev.rules;

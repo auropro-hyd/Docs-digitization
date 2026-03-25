@@ -20,8 +20,9 @@ import {
   MinusCircle,
   HelpCircle,
   AlertCircle,
+  Layers,
 } from "lucide-react";
-import { type AgentProgress, type RuleProgress, useComplianceStore } from "@/stores/compliance-store";
+import { type AgentProgress, type PrescreenProgress, type RuleProgress, useComplianceStore } from "@/stores/compliance-store";
 import { AGENT_DISPLAY_NAMES } from "@/types/compliance";
 
 const AGENT_COLORS: Record<string, string> = {
@@ -169,11 +170,44 @@ function RuleStats({ rules }: { rules: RuleProgress[] }) {
   );
 }
 
+function PrescreenIndicator({ prescreen }: { prescreen: PrescreenProgress }) {
+  if (prescreen.status === "idle") return null;
+
+  const isComplete = prescreen.status === "complete";
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        {isComplete ? (
+          <CheckCircle className="size-3.5 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
+        ) : (
+          <Loader2 className="size-3.5 text-cyan-600 dark:text-cyan-400 animate-spin flex-shrink-0" />
+        )}
+        <span className="text-[11px] font-medium text-cyan-700 dark:text-cyan-300">
+          {isComplete ? "Pre-screen complete" : "Pre-screening pages..."}
+        </span>
+      </div>
+      <Progress value={prescreen.percent} className="h-1" />
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>{prescreen.pagesDone}/{prescreen.pagesTotal} pages</span>
+        {isComplete && prescreen.avgApplicable !== null ? (
+          <span>
+            avg {prescreen.avgApplicable}/{prescreen.totalRules} rules/page
+          </span>
+        ) : (
+          <span>{prescreen.totalRules} rules to screen</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AgentCard({ progress }: { progress: AgentProgress }) {
   const [expanded, setExpanded] = useState(false);
   const display = AGENT_DISPLAY_NAMES[progress.agent] || progress.agent;
   const color = AGENT_COLORS[progress.agent] || "bg-primary";
   const hasRules = progress.rules.length > 0;
+  const isPrescreening = progress.status === "prescreening";
 
   return (
     <motion.div
@@ -185,6 +219,7 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
       <Card
         className={cn(
           "transition-all duration-300",
+          isPrescreening && "ring-2 ring-cyan-500/30",
           progress.status === "running" && "ring-2 ring-primary/30",
           progress.status === "complete" && "ring-2 ring-success/30",
           progress.status === "skipped" && "opacity-60",
@@ -219,8 +254,20 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
             </div>
           </div>
 
+          {isPrescreening && (
+            <PrescreenIndicator prescreen={progress.prescreen} />
+          )}
+
           {progress.status === "running" && (
             <div className="space-y-1.5">
+              {progress.prescreen.status === "complete" && (
+                <div className="flex items-center gap-1.5 mb-1">
+                  <CheckCircle className="size-3 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
+                  <span className="text-[10px] text-cyan-700 dark:text-cyan-300">
+                    Pre-screened — avg {progress.prescreen.avgApplicable ?? "?"}/{progress.prescreen.totalRules} rules/page
+                  </span>
+                </div>
+              )}
               <Progress value={progress.percent} className="h-1.5" />
               <p className="text-[11px] text-muted-foreground truncate">{progress.label}</p>
               <RuleStats rules={progress.rules} />
@@ -229,6 +276,14 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
 
           {progress.status === "complete" && (
             <div>
+              {progress.prescreen.status === "complete" && (
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <CheckCircle className="size-3 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
+                  <span className="text-[10px] text-cyan-700 dark:text-cyan-300">
+                    Pre-screened — avg {progress.prescreen.avgApplicable ?? "?"}/{progress.prescreen.totalRules} rules/page
+                  </span>
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <p className="text-xs text-muted-foreground">
                   {progress.findingsCount} finding{progress.findingsCount !== 1 ? "s" : ""}
@@ -265,6 +320,8 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
 
 function AgentStatusIcon({ status }: { status: string }) {
   switch (status) {
+    case "prescreening":
+      return <Loader2 className="size-4 text-cyan-600 dark:text-cyan-400 animate-spin" />;
     case "running":
       return <Loader2 className="size-4 text-primary animate-spin" />;
     case "complete":
@@ -276,28 +333,6 @@ function AgentStatusIcon({ status }: { status: string }) {
   }
 }
 
-function SegmentationCard({ phase, label: phaseLabel }: { phase: string; label: string }) {
-  if (phase !== "segmentation") return null;
-
-  return (
-    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-      <Card className="ring-2 ring-cyan-500/30">
-        <CardContent className="p-4 flex items-center gap-3">
-          <div className="size-8 rounded-lg bg-cyan-500/10 flex items-center justify-center">
-            <Loader2 className="size-4 text-cyan-600 animate-spin" />
-          </div>
-          <div>
-            <p className="text-sm font-medium">Document Segmentation</p>
-            <p className="text-xs text-muted-foreground">
-              {phaseLabel || "Identifying document sections..."}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  );
-}
-
 export function ComplianceProgress({
   filename,
   onCancel,
@@ -305,7 +340,10 @@ export function ComplianceProgress({
   filename?: string | null;
   onCancel?: () => void;
 }) {
-  const { phase, overallPercent, label, agents, totalFindings, startedAt } = useComplianceStore();
+  const {
+    phase, overallPercent, label, agents, totalFindings, startedAt,
+    segmentationLabel, segmentationSections,
+  } = useComplianceStore();
   const agentList = Object.values(agents);
 
   const findingsSoFar = agentList.reduce((s, a) => s + a.findingsCount, 0);
@@ -313,47 +351,54 @@ export function ComplianceProgress({
   const completedAgents = agentList.filter((a) => a.status === "complete").length;
   const applicableAgents = agentList.filter((a) => a.status !== "skipped").length;
 
+  const isSegmenting = phase === "segmentation";
+  const segDone = segmentationSections > 0;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      className="space-y-6"
+      className="space-y-4"
     >
       <Card>
-        <CardContent className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="size-5 text-primary" />
-              <div>
-                <h2 className="text-lg font-semibold">
-                  Compliance Audit in Progress{filename ? ` — ${filename}` : ""}
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <ShieldCheck className="size-5 text-primary flex-shrink-0" />
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold truncate">
+                  Compliance Audit{filename ? ` — ${filename}` : ""}
                 </h2>
-                <p className="text-sm text-muted-foreground">{label}</p>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
+                  {isSegmenting ? (
+                    <span className="flex items-center gap-1.5">
+                      <Loader2 className="size-3 animate-spin text-cyan-500" />
+                      {segmentationLabel || "Identifying sections..."}
+                    </span>
+                  ) : segDone ? (
+                    <span className="flex items-center gap-1.5">
+                      <Layers className="size-3 text-cyan-500" />
+                      {segmentationSections} sections
+                    </span>
+                  ) : null}
+                  <span>{completedAgents}/{applicableAgents} agents done</span>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Clock className="size-4 text-muted-foreground" />
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <Clock className="size-3.5 text-muted-foreground" />
               <ElapsedTimer startedAt={startedAt} />
               {onCancel && (
-                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={onCancel}>
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7 px-2" onClick={onCancel}>
                   Cancel
                 </Button>
               )}
             </div>
           </div>
 
-          <Progress value={overallPercent} className="h-2.5 mb-3" />
-
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{overallPercent}% complete</span>
-            <span>
-              {completedAgents}/{applicableAgents} agents done
-            </span>
-          </div>
+          <Progress value={overallPercent} className="h-2" />
         </CardContent>
       </Card>
-
-      <SegmentationCard phase={phase} label={label} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <AnimatePresence mode="popLayout">

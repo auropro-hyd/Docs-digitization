@@ -143,10 +143,10 @@ dev-fresh: ## Clean frontend .next cache and start dev (use if Turbopack/SST err
 	$(MAKE) dev
 
 backend: ## Start FastAPI backend (dev mode with auto-reload)
-	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/uvicorn app.main:app --reload --reload-exclude '.venv' --host 0.0.0.0 --port 8000
+	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/uvicorn app.main:app --reload --reload-exclude '.venv' --host 0.0.0.0 --port 8100
 
 frontend: ## Start Next.js frontend (dev mode)
-	cd $(FRONTEND_DIR) && npm run dev
+	cd $(FRONTEND_DIR) && npm run dev -- --port 3100
 
 # ═════════════════════════════════════════════════════════════════
 #  INFRASTRUCTURE — Docker Compose services (PostgreSQL + Ollama)
@@ -277,11 +277,11 @@ docker-up: infra-up build-backend ## Start full stack in Docker (infra + backend
 		-e AT_ENV=prod \
 		-e AT_PIPELINE__MODE=azure_di \
 		-e AT_DATABASE__URL=postgresql+asyncpg://postgres:postgres@postgres:5432/autotranscription \
-		-p 8000:8000 \
+		-p 8100:8000 \
 		autotranscription-backend:latest
 	@echo "✓ Full stack running:"
-	@echo "  Backend:    http://localhost:8000"
-	@echo "  Health:     http://localhost:8000/api/documents/health"
+	@echo "  Backend:    http://localhost:8100"
+	@echo "  Health:     http://localhost:8100/api/documents/health"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Ollama:     http://localhost:11434"
 
@@ -300,19 +300,19 @@ docker-restart: docker-down docker-up ## Restart full Docker stack
 # ═════════════════════════════════════════════════════════════════
 
 health: ## Check backend health
-	@curl -sf http://localhost:8000/api/documents/health | python3 -m json.tool || echo "Backend not running"
+	@curl -sf http://localhost:8100/api/documents/health | python3 -m json.tool || echo "Backend not running"
 
 process-pdf: ## Process a PDF (usage: make process-pdf PDF=path/to/file.pdf)
 	@if [ -z "$(PDF)" ]; then \
 		echo "Usage: make process-pdf PDF=path/to/file.pdf"; \
 		exit 1; \
 	fi
-	curl -X POST http://localhost:8000/api/documents/process-file \
+	curl -X POST http://localhost:8100/api/documents/process-file \
 		-F "file=@$(PDF)" -s | python3 -m json.tool
 
-kill: ## Kill processes on ports 8000 (backend) and 3000 (frontend)
+kill: ## Kill processes on ports 8100 (backend) and 3100 (frontend)
 ifeq ($(OS),Windows_NT)
-	@for port in 8000 3000; do \
+	@for port in 8100 3100; do \
 		pid=$$(netstat -ano 2>/dev/null | grep ":$$port " | grep LISTENING | awk '{print $$5}' | head -1); \
 		if [ -n "$$pid" ] && [ "$$pid" != "0" ]; then \
 			echo "  Port $$port: ENGAGED  (PID $$pid)"; \
@@ -325,7 +325,7 @@ ifeq ($(OS),Windows_NT)
 	@sleep 1
 	@echo ""
 	@echo "── Status after cleanup ─────────────────────────"
-	@for port in 8000 3000; do \
+	@for port in 8100 3100; do \
 		pid=$$(netstat -ano 2>/dev/null | grep ":$$port " | grep LISTENING | awk '{print $$5}' | head -1); \
 		if [ -n "$$pid" ] && [ "$$pid" != "0" ]; then \
 			echo "  Port $$port: STILL ENGAGED  (PID $$pid)"; \
@@ -335,7 +335,7 @@ ifeq ($(OS),Windows_NT)
 	done
 else
 	@engaged=""; \
-	for port in 8000 3000; do \
+	for port in 8100 3100; do \
 		pid=$$(lsof -ti:$$port 2>/dev/null); \
 		if [ -n "$$pid" ]; then \
 			name=$$(lsof -i:$$port -sTCP:LISTEN 2>/dev/null | tail -1 | awk '{print $$1}'); \
@@ -360,7 +360,7 @@ else
 		sleep 1; \
 		echo ""; \
 		echo "── Status after cleanup ─────────────────────────"; \
-		for port in 8000 3000; do \
+		for port in 8100 3100; do \
 			pid=$$(lsof -ti:$$port 2>/dev/null); \
 			if [ -n "$$pid" ]; then \
 				echo "  Port $$port: STILL ENGAGED  (PID $$pid)"; \

@@ -1,0 +1,142 @@
+# ═══════════════════════════════════════════════════════════════
+#  SOP Compliance Rule Configuration
+#  Separated from rule text (sop_rules.md) for easy tuning.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  applicable_page_types: [form, content]
+  applicable_section_types: [manufacturing_operations]
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── SOP Reference Validation (rules 1-4) ──────────────────
+  sop_reference_validation:
+    severity: major
+    rules:
+      1:
+        keywords: [SOP, procedure, reference, according to, as per]
+        pass_criteria: >
+          Manufacturing steps should reference specific SOP numbers
+          (e.g., SOP-XXX or procedure number). Generic references like
+          "as per SOP" without a number are insufficient.
+
+      2:
+        keywords: [SOP, revision, rev, version, superseded, current]
+        notes: "Full verification requires access to the SOP master list."
+
+      3:
+        keywords: [SOP, revision, rev, version number]
+
+      4:
+        keywords: [SOP, procedure, reference, critical]
+        pass_criteria: >
+          All critical operations (weighing, charging, mixing, granulation,
+          drying, compression, coating, sampling) should have an associated
+          SOP reference.
+
+  # ── Step Alignment (rules 5-8) ────────────────────────────
+  step_alignment:
+    severity: major
+    rules:
+      5:
+        pass_criteria: >
+          Manufacturing steps should follow a logical sequential order.
+          Step numbers should be in ascending order without unexpected jumps.
+        notes: "Requires SOP document to fully verify sequence compliance."
+
+      6:
+        keywords: [skipped, omitted, not performed, justification, deviation]
+        skip_conditions:
+          - "Page shows continuous step sequence with no gaps -> not_applicable"
+
+      7:
+        keywords: [additional, extra, deviation, unplanned, not in SOP]
+        skip_conditions:
+          - "Page shows only standard manufacturing steps -> not_applicable"
+
+      8:
+        keywords: [hold time, hold-time, wait, storage, intermediate]
+        skip_conditions:
+          - "Page has no hold time references -> not_applicable"
+
+  # ── Deviation Documentation (rules 9-13) ──────────────────
+  deviation_documentation:
+    severity: critical
+    applicable_section_types: [manufacturing_operations, deviation]
+    rules:
+      9:
+        keywords: [deviation, deviated, non-conformance, incident]
+        skip_conditions:
+          - "Page has no deviation references -> not_applicable"
+
+      10:
+        keywords: [root cause, investigation, why, analysis, RCA]
+        skip_conditions:
+          - "Page has no deviation reports -> not_applicable"
+
+      11:
+        keywords: [deviation, reference, BMR, linked, documented]
+        skip_conditions:
+          - "Page has no deviation references -> not_applicable"
+
+      12:
+        keywords: [CAPA, corrective, preventive, action, improvement]
+        skip_conditions:
+          - "Page has no CAPA or deviation follow-up records -> not_applicable"
+
+      13:
+        keywords: [impact, assessment, risk, effect, consequence]
+        skip_conditions:
+          - "Page has no deviation impact assessment -> not_applicable"
+
+  # ── Parameter Compliance (rules 14-16) ────────────────────
+  parameter_compliance:
+    severity: major
+    rules:
+      14:
+        keywords: [parameter, range, setpoint, limit, temperature, pressure, RPM, speed]
+        pass_criteria: >
+          Recorded process parameters must fall within any stated ranges or
+          setpoints defined on the page or referenced from the SOP.
+
+      15:
+        keywords: [monitoring, interval, frequency, every, hourly, periodic]
+        skip_conditions:
+          - "Page has no periodic monitoring data -> not_applicable"
+
+      16:
+        keywords: [out of range, deviation, OOR, excursion, investigation]
+        skip_conditions:
+          - "Page has no out-of-range parameter readings -> not_applicable"
+
+  # ── Material Handling (rules 17-20) ────────────────────────
+  material_handling:
+    severity: major
+    applicable_section_types: [manufacturing_operations, material_dispensing]
+    rules:
+      17:
+        keywords: [raw material, handling, procedure, SOP, storage]
+
+      18:
+        keywords: [storage, condition, temperature, humidity, cold chain]
+        skip_conditions:
+          - "Page has no material storage condition references -> not_applicable"
+
+      19:
+        keywords: [sampling, sample, procedure, SOP, method]
+        skip_conditions:
+          - "Page has no material sampling references -> not_applicable"
+
+      20:
+        keywords: [waste, disposal, reject, scrap, destruction]
+        skip_conditions:
+          - "Page has no waste disposal references -> not_applicable"

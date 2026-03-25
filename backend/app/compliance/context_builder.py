@@ -65,7 +65,9 @@ def build_enriched_context(
     hw_count = extraction.get("handwritten_count", 0)
     if hw_count > 0:
         metadata_lines.append(
-            f"Handwritten regions: {hw_count} words identified as handwritten"
+            f"Handwritten regions: {hw_count} words identified as handwritten "
+            f"(NOTE: handwritten text is often garbled by OCR — unusual text "
+            f"in signature/date columns is likely valid handwriting, not errors)"
         )
     else:
         metadata_lines.append(
@@ -80,7 +82,14 @@ def build_enriched_context(
             key = kv.get("key", "").strip()
             value = kv.get("value", "").strip()
             if key:
-                entry = f'  "{key}": "{value}"' if value else f'  "{key}": [empty/blank]'
+                if value:
+                    is_dash = value.replace("-", "").replace("—", "").strip() == ""
+                    if is_dash:
+                        entry = f'  "{key}": "{value}" [dash annotation = not applicable]'
+                    else:
+                        entry = f'  "{key}": "{value}"'
+                else:
+                    entry = f'  "{key}": [empty/blank]'
                 kv_lines.append(entry)
         if kv_lines:
             metadata_lines.append("Key-value pairs (form fields):\n" + "\n".join(kv_lines))

@@ -73,8 +73,8 @@ class LLMConfig(BaseModel):
     azure_endpoint: str = ""
     azure_deployment: str = ""
     # Azure OpenAI rate limiting (per deployment); stay under deployment RPM limit
-    azure_max_rpm: int = 800  # max requests/min; deployment allows 1000 RPM at 1M TPM
-    azure_max_concurrent: int = 3  # keep concurrency moderate to avoid token-burst 429s
+    azure_max_rpm: int = 800
+    azure_max_concurrent: int = 25
 
 
 class DatabaseConfig(BaseModel):
@@ -138,10 +138,12 @@ class ComplianceConfig(BaseModel):
     evaluator_llm: ComplianceLLMConfig = Field(default_factory=ComplianceLLMConfig)
     orchestrator_llm: ComplianceLLMConfig = Field(default_factory=ComplianceLLMConfig)
 
-    rule_batch_size: int = 7
-    max_concurrent_batches: int = 4
+    rule_batch_size: int = 15
+    max_concurrent_batches: int = 25
     batch_by_category: bool = True
     llm_timeout: int = 120
+
+    applicability_mode: str = "static"  # "static" | "llm"
 
     enable_cross_page: bool = True
     cross_page_model: str = ""

@@ -29,7 +29,7 @@ _MAX_RETRIES = 5
 _BASE_DELAY = 1.0
 _MAX_DELAY = 60.0
 _WINDOW_SEC = 60.0
-_MIN_REQUEST_INTERVAL_S = 0.25  # minimum gap between any two HTTP requests (seconds)
+_MIN_REQUEST_INTERVAL_S = 0.1
 
 _limiter_registry: dict[tuple[str, str], "AzureRateLimiter"] = {}
 

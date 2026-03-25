@@ -1,4 +1,4 @@
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100";
 
 export async function uploadDocument(file: File): Promise<{ doc_id: string; filename: string }> {
   const formData = new FormData();
