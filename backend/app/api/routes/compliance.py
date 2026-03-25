@@ -421,7 +421,26 @@ th { background: #f9fafb; font-weight: 600; }
 .section { margin-top: 1.5rem; }
 ol, ul { padding-left: 1.5rem; margin: 0.5rem 0; }
 .page-break { page-break-before: always; }
-@media print { body { max-width: 100%; padding: 1rem; } .page-break { break-before: page; } }
+.rule-detail-group { margin-top: 1rem; }
+.rule-detail-group h4 { font-size: 0.92rem; margin-bottom: 0.5rem; padding: 4px 8px;
+  background: #f3f4f6; border-radius: 4px; display: flex; justify-content: space-between; }
+.rule-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 6px 8px;
+  border-bottom: 1px solid #f3f4f6; font-size: 0.82rem; }
+.rule-row:hover { background: #fafbfc; }
+.rule-id { font-weight: 600; white-space: nowrap; min-width: 80px; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.rule-text { flex: 1; color: #374151; }
+.rule-pages { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+.rule-reasoning { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
+.st { font-weight: 700; text-transform: uppercase; font-size: 0.65rem; padding: 1px 5px;
+  border-radius: 3px; display: inline-block; white-space: nowrap; }
+.st-compliant { background: #dcfce7; color: #166534; }
+.st-non_compliant { background: #fee2e2; color: #991b1b; }
+.st-not_applicable { background: #f3f4f6; color: #6b7280; }
+.st-uncertain { background: #fef3c7; color: #92400e; }
+.st-error { background: #fce7f3; color: #9d174d; }
+.cat-summary { font-size: 0.75rem; color: var(--muted); font-weight: 400; }
+@media print { body { max-width: 100%; padding: 1rem; } .page-break { break-before: page; }
+  .rule-row { break-inside: avoid; } }
 </style>"""
 
 
@@ -442,6 +461,29 @@ def _format_page_ranges(pages: list) -> str:
             start = end = n
     ranges.append(f"{start}" if start == end else f"{start}–{end}")
     return ", ".join(ranges)
+
+
+def _smart_page_display(pages: list, total_pages: int, status: str) -> str:
+    """Human-friendly page display that avoids listing all 185 pages."""
+    if not pages:
+        if status == "not_applicable":
+            return "Document scope"
+        return "Document scope"
+    n = len(pages)
+    if total_pages > 0 and n >= total_pages - 5:
+        if status == "not_applicable":
+            return "N/A across all pages"
+        return "All pages"
+    return _format_page_ranges(pages)
+
+
+_STATUS_LABELS = {
+    "compliant": "Compliant",
+    "non_compliant": "Non-Compliant",
+    "not_applicable": "N/A",
+    "uncertain": "Uncertain",
+    "error": "Error",
+}
 
 
 def _score_class(score: float) -> str:
@@ -617,6 +659,68 @@ def _build_report_html(report: dict, stem: str) -> str:
 
                 h.append("</div>")
 
+        # --- Rule-Level Detail ---
+        all_evals = ar.get("all_evaluations", [])
+        if all_evals:
+            total_pages = report.get("total_pages", 0)
+            cat_order = [cs.get("category_id", "") for cs in cat_scores]
+            by_cat: dict[str, list[dict]] = {}
+            for ev in all_evals:
+                cat = ev.get("rule_category", "other")
+                by_cat.setdefault(cat, []).append(ev)
+
+            for cat in by_cat:
+                if cat not in cat_order:
+                    cat_order.append(cat)
+
+            cat_display_map = {
+                cs.get("category_id", ""): cs.get("category_display", cs.get("category_id", ""))
+                for cs in cat_scores
+            }
+
+            h.append(f'<h3 class="page-break">Rule-Level Detail</h3>')
+            for cat_id in cat_order:
+                rules_in_cat = by_cat.get(cat_id, [])
+                if not rules_in_cat:
+                    continue
+                rules_in_cat.sort(key=lambda r: r.get("rule_id", ""))
+                cat_label = _esc(cat_display_map.get(cat_id, cat_id.title()))
+
+                n_comp = sum(1 for r in rules_in_cat if r.get("status") == "compliant")
+                n_nc = sum(1 for r in rules_in_cat if r.get("status") == "non_compliant")
+                n_na = sum(1 for r in rules_in_cat if r.get("status") == "not_applicable")
+                n_unc = sum(1 for r in rules_in_cat if r.get("status") in ("uncertain", "error"))
+
+                h.append(f'<div class="rule-detail-group">')
+                h.append(
+                    f'<h4>{cat_label} '
+                    f'<span class="cat-summary">{len(rules_in_cat)} rules &mdash; '
+                    f'{n_comp} pass, {n_nc} fail, {n_na} N/A'
+                    f'{f", {n_unc} uncertain" if n_unc else ""}'
+                    f'</span></h4>'
+                )
+
+                for rv in rules_in_cat:
+                    st = rv.get("status", "unknown")
+                    st_label = _STATUS_LABELS.get(st, st.replace("_", " ").title())
+                    pages_display = _smart_page_display(
+                        rv.get("page_numbers", []), total_pages, st,
+                    )
+                    rule_text = _esc(rv.get("rule_text", ""))
+                    reasoning = rv.get("reasoning", "")
+
+                    h.append(f'<div class="rule-row">')
+                    h.append(f'<span class="rule-id">{_esc(rv.get("rule_id", ""))}</span>')
+                    h.append(f'<span class="st st-{st}">{st_label}</span>')
+                    h.append(f'<span class="rule-text">{rule_text}</span>')
+                    h.append(f'<span class="rule-pages">{_esc(pages_display)}</span>')
+                    h.append(f'</div>')
+                    if reasoning:
+                        trimmed = reasoning[:250] + ("..." if len(reasoning) > 250 else "")
+                        h.append(f'<div class="rule-reasoning" style="padding-left:90px">{_esc(trimmed)}</div>')
+
+                h.append("</div>")
+
     # --- Skipped Agents ---
     skipped = report.get("skipped_agents", [])
     if skipped:
@@ -720,6 +824,49 @@ def _build_report_markdown(report: dict) -> str:
                     lines.append(f"  **Recommendation:** {rec}")
                 if pages:
                     lines.append(f"  Pages: {pages}")
+                lines.append("")
+
+        all_evals = ar.get("all_evaluations", [])
+        if all_evals:
+            total_pages = report.get("total_pages", 0)
+            cat_order = [cs.get("category_id", "") for cs in ar.get("category_scores", [])]
+            by_cat: dict[str, list[dict]] = {}
+            for ev in all_evals:
+                cat = ev.get("rule_category", "other")
+                by_cat.setdefault(cat, []).append(ev)
+            for cat in by_cat:
+                if cat not in cat_order:
+                    cat_order.append(cat)
+
+            cat_display_map = {
+                cs.get("category_id", ""): cs.get("category_display", cs.get("category_id", ""))
+                for cs in ar.get("category_scores", [])
+            }
+
+            lines.append("### Rule-Level Detail\n")
+            for cat_id in cat_order:
+                rules_in_cat = by_cat.get(cat_id, [])
+                if not rules_in_cat:
+                    continue
+                rules_in_cat.sort(key=lambda r: r.get("rule_id", ""))
+                cat_label = cat_display_map.get(cat_id, cat_id.title())
+                lines.append(f"#### {cat_label} ({len(rules_in_cat)} rules)\n")
+                lines.append("| Rule | Status | Rule Text | Pages | Reasoning |")
+                lines.append("|------|--------|-----------|-------|-----------|")
+                for rv in rules_in_cat:
+                    st = rv.get("status", "unknown")
+                    st_label = _STATUS_LABELS.get(st, st.replace("_", " ").title())
+                    pages_display = _smart_page_display(
+                        rv.get("page_numbers", []), total_pages, st,
+                    )
+                    rule_text = rv.get("rule_text", "")[:80]
+                    reasoning = rv.get("reasoning", "")[:120]
+                    reasoning = reasoning.replace("|", "/").replace("\n", " ")
+                    rule_text = rule_text.replace("|", "/").replace("\n", " ")
+                    lines.append(
+                        f"| {rv.get('rule_id', '')} | {st_label} "
+                        f"| {rule_text} | {pages_display} | {reasoning} |"
+                    )
                 lines.append("")
 
     skipped = report.get("skipped_agents", [])

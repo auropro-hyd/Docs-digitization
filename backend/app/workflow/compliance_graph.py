@@ -245,9 +245,55 @@ async def run_compliance_pipeline(
                 "rule_updates": rule_updates,
             })
 
+        async def _prescreen_progress(pages_done: int, total_pages: int, stats: dict):
+            nonlocal llm_call_count
+            status = stats.get("status", "screening")
+            display = AGENT_DISPLAY_NAMES.get(agent_name, agent_name)
+
+            if status == "started":
+                await _ws_progress(doc_id, {
+                    "phase": "evaluation",
+                    "agent": agent_name,
+                    "status": "prescreening",
+                    "prescreen_pages_done": 0,
+                    "prescreen_pages_total": total_pages,
+                    "prescreen_percent": 0,
+                    "prescreen_total_rules": stats.get("total_rules", 0),
+                    "label": f"{display}: Pre-screening pages...",
+                })
+            elif status == "screening":
+                llm_call_count += 1
+                pct = int((pages_done / max(total_pages, 1)) * 100)
+                await _ws_progress(doc_id, {
+                    "phase": "evaluation",
+                    "agent": agent_name,
+                    "status": "prescreening",
+                    "prescreen_pages_done": pages_done,
+                    "prescreen_pages_total": total_pages,
+                    "prescreen_percent": pct,
+                    "prescreen_total_rules": stats.get("total_rules", 0),
+                    "prescreen_applicable_count": stats.get("applicable_count", 0),
+                    "label": f"{display}: Pre-screening pages ({pages_done}/{total_pages})...",
+                })
+            elif status == "complete":
+                avg = stats.get("avg_applicable", 0)
+                total_rules = stats.get("total_rules", 0)
+                await _ws_progress(doc_id, {
+                    "phase": "evaluation",
+                    "agent": agent_name,
+                    "status": "prescreen_complete",
+                    "prescreen_pages_done": total_pages,
+                    "prescreen_pages_total": total_pages,
+                    "prescreen_percent": 100,
+                    "prescreen_total_rules": total_rules,
+                    "prescreen_avg_applicable": avg,
+                    "label": f"{display}: Pre-screen done — avg {avg}/{total_rules} rules/page applicable",
+                })
+
         report = await agent.review_document(
             extractions,
             progress_callback=_agent_progress,
+            prescreen_callback=_prescreen_progress,
             section_map=section_map if section_map else None,
             global_kv_pairs=key_value_pairs,
         )
@@ -262,13 +308,17 @@ async def run_compliance_pipeline(
 
         return report
 
-    for agent_name in (a for a in applicable if a in _AGENT_CLASSES):
-        try:
-            report = await _run_agent(agent_name)
-            agent_reports.append(report)
-            agents_executed.append(agent_name)
-        except Exception as exc:
-            logger.error("Agent %s failed: %s", agent_name, exc)
+    agent_names_to_run = [a for a in applicable if a in _AGENT_CLASSES]
+    agent_results = await asyncio.gather(
+        *[_run_agent(name) for name in agent_names_to_run],
+        return_exceptions=True,
+    )
+    for name, result in zip(agent_names_to_run, agent_results):
+        if isinstance(result, Exception):
+            logger.error("Agent %s failed: %s", name, result)
+        else:
+            agent_reports.append(result)
+            agents_executed.append(name)
 
     # Store dependency tags for reconciliation
     if all_cross_refs:

@@ -10,6 +10,7 @@ import asyncio
 import logging
 from collections import defaultdict
 
+from app.compliance.applicability import ApplicabilityGate
 from app.compliance.context_builder import build_enriched_context, classify_page_type
 from app.compliance.models import (
     AGENT_DISPLAY_NAMES,
@@ -47,29 +48,78 @@ def _is_signature_rule(rule: AuditRule) -> bool:
     text_lower = rule.text.lower()
     return any(kw in text_lower for kw in _SIGNATURE_KEYWORDS)
 
+_OCR_AWARENESS = (
+    "\n\nCRITICAL — OCR ARTIFACT AWARENESS:\n"
+    "The content you evaluate is extracted via OCR from scanned documents. "
+    "You MUST distinguish between genuine compliance issues and OCR artifacts:\n"
+    "1. HANDWRITTEN TEXT: Handwritten entries (signatures, initials, operator "
+    "names, dates) are frequently garbled by OCR. Text like 'Noga', 'staten', "
+    "'3cleader', 'NOOR', 'N088', 'K 01/10/2025' in 'Done by'/'Checked by' "
+    "columns are VALID operator identifications — they are OCR's best attempt "
+    "at reading handwriting. Treat ANY text in a signature/identity column as "
+    "a valid entry unless the cell is genuinely empty or blank.\n"
+    "2. DATE MISREADS: OCR commonly misreads handwritten years — '2015' is "
+    "almost certainly '2025', '205' is a truncated '2025', '20#' is a garbled "
+    "'2025'. These are OCR errors, NOT data integrity issues. Do NOT flag "
+    "them as unrealistic dates or transcription errors.\n"
+    "3. DASHES ARE VALID: A dash (-), series of dashes (----), or em-dash (—) "
+    "in a form field means 'not applicable' or 'not performed'. This is a "
+    "legitimate annotation, NOT a blank/empty field. Never flag dashed fields "
+    "as missing data.\n"
+    "4. BPCR WORKFLOW: Batch Production and Control Record templates are "
+    "printed BEFORE manufacturing begins. Activity dates (Sep/Oct 2025) being "
+    "after the template print date (e.g., 18-Sep-2025) is COMPLETELY NORMAL. "
+    "This is NOT post-dating.\n"
+    "5. LEGIBILITY vs OCR QUALITY: You cannot assess whether the original "
+    "document has smudges, fading, or unapproved inks from OCR text alone. "
+    "Garbled OCR output does NOT mean the original document is illegible — "
+    "it means the OCR engine struggled with handwriting. Only flag legibility "
+    "issues when there is structural evidence (e.g., missing entire sections, "
+    "page appears blank, critical data fields completely absent).\n"
+    "6. SIGNATURE DETECTION: If the STRUCTURED METADATA shows a signature "
+    "detected with status='signed', trust it — even if the markdown text "
+    "looks garbled. The document intelligence engine uses visual analysis "
+    "for signature detection, which is more reliable than OCR text."
+)
+
 _SYSTEM_PROMPTS: dict[str, str] = {
     "alcoa": (
         "You are an ALCOA++ compliance reviewer for pharmaceutical batch production records. "
         "You evaluate data-integrity rules against OCR-extracted markdown content. "
         "Base decisions strictly on explicit evidence visible in the content. "
         "If a rule cannot be evaluated from the given page, mark it not_applicable."
+        + _OCR_AWARENESS
     ),
     "gmp": (
         "You are a GMP (Good Manufacturing Practice) compliance reviewer. "
         "You evaluate GMP documentation rules against pharmaceutical manufacturing records. "
         "Base decisions strictly on explicit evidence visible in the content."
+        + _OCR_AWARENESS
     ),
     "checklist": (
         "You are a checklist verification specialist for pharmaceutical documents. "
         "You verify completeness of checklists, signatures, dates, and required fields. "
         "Base decisions strictly on explicit evidence visible in the content."
+        + _OCR_AWARENESS
     ),
     "sop": (
         "You are an SOP compliance reviewer for pharmaceutical manufacturing. "
         "You verify that manufacturing steps align with Standard Operating Procedures. "
         "Base decisions strictly on explicit evidence visible in the content."
+        + _OCR_AWARENESS
     ),
 }
+
+
+def _format_rule_for_prompt(rule: AuditRule) -> str:
+    """Format a single rule with its pass criteria and skip conditions."""
+    lines = [f"- [{rule.id}] {rule.text}"]
+    if rule.pass_criteria:
+        lines.append(f"  PASS CRITERIA: {rule.pass_criteria}")
+    if rule.skip_conditions:
+        for cond in rule.skip_conditions:
+            lines.append(f"  SKIP IF: {cond}")
+    return "\n".join(lines)
 
 
 def _build_batch_prompt(
@@ -78,9 +128,7 @@ def _build_batch_prompt(
     page_num: int,
     section_info: dict | None = None,
 ) -> str:
-    rules_section = "\n".join(
-        f"- [{r.id}] {r.text}" for r in rules
-    )
+    rules_section = "\n".join(_format_rule_for_prompt(r) for r in rules)
 
     context_header = ""
     if section_info:
@@ -112,7 +160,16 @@ def _build_batch_prompt(
         f"unless the page content clearly requires them (e.g., a sign-off section).\n"
         f"- If metadata says 'Handwritten regions: 0', the page is likely printed/typed.\n"
         f"- Use key-value pairs to verify form fields (e.g., 'Done By', 'Date', 'Checked By').\n"
-        f"- Empty key-value fields (value is [empty/blank]) indicate missing entries.\n\n"
+        f"- Empty key-value fields (value is [empty/blank]) indicate missing entries.\n"
+        f"- Fields containing dashes (-), (----), or (—) are NOT empty — they mean "
+        f"'not applicable' or 'not performed' and are valid annotations.\n"
+        f"- Garbled text in 'Done by'/'Checked by' columns (e.g., 'Noga', 'staten', "
+        f"'N088') is OCR's reading of handwritten signatures — treat as VALID.\n\n"
+        f"IMPORTANT RULE GUIDANCE:\n"
+        f"- Each rule below may include PASS CRITERIA and SKIP IF conditions.\n"
+        f"- PASS CRITERIA tells you exactly what constitutes compliance — follow it strictly.\n"
+        f"- SKIP IF conditions tell you when to mark the rule not_applicable — check these first.\n"
+        f"- If no PASS CRITERIA is given, use your expert judgment based on the rule text.\n\n"
         f"For each rule, return a JSON object with:\n"
         f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
         f"  confidence (float 0.0-1.0),\n"
@@ -210,50 +267,178 @@ async def run_agent_evaluation(
     llm: LLMProvider,
     max_concurrent: int = 10,
     progress_callback=None,
+    prescreen_callback=None,
     section_map: dict[int, dict] | None = None,
     global_kv_pairs: list[dict] | None = None,
 ) -> list[tuple[str, int, RuleBatchResult]]:
-    """Fan-out all (batch x page) combos for one agent, with concurrency limit."""
+    """Fan-out all (batch x page) combos for one agent, with concurrency limit.
+
+    Supports two applicability modes (via ``ComplianceConfig.applicability_mode``):
+
+    ``"static"``: Original 4-stage static filter chain per batch (no LLM cost).
+    ``"llm"``:    Tier 1 static (cannot_evaluate) + Tier 2 LLM pre-screen
+                  per page. The pre-screen runs once per page with ALL agent
+                  rules, then cached results are used for per-batch filtering.
+
+    Parameters
+    ----------
+    prescreen_callback:
+        Optional async callable ``(pages_done, total_pages, stats_dict)``
+        invoked during LLM pre-screen to report progress.
+    """
+    settings = get_settings()
+    mode = settings.compliance.applicability_mode
+
     evaluator = RuleBatchEvaluator()
+    gate = ApplicabilityGate()
     semaphore = asyncio.Semaphore(max_concurrent)
-    results: list[tuple[str, int, RuleBatchResult]] = []
     total_tasks = len(batches) * len(extractions)
     completed = 0
 
     page_type_cache: dict[int, str] = {}
 
+    # ── LLM mode: pre-screen all rules per page before batch evaluation ──
+    prescreen_cache: dict[int, set[str]] = {}
+
+    if mode == "llm" and batches:
+        all_agent_rules: list[AuditRule] = []
+        seen_ids: set[str] = set()
+        for batch in batches:
+            for rule in batch.rules:
+                if rule.id not in seen_ids:
+                    if rule.evaluation_mode != "cannot_evaluate":
+                        all_agent_rules.append(rule)
+                    seen_ids.add(rule.id)
+
+        if all_agent_rules:
+            total_pages = len(extractions)
+            total_rule_count = len(all_agent_rules)
+            pages_done = 0
+            prescreen_lock = asyncio.Lock()
+
+            if prescreen_callback:
+                await prescreen_callback(0, total_pages, {
+                    "total_rules": total_rule_count,
+                    "status": "started",
+                })
+
+            async def _prescreen_page(ext: dict) -> None:
+                nonlocal pages_done
+                page_num = ext.get("page_num", 0)
+                sec_info = section_map.get(page_num) if section_map else None
+                try:
+                    applicable_ids = await gate.llm_prescreen(
+                        all_agent_rules, ext, page_num, llm, sec_info,
+                    )
+                    prescreen_cache[page_num] = applicable_ids
+                except Exception:
+                    logger.warning(
+                        "Pre-screen failed for page %d, allowing all rules",
+                        ext.get("page_num", 0), exc_info=True,
+                    )
+                    prescreen_cache[page_num] = {r.id for r in all_agent_rules}
+
+                async with prescreen_lock:
+                    pages_done += 1
+                    if prescreen_callback:
+                        applicable_count = len(prescreen_cache.get(page_num, set()))
+                        await prescreen_callback(pages_done, total_pages, {
+                            "total_rules": total_rule_count,
+                            "page_num": page_num,
+                            "applicable_count": applicable_count,
+                            "status": "screening",
+                        })
+
+            pre_results = await asyncio.gather(
+                *[_prescreen_page(ext) for ext in extractions],
+                return_exceptions=True,
+            )
+            for i, r in enumerate(pre_results):
+                if isinstance(r, Exception):
+                    pn = extractions[i].get("page_num", 0)
+                    logger.warning("Pre-screen gather error page %d: %s", pn, r)
+                    prescreen_cache[pn] = {rule.id for rule in all_agent_rules}
+
+            avg_applicable = (
+                sum(len(ids) for ids in prescreen_cache.values()) / max(len(prescreen_cache), 1)
+            )
+
+            logger.info(
+                "LLM pre-screen complete for %s: %d pages screened, avg %.0f/%d rules applicable",
+                agent, len(prescreen_cache), avg_applicable, total_rule_count,
+            )
+
+            if prescreen_callback:
+                await prescreen_callback(total_pages, total_pages, {
+                    "total_rules": total_rule_count,
+                    "avg_applicable": round(avg_applicable),
+                    "status": "complete",
+                })
+
+    # ── Per-batch evaluation ─────────────────────────────────────
+
     async def _run(batch: RuleBatch, ext: dict) -> tuple[str, int, RuleBatchResult]:
         nonlocal completed
         page_num = ext.get("page_num", 0)
-
-        if page_num not in page_type_cache:
-            page_type_cache[page_num] = classify_page_type(ext)
-        page_type = page_type_cache[page_num]
-
-        if page_type in ("printed", "cover", "index"):
-            sig_rules = [r for r in batch.rules if _is_signature_rule(r)]
-            if sig_rules and len(sig_rules) == len(batch.rules):
-                evals = [
-                    RuleEvaluation(
-                        rule_id=r.id, status="not_applicable",
-                        reasoning=f"Page {page_num} is a {page_type} page with no form fields or signature areas.",
-                    )
-                    for r in batch.rules
-                ]
-                completed += 1
-                result = (batch.batch_id, page_num, RuleBatchResult(evaluations=evals))
-                if progress_callback:
-                    await progress_callback(completed, total_tasks, batch, result)
-                return result
-
         sec_info = section_map.get(page_num) if section_map else None
+
+        if mode == "llm" and prescreen_cache:
+            applicable_ids = prescreen_cache.get(page_num, set())
+            applicable_rules: list[AuditRule] = []
+            gate_evals: list[RuleEvaluation] = []
+            for rule in batch.rules:
+                if rule.evaluation_mode == "cannot_evaluate":
+                    gate_evals.append(RuleEvaluation(
+                        rule_id=rule.id,
+                        status="not_applicable",
+                        confidence=1.0,
+                        reasoning=rule.cannot_evaluate_reason or "Rule requires external data not available for evaluation",
+                    ))
+                elif rule.id in applicable_ids:
+                    applicable_rules.append(rule)
+                else:
+                    gate_evals.append(RuleEvaluation(
+                        rule_id=rule.id,
+                        status="not_applicable",
+                        confidence=0.9,
+                        reasoning="LLM pre-screen determined this rule is not applicable to this page content",
+                    ))
+        else:
+            if page_num not in page_type_cache:
+                page_type_cache[page_num] = classify_page_type(ext)
+            page_type = page_type_cache[page_num]
+            applicable_rules, gate_evals = gate.filter_rules(
+                batch.rules, page_type, sec_info, ext,
+            )
+
+        if not applicable_rules:
+            completed += 1
+            result = (batch.batch_id, page_num, RuleBatchResult(evaluations=gate_evals))
+            if progress_callback:
+                await progress_callback(completed, total_tasks, batch, result)
+            return result
+
         enriched = build_enriched_context(ext, page_num, global_kv_pairs=global_kv_pairs)
+
+        sub_batch = RuleBatch(
+            batch_id=batch.batch_id,
+            category=batch.category,
+            agent=batch.agent,
+            rules=applicable_rules,
+        )
+
         async with semaphore:
-            res = await evaluator.evaluate_batch(
-                batch, enriched, page_num, llm,
+            res_id, res_page, llm_result = await evaluator.evaluate_batch(
+                sub_batch, enriched, page_num, llm,
                 section_info=sec_info,
             )
+            merged_evals = list(llm_result.evaluations) + gate_evals
+            merged_result = RuleBatchResult(
+                evaluations=merged_evals,
+                cross_references=llm_result.cross_references,
+            )
             completed += 1
+            res = (res_id, res_page, merged_result)
             if progress_callback:
                 await progress_callback(completed, total_tasks, batch, res)
             return res
@@ -276,13 +461,17 @@ def _build_document_scope_prompt(
     summary_content: str,
 ) -> str:
     """Prompt for document-level rules (not per-page)."""
-    rules_section = "\n".join(f"- [{r.id}] {r.text}" for r in rules)
+    rules_section = "\n".join(_format_rule_for_prompt(r) for r in rules)
     return (
         f"Evaluate ONLY the following {len(rules)} rules against this DOCUMENT-LEVEL summary.\n\n"
         f"These rules are about document-wide properties (archival, retention, "
         f"availability, backup) — NOT about individual page content.\n"
         f"Assess whether the document as a whole satisfies each rule based on the "
         f"summary information provided.\n\n"
+        f"IMPORTANT RULE GUIDANCE:\n"
+        f"- Each rule below may include PASS CRITERIA and SKIP IF conditions.\n"
+        f"- PASS CRITERIA tells you exactly what constitutes compliance — follow it strictly.\n"
+        f"- SKIP IF conditions tell you when to mark the rule not_applicable.\n\n"
         f"For each rule, return a JSON object with:\n"
         f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
         f"  confidence (float 0.0-1.0),\n"
@@ -302,7 +491,10 @@ async def run_document_scope_evaluation(
     extractions: list[dict],
     llm: LLMProvider,
 ) -> list[tuple[str, int | None, RuleBatchResult]]:
-    """Evaluate document-scope rules once against a document summary."""
+    """Evaluate document-scope rules once against a document summary.
+
+    Rules with evaluation_mode="cannot_evaluate" are resolved without LLM calls.
+    """
     if not batches or not extractions:
         return []
 
@@ -333,17 +525,36 @@ async def run_document_scope_evaluation(
 
     results: list[tuple[str, int | None, RuleBatchResult]] = []
     for batch in batches:
-        prompt = _build_document_scope_prompt(batch.rules, summary_content)
+        # Separate cannot-evaluate rules from LLM-evaluable rules
+        llm_rules: list[AuditRule] = []
+        gate_evals: list[RuleEvaluation] = []
+        for rule in batch.rules:
+            if rule.evaluation_mode == "cannot_evaluate":
+                gate_evals.append(RuleEvaluation(
+                    rule_id=rule.id,
+                    status="not_applicable",
+                    confidence=1.0,
+                    reasoning=rule.cannot_evaluate_reason or "Rule requires external data not available",
+                ))
+            else:
+                llm_rules.append(rule)
+
+        if not llm_rules:
+            results.append((batch.batch_id, None, RuleBatchResult(evaluations=gate_evals)))
+            continue
+
+        prompt = _build_document_scope_prompt(llm_rules, summary_content)
         try:
             result = await llm.generate_structured(prompt, RuleBatchResult, system=system)
             if not isinstance(result, RuleBatchResult):
                 result = RuleBatchResult.model_validate(result)
+            result.evaluations.extend(gate_evals)
         except Exception:
             logger.exception("Document-scope batch %s failed", batch.batch_id)
             result = RuleBatchResult(evaluations=[
                 RuleEvaluation(rule_id=r.id, status="error", description="Evaluation failed")
-                for r in batch.rules
-            ])
+                for r in llm_rules
+            ] + gate_evals)
         results.append((batch.batch_id, None, result))
 
     return results

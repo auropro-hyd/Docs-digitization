@@ -1,0 +1,111 @@
+# ═══════════════════════════════════════════════════════════════
+#  Cross-Page Reconciliation Rule Configuration
+#  Separated from rule text (reconciliation_rules.md) for easy tuning.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: section
+  severity: critical
+  evaluation_mode: llm
+  applicable_page_types: []
+  applicable_section_types: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Material Reconciliation (rules 1-2) ───────────────────
+  material_reconciliation:
+    severity: critical
+    rules:
+      1:
+        pass_criteria: >
+          Total quantity of each raw material used in manufacturing must match
+          the dispatched quantity. List each material with quantities from both
+          the manufacturing and raw material sections and compare.
+        keywords: [material, quantity, dispatched, used, weight, kg]
+
+      2:
+        pass_criteria: >
+          Raw material lot/batch numbers in manufacturing records must exactly
+          match those in dispatch records. Flag any discrepancies.
+        keywords: [lot, batch number, material, dispatch]
+
+  # ── Equipment Verification (rules 3-4) ────────────────────
+  equipment_verification:
+    severity: major
+    rules:
+      3:
+        pass_criteria: >
+          Each equipment inspection or cleaning step in manufacturing must have
+          a corresponding completed checklist or cleaning record.
+        keywords: [equipment, inspection, cleaning, checklist, record]
+
+      4:
+        pass_criteria: >
+          Equipment IDs must be identical between manufacturing step references
+          and equipment usage logs. Flag any ID mismatches.
+        keywords: [equipment ID, equipment, asset, usage log]
+
+  # ── QC/IPC Reconciliation (rules 5-6) ─────────────────────
+  qc_ipc_reconciliation:
+    severity: critical
+    rules:
+      5:
+        pass_criteria: >
+          QC test values recorded in manufacturing steps must match values
+          in the QC report section. Flag discrepancies including potential
+          OCR misreads of similar characters (0/O, 1/l, 5/S).
+        keywords: [QC, test, result, report, value]
+
+      6:
+        pass_criteria: >
+          In-process control results recorded during manufacturing must match
+          corresponding IPC report values.
+        keywords: [IPC, in-process, result, report]
+
+  # ── Document Completeness (rules 7-8) ─────────────────────
+  document_completeness:
+    severity: major
+    rules:
+      7:
+        pass_criteria: >
+          All attachments, reports, and sub-documents referenced anywhere in
+          the document must be present in the packet.
+        keywords: [attachment, report, reference, annexed, enclosed]
+
+      8:
+        pass_criteria: >
+          Every sampling step in manufacturing must have a corresponding
+          analytical report in the QC or IPC report sections.
+        keywords: [sample, sampling, analytical, report, IPC]
+
+  # ── Cross-Section Consistency (rules 9-11) ─────────────────
+  cross_section_consistency:
+    severity: critical
+    rules:
+      9:
+        pass_criteria: >
+          Batch/lot numbers must be identical across all sections of the
+          document. Any variation in format or value is non-compliant.
+        keywords: [batch, lot, number, format]
+
+      10:
+        pass_criteria: >
+          Timestamps across manufacturing steps must follow chronological
+          order. Flag any inversions where a later step has an earlier time.
+          NOTE: OCR frequently misreads handwritten year digits (e.g.,
+          '2015' instead of '2025'). Apparent chronological inversions
+          caused by OCR misreads of dates should NOT be flagged.
+        keywords: [time, timestamp, chronological, sequence, order]
+
+      11:
+        pass_criteria: >
+          If IPC results trigger a conditional path (e.g., pH OK -> proceed,
+          pH not OK -> adjust), the subsequent steps must match the path
+          indicated by the actual IPC result.
+        keywords: [conditional, IPC, result, path, pH, adjust, proceed]

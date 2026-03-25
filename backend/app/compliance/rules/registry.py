@@ -1,7 +1,10 @@
-"""Rule registry: loads audit rules from markdown files, groups by category, creates batches.
+"""Rule registry: loads audit rules from markdown + YAML config files.
 
-Supports read and write operations. Writes serialize structured data back to markdown
-and persist agent metadata to agents_meta.json.
+Markdown files hold rule text (human-readable). YAML files hold behavioral
+metadata (scope, applicability, pass criteria, etc.) for easy tuning.
+
+Supports read and write operations. Writes serialize structured data back to
+markdown and persist agent metadata to agents_meta.json.
 """
 
 from __future__ import annotations
@@ -12,6 +15,9 @@ import re
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,16 @@ class AuditRule:
     severity_hint: str = "observation"
     scope: str = "page"  # "page" | "document" | "section"
     context_sections: list[str] = field(default_factory=list)
+    # Applicability metadata (loaded from YAML config)
+    applicable_page_types: list[str] = field(default_factory=list)
+    applicable_section_types: list[str] = field(default_factory=list)
+    skip_conditions: list[str] = field(default_factory=list)
+    pass_criteria: str = ""
+    evaluation_mode: str = "llm"  # "llm" | "cannot_evaluate"
+    cannot_evaluate_reason: str = ""
+    requires_external_data: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    notes: str = ""
 
 
 @dataclass
@@ -87,6 +103,60 @@ class RuleBatch:
     category: str
     agent: str
     rules: list[AuditRule] = field(default_factory=list)
+
+
+# ── YAML config loading ─────────────────────────────────────
+
+_YAML_LIST_FIELDS = frozenset({
+    "applicable_page_types", "applicable_section_types", "skip_conditions",
+    "keywords", "requires_external_data",
+})
+_YAML_STR_FIELDS = frozenset({
+    "scope", "severity", "evaluation_mode", "cannot_evaluate_reason",
+    "pass_criteria", "notes",
+})
+
+
+def _rule_config_path(agent_id: str) -> Path:
+    return _RULES_DIR / f"{agent_id}_rules.yaml"
+
+
+def _load_rule_config(agent: str) -> dict[str, Any]:
+    """Load YAML config for an agent. Returns empty dict if file absent."""
+    path = _rule_config_path(agent)
+    if not path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        logger.warning("Failed to load YAML config from %s", path, exc_info=True)
+        return {}
+
+
+def _resolve_rule_config(
+    yaml_config: dict[str, Any],
+    category_slug: str,
+    rule_number: int,
+) -> dict[str, Any]:
+    """Cascade: defaults -> category-level -> per-rule overrides."""
+    defaults = yaml_config.get("defaults", {})
+    categories = yaml_config.get("categories", {})
+    cat_config = categories.get(category_slug, {})
+    cat_rules = cat_config.get("rules", {})
+    rule_config = cat_rules.get(rule_number, {})
+
+    merged: dict[str, Any] = {}
+    for key in _YAML_LIST_FIELDS | _YAML_STR_FIELDS:
+        val = rule_config.get(key)
+        if val is None:
+            val = cat_config.get(key)
+        if val is None:
+            val = defaults.get(key)
+        if val is not None:
+            merged[key] = val
+
+    return merged
 
 
 # ── Parsing helpers ──────────────────────────────────────────
@@ -103,8 +173,13 @@ def _finalise_rule(
     category: str,
     category_display: str,
     severity: str,
+    yaml_overrides: dict[str, Any] | None = None,
 ) -> AuditRule:
-    """Build an AuditRule from accumulated text, extracting [sections: ...] if present."""
+    """Build an AuditRule from accumulated text, extracting [sections: ...] if present.
+
+    yaml_overrides are merged last — they can override severity, scope, and
+    all applicability metadata fields.
+    """
     context_sections: list[str] = []
     sec_match = _SECTIONS_RE.search(raw_text)
     if sec_match:
@@ -117,6 +192,8 @@ def _finalise_rule(
 
     scope = "document" if category in _DOCUMENT_SCOPE_CATEGORIES else "page"
 
+    ov = yaml_overrides or {}
+
     return AuditRule(
         id=rule_id,
         number=num,
@@ -124,18 +201,28 @@ def _finalise_rule(
         category_display=category_display,
         agent=agent,
         text=raw_text,
-        severity_hint=severity,
-        scope=scope,
+        severity_hint=ov.get("severity", severity),
+        scope=ov.get("scope", scope),
         context_sections=context_sections,
+        applicable_page_types=ov.get("applicable_page_types", []),
+        applicable_section_types=ov.get("applicable_section_types", []),
+        skip_conditions=ov.get("skip_conditions", []),
+        pass_criteria=str(ov.get("pass_criteria", "") or "").strip(),
+        evaluation_mode=ov.get("evaluation_mode", "llm"),
+        cannot_evaluate_reason=str(ov.get("cannot_evaluate_reason", "") or "").strip(),
+        requires_external_data=ov.get("requires_external_data", []),
+        keywords=ov.get("keywords", []),
+        notes=str(ov.get("notes", "") or "").strip(),
     )
 
 
-def _parse_rules_file(path: Path, agent: str) -> list[AuditRule]:
+def _parse_rules_file(path: Path, agent: str, yaml_config: dict[str, Any] | None = None) -> list[AuditRule]:
     """Parse a markdown rules file into a list of AuditRule objects.
 
-    Supports multi-line rules: continuation lines (indented or plain text that
-    doesn't start a new rule/category/separator) are appended to the current rule.
+    If yaml_config is provided, each rule's metadata is enriched via the
+    defaults -> category -> per-rule cascade.
     """
+    yaml_config = yaml_config or {}
     rules: list[AuditRule] = []
     current_category = "general"
     current_display = "General"
@@ -147,9 +234,11 @@ def _parse_rules_file(path: Path, agent: str) -> list[AuditRule]:
         nonlocal pending_num, pending_text
         if pending_num is not None and pending_text:
             severity = _SEVERITY_HINTS.get(current_display.lower(), "observation")
+            overrides = _resolve_rule_config(yaml_config, current_category, pending_num) if yaml_config else None
             rules.append(_finalise_rule(
                 agent, pending_num, pending_text,
                 current_category, current_display, severity,
+                yaml_overrides=overrides,
             ))
         pending_num = None
         pending_text = ""
@@ -219,14 +308,16 @@ class RuleRegistry:
         for meta in self._meta:
             path = _rule_file_path(meta.id)
             if path.exists():
-                self._rules[meta.id] = _parse_rules_file(path, meta.id)
+                yaml_cfg = _load_rule_config(meta.id)
+                self._rules[meta.id] = _parse_rules_file(path, meta.id, yaml_cfg)
             else:
                 self._rules[meta.id] = []
 
         for md_file in _RULES_DIR.glob("*_rules.md"):
             agent_id = md_file.stem.replace("_rules", "")
             if agent_id not in self._rules:
-                self._rules[agent_id] = _parse_rules_file(md_file, agent_id)
+                yaml_cfg = _load_rule_config(agent_id)
+                self._rules[agent_id] = _parse_rules_file(md_file, agent_id, yaml_cfg)
                 if not any(m.id == agent_id for m in self._meta):
                     self._meta.append(AgentMeta(id=agent_id, label=agent_id.upper()))
 
@@ -365,7 +456,8 @@ class RuleRegistry:
             content = content.rstrip() + f"\n\n---\n\nCategory: {category_display}\n\n"
             path.write_text(content, encoding="utf-8")
 
-            self._rules[agent] = _parse_rules_file(path, agent)
+            yaml_cfg = _load_rule_config(agent)
+            self._rules[agent] = _parse_rules_file(path, agent, yaml_cfg)
 
         return category_id
 

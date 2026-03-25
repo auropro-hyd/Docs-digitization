@@ -1,0 +1,252 @@
+# ═══════════════════════════════════════════════════════════════
+#  GMP Validation Rule Configuration
+#  Separated from rule text (gmp_rules.md) for easy tuning.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  applicable_page_types: [form]
+  applicable_section_types: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Equipment Identification (rules 1-5) ──────────────────
+  equipment_identification:
+    severity: major
+    applicable_section_types: [manufacturing_operations]
+    rules:
+      1:
+        pass_criteria: >
+          Each process step that uses equipment must reference an equipment ID
+          (e.g., SRE024, SFE002). The ID should appear in or near the step
+          description.
+        keywords: [equipment, reactor, filter, dryer, blender, vessel, ID]
+
+      2:
+        scope: document
+        pass_criteria: >
+          Equipment IDs referenced in manufacturing steps must match those in
+          equipment usage logs within the same document.
+        notes: "Cross-page comparison needed — best at document scope."
+
+      3:
+        pass_criteria: >
+          Equipment should have a referenced calibration status or calibration
+          due date. Phrases like "calibrated," "cal. valid till," or a
+          calibration sticker reference satisfy this.
+        keywords: [calibration, calibrated, cal, validity, due date]
+        skip_conditions:
+          - "Page has no equipment references -> not_applicable"
+
+      4:
+        pass_criteria: >
+          Before equipment use, there should be a cleaning status confirmation
+          (e.g., "cleaned," "clean hold valid," or cleaning checklist reference).
+        keywords: [cleaning, cleaned, clean hold, status, line clearance]
+
+      5:
+        keywords: [multi-product, dedicated, validated cleaning, cross-contamination]
+        skip_conditions:
+          - "Page has no multi-product equipment references -> not_applicable"
+
+  # ── SOP References (rules 6-9) ────────────────────────────
+  sop_references:
+    severity: major
+    applicable_section_types: [manufacturing_operations]
+    rules:
+      6:
+        pass_criteria: >
+          Critical operations (weighing, charging, mixing, drying, sampling)
+          should reference an SOP number with revision (e.g., SOP-XXX Rev. YY).
+        keywords: [SOP, procedure, reference, rev, revision]
+
+      7:
+        keywords: [SOP, procedure]
+        pass_criteria: >
+          SOP references should follow a consistent format with a document
+          number and revision number.
+
+      8:
+        keywords: [SOP, superseded, outdated, revision, effective date]
+        notes: "Requires knowledge of current SOP revision list to fully verify."
+
+      9:
+        keywords: [SOP, read, understood, training, acknowledgment]
+        skip_conditions:
+          - "Page has no SOP acknowledgment section -> not_applicable"
+
+  # ── Environmental Conditions (rules 10-13) ─────────────────
+  environmental_conditions:
+    severity: major
+    rules:
+      10:
+        applicable_section_types: [manufacturing_operations, environmental_monitoring]
+        keywords: [temperature, humidity, pressure, differential, RH, °C]
+        skip_conditions:
+          - "Page has no environmental monitoring data -> not_applicable"
+
+      11:
+        applicable_section_types: [manufacturing_operations, environmental_monitoring]
+        pass_criteria: >
+          Recorded environmental values must fall within any stated limits
+          or validated ranges shown on the page.
+        keywords: [temperature, humidity, pressure, limit, range, NMT, NLT]
+        skip_conditions:
+          - "Page has no environmental data with specified ranges -> not_applicable"
+
+      12:
+        keywords: [out of range, deviation, justification, excursion, OOR]
+        skip_conditions:
+          - "Page has no environmental readings outside ranges -> not_applicable"
+
+      13:
+        keywords: [clean room, classification, grade, area clearance, class]
+        applicable_section_types: [manufacturing_operations, clean_room]
+        skip_conditions:
+          - "Page has no clean room classification references -> not_applicable"
+
+  # ── Corrections and Amendments (rules 14-18) ───────────────
+  corrections_and_amendments:
+    severity: critical
+    applicable_page_types: [form, content]
+    rules:
+      14:
+        pass_criteria: >
+          Corrections must use single-line strikethrough. The original entry
+          must remain readable beneath. Erasure, whiteout, or complete
+          obliteration is non-compliant.
+          NOTE: OCR cannot reliably detect strikethroughs in scanned
+          documents — strikethrough text may render as normal text or
+          garbled characters. Do NOT assume non-compliance from garbled
+          OCR text near corrections.
+        keywords: [correction, strikethrough, amended, corrected]
+        skip_conditions:
+          - "Page has no visible corrections -> not_applicable"
+
+      15:
+        pass_criteria: >
+          Every correction must be accompanied by initials (or name) and the
+          date of correction.
+        keywords: [correction, initial, date, corrected by]
+        skip_conditions:
+          - "Page has no visible corrections -> not_applicable"
+
+      16:
+        keywords: [reason, correction, why, because, due to]
+        skip_conditions:
+          - "Page has no corrections requiring documented reasons -> not_applicable"
+
+      17:
+        pass_criteria: >
+          Look for signs of correction fluid, erasure marks, or characters
+          written over previous entries. Any of these is non-compliant.
+          IMPORTANT: This rule requires VISUAL inspection. OCR text alone
+          cannot determine if correction fluid or erasure was used.
+          Garbled OCR text is NOT evidence of overwriting — it is caused
+          by OCR struggling with handwriting. Default to compliant unless
+          there is explicit textual evidence (e.g., '[WHITEOUT]', '[ERASED]').
+        keywords: [correction fluid, whiteout, erased, overwritten]
+        skip_conditions:
+          - "Page has no visible corrections or overwriting -> not_applicable"
+        notes: "VLM required for reliable visual detection. LLM should default to compliant."
+
+      18:
+        applicable_section_types: [electronic_records]
+        keywords: [audit trail, electronic, amendment, change log]
+        skip_conditions:
+          - "Page has no electronic corrections or amendments -> not_applicable"
+
+  # ── Material Reconciliation (rules 19-22) ──────────────────
+  material_reconciliation:
+    severity: critical
+    applicable_section_types: [manufacturing_operations, material_dispensing]
+    rules:
+      19:
+        scope: document
+        keywords: [requisition, dispensing, material, quantity, issued]
+        notes: "Cross-page comparison needed between requisition and dispensing sections."
+
+      20:
+        pass_criteria: >
+          Material input and output quantities should be documented with a
+          balance or reconciliation at each stage.
+        keywords: [material, balance, quantity, input, output, yield, reconciliation]
+
+      21:
+        keywords: [discrepancy, investigation, unexplained, variance, loss]
+        skip_conditions:
+          - "Page has no material discrepancy records -> not_applicable"
+
+      22:
+        keywords: [returned, return, material, quantity, disposition]
+        skip_conditions:
+          - "Page has no material return records -> not_applicable"
+
+  # ── Yield Calculations (rules 23-26) ───────────────────────
+  yield_calculations:
+    severity: major
+    applicable_section_types: [manufacturing_operations, yield_calculation]
+    rules:
+      23:
+        keywords: [theoretical yield, expected yield, target yield]
+        pass_criteria: >
+          Each critical manufacturing stage should state the theoretical
+          (expected) yield.
+
+      24:
+        keywords: [actual yield, yield, obtained, recorded]
+        pass_criteria: >
+          Actual yield must be recorded and compared against the theoretical
+          yield. Both values should be visible.
+
+      25:
+        keywords: [yield, deviation, investigation, limit, acceptable, variance]
+        skip_conditions:
+          - "Page has no yield deviation records -> not_applicable"
+
+      26:
+        keywords: [yield, verified, checked by, countersigned, second person]
+        pass_criteria: >
+          Yield calculations must have a verification signature (Checked by
+          or Verified by) from a second person. ANY text in the Checked by
+          or Verified by column counts as valid — including garbled OCR of
+          handwritten signatures.
+
+  # ── In-Process Controls (rules 27-31) ──────────────────────
+  in_process_controls:
+    severity: major
+    applicable_section_types: [manufacturing_operations, in_process_report]
+    rules:
+      27:
+        keywords: [IPC, in-process, test, interval, sampling]
+        pass_criteria: >
+          IPC tests should be documented at defined intervals as specified
+          in the BMR instructions.
+
+      28:
+        keywords: [IPC, result, acceptance, criteria, limit, specification]
+        pass_criteria: >
+          IPC results must fall within stated acceptance criteria or
+          specification limits.
+
+      29:
+        keywords: [OOS, out of specification, IPC, investigation, failure]
+        skip_conditions:
+          - "Page has no OOS IPC results -> not_applicable"
+
+      30:
+        keywords: [sampling, protocol, procedure, SOP, method]
+
+      31:
+        keywords: [calibration, instrument, IPC, validity, calibrated]
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Instrument calibration records require access to calibration database"
+        requires_external_data: [calibration_records]

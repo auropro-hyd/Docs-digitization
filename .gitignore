@@ -54,6 +54,7 @@ coverage/
 # ── IDEs & Editors ───────────────────────────────────────────
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~

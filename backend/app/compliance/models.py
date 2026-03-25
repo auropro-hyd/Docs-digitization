@@ -99,6 +99,17 @@ class RuleBatchResult(BaseModel):
     cross_references: list[CrossReference] = Field(default_factory=list)
 
 
+class ApplicabilityScreenResult(BaseModel):
+    """Lightweight LLM pre-screen: identifies which rules apply to a page.
+
+    Used by the hybrid applicability gate (Tier 2) to replace brittle
+    static keyword/page-type filters with content-aware classification.
+    """
+
+    applicable_rule_ids: list[str] = Field(default_factory=list)
+    reasoning: str = ""
+
+
 class SkippedCategory(BaseModel):
     category: str
     reason: str

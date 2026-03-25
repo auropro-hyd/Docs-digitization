@@ -1,0 +1,218 @@
+# ═══════════════════════════════════════════════════════════════
+#  Checklist Review Rule Configuration
+#  Separated from rule text (checklist_rules.md) for easy tuning.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  applicable_page_types: [form]
+  applicable_section_types: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Checkbox Completeness (rules 1-4) ─────────────────────
+  checkbox_completeness:
+    severity: major
+    rules:
+      1:
+        pass_criteria: >
+          Every checkbox or checklist item on the page must be either checked
+          (selected) or explicitly marked N/A. Use selection_marks metadata
+          to verify: all marks should be in "selected" state unless N/A is noted.
+        skip_conditions:
+          - "Page has no checkboxes or checklist items -> not_applicable"
+
+      2:
+        pass_criteria: >
+          If any checklist item is blank (unchecked and not marked N/A),
+          there must be a documented justification nearby.
+        skip_conditions:
+          - "Page has no checklist items -> not_applicable"
+
+      3:
+        keywords: [pre-operation, before, prior to, pre-use, pre-start]
+        skip_conditions:
+          - "Page has no pre-operation checklist -> not_applicable"
+
+      4:
+        keywords: [post-operation, after, completion, post-use]
+        skip_conditions:
+          - "Page has no post-operation checklist -> not_applicable"
+
+  # ── Signature Verification (rules 5-9) ────────────────────
+  signature_verification:
+    severity: critical
+    rules:
+      5:
+        pass_criteria: >
+          Every "Done by" field must contain text (initials, name, or code).
+          Any non-empty text counts as a valid signature — including garbled
+          OCR of handwritten text (e.g., 'Noga', 'N088', 'K', 'NOOR',
+          'staten'). OCR reads handwriting imperfectly; presence of any
+          text means someone signed. Dashes (-/—) mean the step was not
+          performed and are valid annotations, NOT missing signatures.
+        keywords: [done by, performed by, executed by]
+
+      6:
+        pass_criteria: >
+          Every "Checked by" or "Verified by" field must contain text.
+          Any non-empty text counts as a valid signature — including garbled
+          OCR of handwritten text. Dashes (-/—) are valid annotations
+          meaning the step was not applicable. Only flag truly empty fields.
+        keywords: [checked by, verified by]
+
+      7:
+        keywords: [approved by, approval, authorized by]
+        skip_conditions:
+          - "Page has no approval signature fields -> not_applicable"
+
+      8:
+        keywords: [supervisor, QA, quality assurance, reviewed by]
+        skip_conditions:
+          - "Page has no supervisor/QA review section -> not_applicable"
+
+      9:
+        pass_criteria: >
+          Each signature should be accompanied by a date. In pharmaceutical
+          BPCRs, operators often write initials/name + date together in one
+          field (e.g., 'Noga 03/10/2025' or 'K 01/10/2025'). OCR may
+          garble the name portion — ANY text + a date-like pattern nearby
+          counts as a valid signature with date. Initials alone without a
+          date anywhere in the same row are insufficient.
+        keywords: [name, date, signature]
+
+  # ── Date Completeness (rules 10-13) ───────────────────────
+  date_completeness:
+    severity: major
+    rules:
+      10:
+        pass_criteria: >
+          Every date field on the page must be filled in. Empty date fields
+          adjacent to completed activities are non-compliant. Date fields
+          containing dashes (-/—) are valid annotations meaning "not
+          applicable". OCR-garbled dates (e.g., '30/09/205', '01/10/20#')
+          count as filled — these are OCR misreads of handwritten dates.
+
+      11:
+        pass_criteria: >
+          Dates should follow a consistent format (DD/MM/YYYY is standard
+          in pharma). NOTE: OCR frequently garbles handwritten date digits,
+          making them appear in different formats. Apparent inconsistencies
+          in handwritten dates (e.g., '2015' vs '2025', truncated years)
+          are likely OCR errors, not format violations. Only flag format
+          inconsistencies in PRINTED/TYPED dates.
+
+      12:
+        pass_criteria: >
+          Start dates must precede end dates. Activity dates must be in
+          chronological order. IMPORTANT: OCR may misread year digits
+          (e.g., '2015' instead of '2025'). If a date appears out of
+          order but the surrounding context suggests OCR misread, treat
+          as compliant.
+
+      13:
+        pass_criteria: >
+          No date on the page should be in the future relative to the
+          document's creation or review date. NOTE: BPCR templates are
+          printed before manufacturing begins — activity dates AFTER the
+          print date are NORMAL. OCR may also misread years, creating
+          apparent future dates. Only flag if a date is clearly in the
+          future relative to ALL other dates on the page.
+
+  # ── Blank Field Detection (rules 14-16) ───────────────────
+  blank_field_detection:
+    severity: major
+    rules:
+      14:
+        pass_criteria: >
+          Critical data fields (results, quantities, equipment IDs,
+          temperatures, pressures) must not be blank. Use key-value pair
+          metadata to detect empty fields. Fields containing dashes (-/—/---),
+          "N/A", "N.A.", "NA", or any garbled OCR text are NOT blank — they
+          are valid entries.
+
+      15:
+        pass_criteria: >
+          Fields left intentionally blank must have "N/A", "NA", "N.A.",
+          or a dash (-/—/---) annotation. All of these are acceptable
+          indicators that the field was intentionally left empty.
+          Initials and date with N/A are best practice but dashes alone
+          are still compliant.
+
+      16:
+        keywords: [calculation, calculated, formula, result, total, yield]
+        skip_conditions:
+          - "Page has no calculated or formula-based fields -> not_applicable"
+
+  # ── Attachment Verification (rules 17-20) ──────────────────
+  attachment_verification:
+    severity: minor
+    rules:
+      17:
+        scope: document
+        keywords: [attachment, annexure, appendix, enclosed, refer]
+
+      18:
+        keywords: [attachment, label, reference, cross-reference]
+        skip_conditions:
+          - "Page has no attachments -> not_applicable"
+
+      19:
+        keywords: [chromatogram, printout, label, affixed, pasted, attached]
+        skip_conditions:
+          - "Page has no physical attachments -> not_applicable"
+        notes: "VLM recommended for verifying physical attachment integrity."
+
+      20:
+        keywords: [attachment, label, loose, unlabeled]
+        skip_conditions:
+          - "Page has no attachments -> not_applicable"
+
+  # ── Cross-Contamination Checklists (rules 21-23) ──────────
+  cross_contamination_checklists:
+    severity: major
+    applicable_section_types: [line_clearance, cleaning_log, manufacturing_operations]
+    rules:
+      21:
+        keywords: [line clearance, clearance, batch start, before batch]
+        skip_conditions:
+          - "Page is not a line clearance checklist -> not_applicable"
+
+      22:
+        keywords: [cross-contamination, equipment, cleaning, dedicated]
+        skip_conditions:
+          - "Page has no cross-contamination check records -> not_applicable"
+
+      23:
+        keywords: [area clearance, previous product, removal, clean area]
+        skip_conditions:
+          - "Page has no area clearance verification -> not_applicable"
+
+  # ── Equipment Operation Checklists (rules 24-26) ──────────
+  equipment_operation_checklists:
+    severity: minor
+    applicable_section_types: [manufacturing_operations, equipment_usage_log]
+    rules:
+      24:
+        keywords: [pre-use, equipment check, inspection, before use]
+        skip_conditions:
+          - "Page has no pre-use equipment checks -> not_applicable"
+
+      25:
+        keywords: [parameter, setting, RPM, temperature, pressure, speed]
+        pass_criteria: >
+          Equipment parameter settings must be recorded and match the
+          values specified in the BMR instruction.
+
+      26:
+        keywords: [post-use, cleaning, after use, post-operation]
+        skip_conditions:
+          - "Page has no post-use cleaning checklists -> not_applicable"

@@ -33,6 +33,7 @@ class ALCOAAgent:
         self,
         extractions: list[dict],
         progress_callback=None,
+        prescreen_callback=None,
         section_map: dict[int, dict] | None = None,
         global_kv_pairs: list[dict] | None = None,
     ) -> AgentReport:
@@ -58,6 +59,7 @@ class ALCOAAgent:
             self._llm,
             max_concurrent=self._config.max_concurrent_batches,
             progress_callback=progress_callback,
+            prescreen_callback=prescreen_callback,
             section_map=section_map,
             global_kv_pairs=global_kv_pairs,
         )
