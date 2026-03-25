@@ -31,6 +31,8 @@ import {
   ThumbsDown,
   Pencil,
   ListChecks,
+  Route,
+  FileText,
 } from "lucide-react";
 import { ExecutiveSummary } from "./executive-summary";
 import { AgentScorecard } from "./agent-scorecard";
@@ -197,10 +199,27 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
     );
   }, []);
 
-  const handleExport = async (format: "html" | "md") => {
+  const activeAgentReport =
+    activeTab === "all"
+      ? null
+      : agentReports.find((ar) => (ar.agent as string) === activeTab) ?? null;
+  const activeAgentId = (activeAgentReport?.agent as string | undefined) ?? null;
+  const activeAgentLabel =
+    (activeAgentReport?.agent_display as string | undefined) ||
+    (activeAgentId ? AGENT_DISPLAY_NAMES[activeAgentId] || activeAgentId : null);
+  const activeAgentFindings = activeAgentId
+    ? findings.filter((f) => f.agent === activeAgentId)
+    : findings;
+
+  const handleExport = async (format: "html" | "md", scope: "all" | "agent" = "all") => {
     try {
-      await downloadComplianceExport(docId, format);
-      toast.success(`Exported as ${format.toUpperCase()}`);
+      const agent = scope === "agent" ? activeAgentId ?? undefined : undefined;
+      await downloadComplianceExport(docId, format, { agent });
+      if (scope === "agent" && activeAgentLabel) {
+        toast.success(`Exported ${activeAgentLabel} as ${format.toUpperCase()}`);
+      } else {
+        toast.success(`Exported full report as ${format.toUpperCase()}`);
+      }
     } catch {
       toast.error("Export failed");
     }
@@ -233,8 +252,22 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => handleExport("html")}>Export as HTML</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => handleExport("md")}>Export as Markdown</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport("html", "all")}>
+                Export full report (HTML)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleExport("md", "all")}>
+                Export full report (Markdown)
+              </DropdownMenuItem>
+              {activeAgentId && activeAgentLabel && (
+                <>
+                  <DropdownMenuItem onClick={() => handleExport("html", "agent")}>
+                    Export {activeAgentLabel} only (HTML)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleExport("md", "agent")}>
+                    Export {activeAgentLabel} only (Markdown)
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
           {onReRun && (
@@ -244,6 +277,27 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
           )}
         </div>
       </div>
+
+      {/* Flow guidance */}
+      <Card className="border-primary/20 bg-primary/5">
+        <CardContent className="py-3 px-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-medium text-foreground flex items-center gap-1.5">
+              <Route className="size-3.5 text-primary" /> Review flow
+            </span>
+            <Badge variant="outline" className="text-[10px]">1. Executive Summary</Badge>
+            <ChevronRight className="size-3 text-muted-foreground" />
+            <Badge variant="outline" className="text-[10px]">2. Agent Analysis</Badge>
+            <ChevronRight className="size-3 text-muted-foreground" />
+            <Badge variant="outline" className="text-[10px]">3. Export Scope</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            {activeAgentId
+              ? `Currently focused: ${activeAgentLabel} (${activeAgentFindings.length} findings). Exports from this tab can be agent-specific.`
+              : `Currently focused: combined cross-agent findings (${findings.length} total). Use agent tabs for detailed drill-down.`}
+          </p>
+        </CardContent>
+      </Card>
 
       {/* Executive summary */}
       <ExecutiveSummary report={report as Parameters<typeof ExecutiveSummary>[0]["report"]} />
@@ -335,6 +389,21 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
         </TabsList>
 
         <TabsContent value="all">
+          <Card className="border-muted">
+            <CardContent className="py-3 px-4 flex flex-wrap items-center gap-2">
+              <FileText className="size-4 text-primary" />
+              <span className="text-sm font-medium">Combined Report View</span>
+              <Badge variant="secondary" className="text-[10px]">
+                {agentReports.length} agents
+              </Badge>
+              <Badge variant="secondary" className="text-[10px]">
+                {findings.length} findings
+              </Badge>
+              <span className="text-xs text-muted-foreground">
+                Use tabs to move to agent-specific detail and targeted exports.
+              </span>
+            </CardContent>
+          </Card>
           <FindingsTable
             findings={findings}
             docId={docId}
@@ -347,8 +416,49 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
           const agent = ar.agent as string;
           const agentFindings = findings.filter((f) => f.agent === agent);
           const allEvals = (ar.all_evaluations || []) as RuleResult[];
+          const pagesReviewed = Array.isArray(ar.pages_reviewed)
+            ? (ar.pages_reviewed as unknown[]).length
+            : Number(ar.pages_reviewed || 0);
+          const agentLabel = (ar.agent_display as string) || AGENT_DISPLAY_NAMES[agent] || agent;
           return (
             <TabsContent key={agent} value={agent} className="space-y-4">
+              <Card className="border-primary/20">
+                <CardContent className="py-3 px-4 flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium">{agentLabel} Report</span>
+                  <Badge variant="secondary" className="text-[10px]">
+                    Score {String(ar.score)}/100
+                  </Badge>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {agentFindings.length} findings
+                  </Badge>
+                  <Badge variant="secondary" className="text-[10px]">
+                    {allEvals.length} rule evaluations
+                  </Badge>
+                  {pagesReviewed > 0 && (
+                    <Badge variant="outline" className="text-[10px]">
+                      {pagesReviewed} pages reviewed
+                    </Badge>
+                  )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => handleExport("html", "agent")}
+                    >
+                      Export {agentLabel} (HTML)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => handleExport("md", "agent")}
+                    >
+                      Export {agentLabel} (MD)
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
               <AgentScorecard
                 report={ar as Parameters<typeof AgentScorecard>[0]["report"]}
                 onFindingClick={(fid) => setHighlightFinding(fid)}

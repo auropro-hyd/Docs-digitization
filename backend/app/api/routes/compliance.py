@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from pathlib import Path
 
 
@@ -494,31 +495,72 @@ def _score_class(score: float) -> str:
     return "score-low"
 
 
+def _slugify_filename_part(value: str) -> str:
+    """Return a filesystem-safe, lowercase slug for filenames."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "agent"
+
+
+def _build_agent_scoped_report(report: dict, agent_id: str) -> dict:
+    """Return a report payload scoped to a single agent."""
+    target = None
+    for ar in report.get("agent_reports", []):
+        if ar.get("agent") == agent_id:
+            target = ar
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Agent report not found for '{agent_id}'.")
+
+    scoped = dict(report)
+    scoped["agent_reports"] = [target]
+    scoped_findings = [f for f in report.get("findings", []) if f.get("agent") == agent_id]
+    scoped["findings"] = scoped_findings
+    scoped["total_findings"] = len(scoped_findings)
+    scoped["severity_counts"] = target.get("severity_counts", {})
+    scoped["overall_score"] = target.get("score", report.get("overall_score", 0))
+    scoped["skipped_agents"] = []
+
+    summary = dict(report.get("executive_summary", {}))
+    summary["overall_assessment"] = (
+        f"Agent-specific compliance report for "
+        f"{target.get('agent_display', AGENT_LABELS.get(agent_id, agent_id))}."
+    )
+    scoped["executive_summary"] = summary
+    return scoped
+
+
 @router.get("/{doc_id}/export")
 async def export_compliance_report(
     doc_id: str,
     format: str = Query("html", pattern="^(md|html)$"),
+    agent: str | None = Query(None, description="Optional agent ID for scoped export."),
 ):
     """Export the compliance report as HTML or Markdown."""
     report = _load_report(doc_id)
     if report is None:
         raise HTTPException(status_code=404, detail="No compliance report found.")
 
+    export_report = report
     stem = Path(report.get("filename", doc_id)).stem
+    filename_stem = f"{stem}_compliance"
+    if agent:
+        export_report = _build_agent_scoped_report(report, agent)
+        agent_slug = _slugify_filename_part(agent)
+        filename_stem = f"{filename_stem}_{agent_slug}"
 
     if format == "md":
-        md_content = _build_report_markdown(report)
+        md_content = _build_report_markdown(export_report)
         return Response(
             content=md_content,
             media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{stem}_compliance.md"'},
+            headers={"Content-Disposition": f'attachment; filename="{filename_stem}.md"'},
         )
 
-    html_doc = _build_report_html(report, stem)
+    html_doc = _build_report_html(export_report, stem)
     return Response(
         content=html_doc,
         media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{stem}_compliance.html"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename_stem}.html"'},
     )
 
 

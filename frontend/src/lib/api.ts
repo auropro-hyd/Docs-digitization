@@ -141,12 +141,24 @@ export async function getComplianceHITLSummary(docId: string) {
   return response.json();
 }
 
-export function getComplianceExportUrl(docId: string, format: "md" | "html"): string {
-  return `${API_BASE}/api/compliance/${docId}/export?format=${format}`;
+export function getComplianceExportUrl(
+  docId: string,
+  format: "md" | "html",
+  options?: { agent?: string },
+): string {
+  const params = new URLSearchParams({ format });
+  if (options?.agent) {
+    params.set("agent", options.agent);
+  }
+  return `${API_BASE}/api/compliance/${docId}/export?${params.toString()}`;
 }
 
-export async function downloadComplianceExport(docId: string, format: "md" | "html"): Promise<void> {
-  const url = getComplianceExportUrl(docId, format);
+export async function downloadComplianceExport(
+  docId: string,
+  format: "md" | "html",
+  options?: { agent?: string },
+): Promise<void> {
+  const url = getComplianceExportUrl(docId, format, options);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Export failed: ${response.statusText}`);
 
