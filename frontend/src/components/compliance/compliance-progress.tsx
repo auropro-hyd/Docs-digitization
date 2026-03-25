@@ -7,6 +7,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { downloadComplianceExport } from "@/lib/api";
+import { toast } from "sonner";
 import {
   CheckCircle,
   Loader2,
@@ -21,6 +23,7 @@ import {
   HelpCircle,
   AlertCircle,
   Layers,
+  Download,
 } from "lucide-react";
 import { type AgentProgress, type PrescreenProgress, type RuleProgress, useComplianceStore } from "@/stores/compliance-store";
 import { AGENT_DISPLAY_NAMES } from "@/types/compliance";
@@ -202,12 +205,35 @@ function PrescreenIndicator({ prescreen }: { prescreen: PrescreenProgress }) {
   );
 }
 
-function AgentCard({ progress }: { progress: AgentProgress }) {
+function AgentCard({
+  progress,
+  docId,
+  exportEnabled,
+}: {
+  progress: AgentProgress;
+  docId: string;
+  exportEnabled: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [exporting, setExporting] = useState<"html" | "md" | null>(null);
   const display = AGENT_DISPLAY_NAMES[progress.agent] || progress.agent;
   const color = AGENT_COLORS[progress.agent] || "bg-primary";
   const hasRules = progress.rules.length > 0;
   const isPrescreening = progress.status === "prescreening";
+  const canExportThisAgent = exportEnabled && progress.status === "complete";
+
+  const exportAgent = async (format: "html" | "md") => {
+    if (!canExportThisAgent) return;
+    try {
+      setExporting(format);
+      await downloadComplianceExport(docId, format, { agent: progress.agent });
+      toast.success(`Exported ${display} as ${format.toUpperCase()}`);
+    } catch {
+      toast.error("Agent export is not ready yet");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   return (
     <motion.div
@@ -255,20 +281,41 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
           </div>
 
           {isPrescreening && (
-            <PrescreenIndicator prescreen={progress.prescreen} />
+            <div className="space-y-2">
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-cyan-700 dark:text-cyan-300 mb-1">
+                  <span>Stage 1/2: Pre-screen</span>
+                  <span>{progress.prescreen.percent}%</span>
+                </div>
+                <Progress value={progress.prescreen.percent} className="h-1.5" />
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                  <span>Stage 2/2: Rule evaluation</span>
+                  <span>0%</span>
+                </div>
+                <Progress value={0} className="h-1.5" />
+              </div>
+              <PrescreenIndicator prescreen={progress.prescreen} />
+            </div>
           )}
 
           {progress.status === "running" && (
             <div className="space-y-1.5">
-              {progress.prescreen.status === "complete" && (
-                <div className="flex items-center gap-1.5 mb-1">
-                  <CheckCircle className="size-3 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
-                  <span className="text-[10px] text-cyan-700 dark:text-cyan-300">
-                    Pre-screened — avg {progress.prescreen.avgApplicable ?? "?"}/{progress.prescreen.totalRules} rules/page
-                  </span>
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-cyan-700 dark:text-cyan-300 mb-1">
+                  <span>Stage 1/2: Pre-screen</span>
+                  <span>{progress.prescreen.status === "complete" ? 100 : progress.prescreen.percent}%</span>
                 </div>
-              )}
-              <Progress value={progress.percent} className="h-1.5" />
+                <Progress value={progress.prescreen.status === "complete" ? 100 : progress.prescreen.percent} className="h-1.5" />
+              </div>
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                  <span>Stage 2/2: Rule evaluation</span>
+                  <span>{progress.percent}%</span>
+                </div>
+                <Progress value={progress.percent} className="h-1.5" />
+              </div>
               <p className="text-[11px] text-muted-foreground truncate">{progress.label}</p>
               <RuleStats rules={progress.rules} />
             </div>
@@ -309,6 +356,41 @@ function AgentCard({ progress }: { progress: AgentProgress }) {
             <p className="text-[11px] text-muted-foreground">Waiting...</p>
           )}
 
+          {progress.status !== "skipped" && (
+            <div className="flex items-center gap-2 mt-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                disabled={!canExportThisAgent || exporting !== null}
+                onClick={() => exportAgent("html")}
+                title={
+                  canExportThisAgent
+                    ? "Export this agent report as HTML"
+                    : "Enabled once this agent is complete and report is generated"
+                }
+              >
+                <Download className="size-3 mr-1" />
+                {exporting === "html" ? "Exporting..." : "Export HTML"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-[11px]"
+                disabled={!canExportThisAgent || exporting !== null}
+                onClick={() => exportAgent("md")}
+                title={
+                  canExportThisAgent
+                    ? "Export this agent report as Markdown"
+                    : "Enabled once this agent is complete and report is generated"
+                }
+              >
+                <Download className="size-3 mr-1" />
+                {exporting === "md" ? "Exporting..." : "Export MD"}
+              </Button>
+            </div>
+          )}
+
           <AnimatePresence>
             <RuleChecklist rules={progress.rules} expanded={expanded} />
           </AnimatePresence>
@@ -334,22 +416,36 @@ function AgentStatusIcon({ status }: { status: string }) {
 }
 
 export function ComplianceProgress({
+  docId,
   filename,
   onCancel,
+  onViewReport,
+  reportReady,
 }: {
+  docId: string;
   filename?: string | null;
   onCancel?: () => void;
+  onViewReport?: () => void;
+  reportReady?: boolean;
 }) {
   const {
     phase, overallPercent, label, agents, totalFindings, startedAt,
-    segmentationLabel, segmentationSections,
+    segmentationLabel, segmentationSections, applicableAgents, skippedAgents,
   } = useComplianceStore();
-  const agentList = Object.values(agents);
+  const visibleAgentIds = new Set([
+    ...applicableAgents,
+    ...skippedAgents.map((s) => s.category),
+  ]);
+  const allAgents = Object.values(agents);
+  const agentList =
+    visibleAgentIds.size > 0
+      ? allAgents.filter((a) => visibleAgentIds.has(a.agent))
+      : allAgents.filter((a) => a.status !== "pending");
 
   const findingsSoFar = agentList.reduce((s, a) => s + a.findingsCount, 0);
   const needsReview = agentList.reduce((s, a) => s + a.needsReviewCount, 0);
   const completedAgents = agentList.filter((a) => a.status === "complete").length;
-  const applicableAgents = agentList.filter((a) => a.status !== "skipped").length;
+  const applicableAgentCount = agentList.filter((a) => a.status !== "skipped").length;
 
   const isSegmenting = phase === "segmentation";
   const segDone = segmentationSections > 0;
@@ -381,7 +477,7 @@ export function ComplianceProgress({
                       {segmentationSections} sections
                     </span>
                   ) : null}
-                  <span>{completedAgents}/{applicableAgents} agents done</span>
+                  <span>{completedAgents}/{applicableAgentCount} agents done</span>
                 </div>
               </div>
             </div>
@@ -391,6 +487,11 @@ export function ComplianceProgress({
               {onCancel && (
                 <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7 px-2" onClick={onCancel}>
                   Cancel
+                </Button>
+              )}
+              {phase === "complete" && reportReady && onViewReport && (
+                <Button size="sm" className="h-7 text-xs" onClick={onViewReport}>
+                  View report
                 </Button>
               )}
             </div>
@@ -403,7 +504,12 @@ export function ComplianceProgress({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
         <AnimatePresence mode="popLayout">
           {agentList.map((a) => (
-            <AgentCard key={a.agent} progress={a} />
+            <AgentCard
+              key={a.agent}
+              progress={a}
+              docId={docId}
+              exportEnabled={Boolean(reportReady)}
+            />
           ))}
         </AnimatePresence>
       </div>

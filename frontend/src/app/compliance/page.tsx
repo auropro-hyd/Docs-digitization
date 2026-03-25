@@ -46,6 +46,7 @@ function ComplianceContent() {
 
   const [pageState, setPageState] = useState<PageState>("loading");
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
+  const [reportReady, setReportReady] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [filename, setFilename] = useState<string | null>(null);
 
@@ -106,6 +107,7 @@ function ComplianceContent() {
           const data = await getComplianceReport(docId!);
           if (!cancelled) {
             setReport(data);
+            setReportReady(true);
             setFilename(((data as Record<string, unknown>).filename as string) ?? null);
             setPageState("report");
           }
@@ -122,6 +124,7 @@ function ComplianceContent() {
             const data = await getComplianceReport(docId!);
             if (!cancelled) {
               setReport(data);
+              setReportReady(true);
               setFilename(((data as Record<string, unknown>).filename as string) ?? null);
               setPageState("report");
             }
@@ -158,8 +161,9 @@ function ComplianceContent() {
         try {
           const data = await getComplianceReport(docId);
           setReport(data);
-          setPageState("report");
-          toast.success("Compliance audit complete");
+          setReportReady(true);
+          setPageState("running");
+          toast.success("Compliance audit complete. Review and export when ready.");
         } catch {
           setErrorMsg("Audit completed but failed to load report");
           setPageState("error");
@@ -187,11 +191,11 @@ function ComplianceContent() {
         if (status.status === "complete") {
           const data = await getComplianceReport(docId);
           setReport(data);
-          setPageState("report");
+          setReportReady(true);
+          setPageState("running");
           wsRef.current?.disconnect();
           wsRef.current = null;
-          reset();
-          toast.success("Compliance audit complete");
+          toast.success("Compliance audit complete. Open report when ready.");
         } else if (status.status === "idle") {
           wsRef.current?.disconnect();
           wsRef.current = null;
@@ -236,6 +240,8 @@ function ComplianceContent() {
     }
     try {
       startRun();
+      setReportReady(false);
+      setReport(null);
       setPageState("running");
       connectWS();
       await runComplianceReview(docId, Array.from(selectedAgents));
@@ -250,6 +256,7 @@ function ComplianceContent() {
   const handleReRun = () => {
     reset();
     setReport(null);
+    setReportReady(false);
     setPageState("pre-run");
   };
 
@@ -260,6 +267,7 @@ function ComplianceContent() {
       wsRef.current?.disconnect();
       wsRef.current = null;
       reset();
+      setReportReady(false);
       setPageState("pre-run");
       setShowCancelConfirm(false);
       toast.success("Compliance run cancelled");
@@ -432,7 +440,10 @@ function ComplianceContent() {
 
       {pageState === "running" && (
         <ComplianceProgress
+          docId={docId}
           filename={filename}
+          reportReady={reportReady}
+          onViewReport={() => setPageState("report")}
           onCancel={() => setShowCancelConfirm(true)}
         />
       )}
