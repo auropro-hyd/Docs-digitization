@@ -41,10 +41,16 @@ categories:
         keywords: [done by, checked by, signature, initial, performed by]
 
       2:
+      # This is applicable for bpcr, raw material request/intake, packaging material request, in-process sample request cum analysis reports
         applicable_page_types: [form, content]
         applicable_section_types: [electronic_records, automated_systems]
+        pass_criteria: >
+          If the page footer says that the page or record is electronically generated, 
+          there must be evidence of operator login or electronic signature. 
+          Look for phrases like "Printed By [Name]([Employee ID]) Date: [Date & time]", "Printed By: [name and/or employee id] \n Printed On: [date & time]". 
         skip_conditions:
-          - "Page contains no electronic or system-generated entries -> not_applicable"
+          - "If Page doesn't contain any entries related to 'Printed By' -> not_applicable"
+          - If page doesn't contain any indication of being electronically generated footer -> not_applicable"
         keywords: [login, electronic signature, operator id, user id, system]
 
       3:
@@ -89,6 +95,7 @@ categories:
         keywords: [correction, strikethrough, amended, corrected, overwritten]
 
       7:
+        #This is only applicable to report printouts like SCADA(VDE) reports and other system generated print outs.
         applicable_page_types: [printed, form, content]
         applicable_section_types: []
         pass_criteria: >
@@ -109,6 +116,7 @@ categories:
         keywords: [cleaning, usage log, line clearance, cleaned by, washed]
 
       9:
+        #only applicable to raw data printouts like page no 76
         applicable_page_types: [form, content, printed]
         applicable_section_types: [raw_data, chromatogram, balance_printout, em_report]
         pass_criteria: >
@@ -119,6 +127,8 @@ categories:
         keywords: [chromatogram, balance, printout, spectrum, raw data, EM report]
 
       10:
+      #not applicable for the scope we are working
+      #This will come into scope when we have access to the systems they are using and their access audit trail. then we can compare it against the persons from the BPCR package
         scope: document
         applicable_page_types: []
         notes: >
@@ -126,14 +136,22 @@ categories:
           trails. Full verification requires system access.
 
       11:
+        # let's consider for all and see how the results look like.
         applicable_page_types: [form, content]
         applicable_section_types: [electronic_records, automated_systems]
+        pass_criteria: >
+          The pages footer or the page content should clearly indicate who has printed the page. 
+          If there is an indication says that the page is printed electronically.
         skip_conditions:
           - "Page contains no automated or system-driven processes -> not_applicable"
         keywords: [automated, system, process initiated, auto, PLC]
 
       12:
+      #added pass criteria - ideally this should pass as the attached bmr do not have any deviations.
         applicable_section_types: [deviation, oos_investigation, oot_investigation]
+        pass_criteria: >
+          Make sure that the deviations page has values for date of completion, 
+          signatures from approved manufacturing chemist, QC chemist & QA.
         skip_conditions:
           - "Page contains no deviation or OOS/OOT investigation content -> not_applicable"
         keywords: [deviation, OOS, OOT, investigation, root cause, CAPA]
@@ -236,11 +254,13 @@ categories:
         keywords: [chart, graph, figure, plot, diagram, scale]
 
   # ── Contemporaneous (rules 25-33) ─────────────────────────
+  # this entire section is only applicable for BPCR document mainly manufacturing steps only
   contemporaneous:
     severity: major
     applicable_page_types: [form]
     rules:
       25:
+      # can we include the ocr descrepancy addressing instructions to the pass criteria so that inconsistent date are not flagged as non-compliant?
         applicable_section_types: [manufacturing_operations]
         pass_criteria: >
           Timestamps for each activity entry should be close to the expected
@@ -325,6 +345,9 @@ categories:
     applicable_page_types: []
     rules:
       34:
+      # this is only applicable to report printouts like SCADA(VDE) reports and other system generated print outs. 
+      # there will no ORIGINAL Stamp as such but we can identify by checking for the equipment name present in the printout and date of printout 
+      # or presence of make, model & software version kind of entries
         pass_criteria: >
           The document must appear to be the original record, not a
           transcribed copy. Look for "ORIGINAL" stamps or controlled
@@ -339,7 +362,13 @@ categories:
         keywords: [controlled copy, document control, revision, copy number]
 
       37:
+      #only applicable for reports like page no 72
         applicable_section_types: [electronic_records, raw_data]
+        pass_criteria: >
+          If the page contains references to electronic data (e.g., "Data
+          captured by [system]", "Recorded by [software]", "Logged in
+          [electronic system]"), it should show evidence of being an original
+          electronic record (e.g., system-generated printout with metadata).
         skip_conditions:
           - "Page is a paper record with no electronic data references -> not_applicable"
 
@@ -373,6 +402,7 @@ categories:
     applicable_page_types: [form]
     rules:
       42:
+        #this should be only applicable to the calculation page like Yield details(20) & ADS - Additiona sheet (169-170)
         pass_criteria: >
           Calculations on the page must have a "Checked by" or "Verified by"
           countersignature. The calculated values should be arithmetically
@@ -381,6 +411,7 @@ categories:
         applicable_section_types: [manufacturing_operations, qc_report, yield_calculation]
 
       43:
+        # this should be applied to the steps there where is remark of capturing values and should be validated against the values in the IPC report
         pass_criteria: >
           Recorded weights, parameters, and test results must fall within
           any stated acceptance ranges or specification limits shown on the
@@ -389,18 +420,22 @@ categories:
         applicable_section_types: [manufacturing_operations, qc_report, in_process_report]
 
       44:
+        #this is applicable to IPC page & reports. mainly check the time difference. if it is progressive, like IPC has earlier time than report genreated time, then it is acceptable
         keywords: [temperature, humidity, pressure, environmental, sampling, monitor]
         applicable_section_types: [environmental_monitoring, sampling, manufacturing_operations]
         skip_conditions:
           - "Page has no environmental or sampling data -> not_applicable"
 
       45:
+        #this is applicable only for the manufacturing steps where you are recording temperature table(page 10) similar ones. the temperature range should be within the defined limit
+        #if the associated step is not implemented, then it is not applicable
         keywords: [equipment, setting, parameter, RPM, temperature, pressure, speed]
         applicable_section_types: [manufacturing_operations]
         skip_conditions:
           - "Page has no equipment settings or parameter recordings -> not_applicable"
 
       46:
+        #similar to #43
         applicable_page_types: [form, content]
         pass_criteria: >
           Check for internal consistency: values referenced multiple times
@@ -413,6 +448,7 @@ categories:
           OCR-caused discrepancies should not be flagged as non-compliant.
 
       47:
+        #this is applicable to after manufacturing steps, like yield details, sieving, micronization etc. the weights recorded in them should be logically progressing
         scope: document
         keywords: [material, balance, quantity, yield, weight, reconciliation]
         applicable_section_types: [manufacturing_operations, material_dispensing]
@@ -425,17 +461,20 @@ categories:
           - "Page has no potency or correction factor data -> not_applicable"
 
       49:
+        #applicable only the BPCR - raw material weighing and manufacturing steps only. all quantities should have units mentioned.
         keywords: [mg, kg, mL, L, unit, conversion, gram, liter]
         skip_conditions:
           - "Page has no unit-based calculations -> not_applicable"
 
       50:
+        #the values from COA(98) should match with yield details section(20)
         scope: document
         keywords: [QC, CoA, certificate, analysis, test result]
         applicable_section_types: [qc_report, certificate_of_analysis]
         notes: "Requires cross-page comparison between QC section and CoA."
 
       51:
+      #applicable for manufacturing steps only where dilution or concentration calculations are performed. the calculated concentration should be logically consistent with the dilution factor and initial concentration.
         keywords: [dilution, factor, calculation, concentration]
         applicable_section_types: [qc_report, in_process_report]
         skip_conditions:
@@ -446,6 +485,7 @@ categories:
     severity: major
     rules:
       52:
+      
         applicable_page_types: [form]
         pass_criteria: >
           Every field on the form page must be filled in. The following
