@@ -40,7 +40,7 @@ endif
 	infra-up infra-down infra-restart infra-status infra-logs \
 	db-logs db-shell db-reset \
 	ollama-up ollama-down ollama-pull ollama-list ollama-logs \
-	test test-unit test-integration test-cov test-all extraction-benchmark extraction-benchmark-compare extraction-benchmark-ci custom-model-pilot \
+	test test-unit test-integration test-cov test-all extraction-benchmark extraction-benchmark-compare extraction-benchmark-ci extraction-production-acceptance custom-model-pilot \
 	lint lint-fix format typecheck lint-frontend check-all \
 	build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs docker-restart \
@@ -237,6 +237,9 @@ extraction-benchmark-compare: venv ## Compare baseline vs routed extraction benc
 
 extraction-benchmark-ci: extraction-benchmark-compare ## CI gate for extraction benchmark deltas
 	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -m tests.benchmark.benchmark_ci_gate
+
+extraction-production-acceptance: extraction-benchmark extraction-benchmark-ci ## Final rollout acceptance gate (A-F)
+	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -m tests.benchmark.production_acceptance
 
 custom-model-pilot: venv ## Evaluate custom model pilot dataset against baseline
 	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -m tests.benchmark.custom_model_pilot
