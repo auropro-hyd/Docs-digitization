@@ -145,6 +145,13 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     container = get_container()
 
     from app.core.services.validation_rules import validate_page_extraction
+    from app.core.services.extraction_family_policy import enrich_packet_sections_with_family
+    from app.core.services.packet_anchor_consensus import (
+        evaluate_packet_anchor_consensus,
+        page_anchor_issues,
+    )
+    from app.core.services.localized_corruption_risk import compute_packet_corruption_risk
+    from app.core.services.packet_decomposer import decompose_packet, sections_as_dicts
 
     extractions: list = []
     confidence_scores: dict = {}
@@ -217,6 +224,35 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         confidence = 0.50 * avg_conf + 0.20 * min_conf + 0.30 * validation.pass_rate
         confidence_scores[page_num] = round(min(max(confidence, 0.0), 1.0), 3)
 
+    page_markdown = {
+        int(k): v.get("markdown", "")
+        for k, v in azure.items()
+        if (isinstance(k, int) or (isinstance(k, str) and k.isdigit())) and isinstance(v, dict)
+    }
+    packet_sections = decompose_packet(page_markdown)
+    packet_sections_payload = enrich_packet_sections_with_family(sections_as_dicts(packet_sections))
+    packet_section_map: dict[int, dict] = {}
+    for sec in packet_sections_payload:
+        for p in range(int(sec.get("start_page", 0)), int(sec.get("end_page", -1)) + 1):
+            packet_section_map[p] = {
+                "packet_section_id": sec.get("section_id", ""),
+                "packet_section_name": sec.get("name", ""),
+                "packet_boundary_confidence": sec.get("boundary_confidence", 0.0),
+                "packet_boundary_reason": sec.get("boundary_reason", ""),
+                "extraction_family": sec.get("extraction_family", ""),
+                "extraction_family_confidence": sec.get("extraction_family_confidence", 0.0),
+                "extraction_family_reason": sec.get("extraction_family_reason", ""),
+            }
+    for ext in extractions:
+        ext.update(packet_section_map.get(ext.get("page_num", -1), {}))
+    packet_anchor_consensus = evaluate_packet_anchor_consensus(extractions)
+    for ext in extractions:
+        ext["packet_anchor_issues"] = page_anchor_issues(ext.get("page_num", -1), packet_anchor_consensus)
+    packet_corruption_risk = compute_packet_corruption_risk(extractions, confidence_scores)
+    for ext in extractions:
+        page_num = int(ext.get("page_num", 0) or 0)
+        ext["corruption_risk"] = packet_corruption_risk.get("pages", {}).get(page_num, {})
+
     settings = get_settings()
     for page_num, score in confidence_scores.items():
         await container.notification.send_update(state["doc_id"], {
@@ -229,6 +265,9 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     return {
         "extractions": extractions,
         "confidence_scores": confidence_scores,
+        "packet_sections": packet_sections_payload,
+        "packet_anchor_consensus": packet_anchor_consensus,
+        "packet_corruption_risk": packet_corruption_risk,
         "total_pages": total_pages,
         "status": "merged",
     }

@@ -1,0 +1,115 @@
+version: 1
+
+# Config-driven extraction family policies (non document-id specific).
+# Families are selected from packet section names using deterministic keyword scoring.
+families:
+  bpr_core:
+    display_name: BPR/BPCR Core Records
+    name_keywords:
+      - batch production
+      - control record
+      - manufacturing instructions
+      - raw materials and weighing
+      - major equipments
+      - revision summary
+      - bpcr
+    critical_fields:
+      - product_name
+      - batch_no
+      - bpcr_number
+      - mpcr_number
+      - batch_size
+      - effective_date
+    selection_semantics_mode: standard
+
+  manufacturing_checklists:
+    display_name: Manufacturing Checklists
+    name_keywords:
+      - check list
+      - checklist
+      - operation
+      - before starting the batch
+      - vacuum tray drier
+      - pin mill
+      - blender
+      - metal detector
+    critical_fields:
+      - batch_no
+      - equipment_no
+      - date
+      - yes_no_na_decisions
+      - signatures
+    selection_semantics_mode: strict_tri_state
+
+  instrument_data_reports:
+    display_name: Instrument Data Reports
+    name_keywords:
+      - data
+      - monitoring parameters
+      - timestamp
+      - vacuum dryer temp
+      - run time
+      - method information
+      - sample set
+      - chromatogram
+    critical_fields:
+      - instrument_id
+      - run_datetime
+      - method_id
+      - batch_no
+    selection_semantics_mode: standard
+
+  analysis_reports:
+    display_name: Analytical/QA-QC Reports
+    name_keywords:
+      - certificate of analysis
+      - analytical data review
+      - qa analytical
+      - qc analytical
+      - sample request
+      - batch release note
+      - review checklist
+    critical_fields:
+      - ar_no
+      - batch_no
+      - result
+      - reviewer_signoff
+    selection_semantics_mode: strict_tri_state
+
+  sieving_reports:
+    display_name: Sieving and Weighing Reports
+    name_keywords:
+      - sieving analysis
+      - sieve
+      - retained
+      - q3
+      - weight
+      - balance print
+    critical_fields:
+      - batch_no
+      - sieve_size
+      - retained_qty
+      - date
+    selection_semantics_mode: standard
+
+defaults:
+  fallback_family: general_records
+  anchor_identifiers:
+    batch_no:
+      - batch no
+      - batch number
+      - b.no
+      - b no
+      - batch#
+    bpcr_number:
+      - bpcr no
+      - bpcr number
+      - batch production and control record no
+    mpcr_number:
+      - mpcr no
+      - mpcr number
+    product_name:
+      - product name
+      - product
+      - item name
+  minimum_consensus_ratio: 0.75
