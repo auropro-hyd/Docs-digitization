@@ -30,6 +30,7 @@ import time
 from html import escape as html_escape
 
 from app.config.settings import AzureDIConfig
+from app.core.services.layout_markdown_sanitizer import sanitize_layout_markdown
 from app.core.ports.ocr import (
     BarcodeResult,
     BoundingRegion,
@@ -368,6 +369,7 @@ def _strip_paragraph_ranges(content: str, ranges: list[tuple[int, int]]) -> str:
 
 def _cleanup_markdown(md: str) -> str:
     """Remove noise from Azure DI markdown output."""
+    md, _ = sanitize_layout_markdown(md)
     md = _PAGE_NUMBER_RE.sub("", md)
     md = _EMPTY_FIGURE_RE.sub("", md)
     md = _SELECTION_SELECTED_RE.sub("☑", md)
@@ -739,6 +741,7 @@ class AzureDIOCRAdapter:
                         state=sm.state or "unselected",
                         confidence=getattr(sm, "confidence", 0.0),
                         page_num=page_num,
+                        bounding_region=_to_bounding_region(getattr(sm, "bounding_regions", None), page_num),
                     )
                 )
 
@@ -748,6 +751,7 @@ class AzureDIOCRAdapter:
             if page_markdown is None:
                 page_markdown = " ".join(w.text for w in words)
                 logger.info(f"Page {page_num}: fell back to word concatenation (no spans)")
+            page_markdown, page_repairs = sanitize_layout_markdown(page_markdown)
 
             ocr_pages.append(
                 OCRPageResult(
@@ -756,6 +760,7 @@ class AzureDIOCRAdapter:
                     page_width=getattr(az_page, "width", None),
                     page_height=getattr(az_page, "height", None),
                     page_unit=getattr(az_page, "unit", None),
+                    parser_repairs=page_repairs,
                     words=words,
                     barcodes=barcodes,
                     selection_marks=selection_marks,

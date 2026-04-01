@@ -80,6 +80,8 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
             pass
 
     try:
+        from app.core.services.selection_semantics import summarize_selection_semantics
+
         result = await container.ocr_engine.extract(
             state["pdf_path"],
             progress_callback=_on_ocr_progress,
@@ -96,6 +98,8 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
                 "page_width": page.page_width,
                 "page_height": page.page_height,
                 "page_unit": page.page_unit,
+                "parser_repairs": page.parser_repairs,
+                "parser_repair_count": len(page.parser_repairs),
                 "word_count": len(page.words),
                 "avg_confidence": sum(word_confidences) / len(word_confidences) if word_confidences else 0.0,
                 "min_confidence": min(word_confidences) if word_confidences else 0.0,
@@ -103,6 +107,10 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
                 "barcodes": [b.model_dump() for b in page.barcodes],
                 "selection_marks": [s.model_dump() for s in page.selection_marks],
                 "word_confidences": word_confidences,
+                "selection_semantics": summarize_selection_semantics(
+                    page.markdown,
+                    [s.model_dump() for s in page.selection_marks],
+                ),
             }
             raw_markdown[page.page_num] = page.markdown
 
@@ -179,9 +187,12 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
             "page_width": azure_page.get("page_width"),
             "page_height": azure_page.get("page_height"),
             "page_unit": azure_page.get("page_unit"),
+            "parser_repairs": azure_page.get("parser_repairs", []),
+            "parser_repair_count": azure_page.get("parser_repair_count", 0),
             "handwritten_count": azure_page.get("handwritten_count", 0),
             "barcodes": azure_page.get("barcodes", []),
             "selection_marks": azure_page.get("selection_marks", []),
+            "selection_semantics": azure_page.get("selection_semantics", {}),
             "tables": page_tables,
             "key_value_pairs": page_kv,
             "signatures": page_sigs,

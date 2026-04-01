@@ -91,6 +91,7 @@ class OCRPageResult(BaseModel):
     page_width: float | None = None
     page_height: float | None = None
     page_unit: str | None = None
+    parser_repairs: list[str] = Field(default_factory=list)
     words: list[OCRWord] = Field(default_factory=list)
     barcodes: list[BarcodeResult] = Field(default_factory=list)
     selection_marks: list[SelectionMark] = Field(default_factory=list)
