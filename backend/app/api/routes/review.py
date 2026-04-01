@@ -122,6 +122,42 @@ def _save_results(doc_id: str, data: dict) -> None:
     result_path.write_text(json.dumps(data, indent=2, default=str))
 
 
+def _lookup_component_value(results: dict, component_id: str) -> str:
+    for ext in results.get("extractions", []) or []:
+        if ext.get("content_component_id") == component_id:
+            return str(ext.get("markdown", "") or "")
+        for kv in ext.get("key_value_pairs", []) or []:
+            if kv.get("component_id") == component_id:
+                return str(kv.get("normalized_value") or kv.get("value") or "")
+        for sig in ext.get("signatures", []) or []:
+            if sig.get("component_id") == component_id:
+                return str(sig.get("status") or "")
+    return ""
+
+
+def _append_correction(results: dict, record: dict) -> None:
+    corrections = results.setdefault("review_corrections", [])
+    corrections.append(record)
+    settings = get_settings()
+    from app.core.services.feedback_learning import build_correction_artifacts, evaluate_retraining_trigger
+
+    artifacts = build_correction_artifacts(corrections)
+    results["correction_dictionary"] = artifacts.get("correction_dictionary", {})
+    results["ocr_confusion_map"] = artifacts.get("ocr_confusion_map", {})
+    results["correction_summary"] = artifacts.get("summary", {})
+    results["retraining_trigger"] = evaluate_retraining_trigger(
+        corrections,
+        threshold_correction_rate=settings.azure_di.drift_threshold_correction_rate,
+        threshold_critical_rate=settings.azure_di.drift_threshold_critical_error_rate,
+        min_corrections_for_trigger=settings.azure_di.drift_min_corrections_for_trigger,
+    )
+
+
+def _page_num_from_component_id(component_id: str) -> int:
+    m = re.match(r"^p(\d+)-", str(component_id or ""))
+    return int(m.group(1)) if m else 0
+
+
 def _get_by_page(data: dict, page_num: int, default=None):
     """Look up a value in a dict that may have int or str keys (JSON round-trip)."""
     return data.get(page_num, data.get(str(page_num), default))
@@ -212,6 +248,8 @@ async def get_review_pages(doc_id: str):
             "packet_anchor_issues": ext.get("packet_anchor_issues", []),
             "corruption_risk": ext.get("corruption_risk", {}),
             "query_field_merge_trace": ext.get("query_field_merge_trace", []),
+            "review_priority_score": ext.get("review_priority_score", 0.0),
+            "cross_field_issues": ext.get("cross_field_issues", []),
             "key_value_pairs": kv_list,
             "signatures": sig_list,
         })
@@ -235,6 +273,14 @@ async def get_review_pages(doc_id: str):
         "packet_sections": results.get("packet_sections", []),
         "extraction_routing": results.get("extraction_routing", {}),
         "query_fields_results": results.get("query_fields_results", []),
+        "field_confidence_summary": results.get("field_confidence_summary", {}),
+        "cross_field_consistency": results.get("cross_field_consistency", {}),
+        "review_priority_queue": results.get("review_priority_queue", []),
+        "review_corrections": results.get("review_corrections", []),
+        "correction_dictionary": results.get("correction_dictionary", {}),
+        "ocr_confusion_map": results.get("ocr_confusion_map", {}),
+        "correction_summary": results.get("correction_summary", {}),
+        "retraining_trigger": results.get("retraining_trigger", {}),
         "packet_anchor_consensus": results.get("packet_anchor_consensus", {}),
         "packet_corruption_risk": results.get("packet_corruption_risk", {}),
         "document_quality": results.get("document_quality", {}),
@@ -265,8 +311,17 @@ async def edit_page(doc_id: str, page_num: int, body: EditPageBody):
 
     if body.markdown is not None:
         raw_markdown = results.get("raw_markdown", {})
+        before = str(raw_markdown.get(str(page_num), raw_markdown.get(page_num, "")) or "")
         raw_markdown[str(page_num)] = body.markdown
         results["raw_markdown"] = raw_markdown
+        _append_correction(results, {
+            "source": "page_edit",
+            "page_num": page_num,
+            "field_id": "page_markdown",
+            "before_value": before[:2000],
+            "after_value": str(body.markdown)[:2000],
+            "criticality": "major",
+        })
 
     decisions = results.get("hitl_decisions", [])
     decisions = [d for d in decisions if not (isinstance(d, dict) and d.get("page_num") == page_num)]
@@ -395,7 +450,17 @@ async def component_action(doc_id: str, body: ComponentActionBody):
 
     decision: dict = {"action": body.action, "status": _action_to_status(body.action)}
     if body.value is not None:
+        before = _lookup_component_value(results, body.component_id)
         decision["value"] = body.value
+        _append_correction(results, {
+            "source": "component_action",
+            "page_num": _page_num_from_component_id(body.component_id),
+            "component_id": body.component_id,
+            "field_id": body.component_id,
+            "before_value": before[:500],
+            "after_value": str(body.value)[:500],
+            "criticality": "major",
+        })
     if body.reason:
         decision["reason"] = body.reason
 

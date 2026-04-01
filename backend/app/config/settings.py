@@ -82,6 +82,9 @@ class AzureDIConfig(BaseModel):
     quality_gate_min_render_height: int = 1600
     quality_gate_min_contrast_std: float = 26.0
     query_fields_enabled: bool = True
+    drift_threshold_correction_rate: float = 0.08
+    drift_threshold_critical_error_rate: float = 0.03
+    drift_min_corrections_for_trigger: int = 20
 
     def features_for_profile(self, profile: str | None) -> list[str]:
         key = (profile or "default").strip().lower()

@@ -173,7 +173,10 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     from app.core.services.extraction_family_policy import enrich_packet_sections_with_family
     from app.core.services.extraction_router import route_extraction_strategy
     from app.core.services.field_normalization import normalize_kv_record
+    from app.core.services.field_confidence import calibrate_kv_confidence, summarize_field_confidence
+    from app.core.services.cross_field_consistency import evaluate_cross_field_consistency
     from app.core.services.query_field_merge import merge_query_fields
+    from app.core.services.review_priority import build_review_priority_queue
     from app.core.services.packet_anchor_consensus import (
         evaluate_packet_anchor_consensus,
         page_anchor_issues,
@@ -299,6 +302,29 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     packet_anchor_consensus = evaluate_packet_anchor_consensus(extractions)
     for ext in extractions:
         ext["packet_anchor_issues"] = page_anchor_issues(ext.get("page_num", -1), packet_anchor_consensus)
+        ext["key_value_pairs"] = [
+            calibrate_kv_confidence(
+                kv,
+                parser_repair_severity_score=float(ext.get("parser_repair_severity_score", 0) or 0),
+                selection_ambiguity=bool((ext.get("selection_semantics") or {}).get("has_ambiguity", False)),
+                anchor_issue_count=len(ext.get("packet_anchor_issues", []) or []),
+                critical_fields=extraction_routing.get("critical_fields", []),
+            )
+            for kv in ext.get("key_value_pairs", [])
+        ]
+    field_confidence_summary = summarize_field_confidence(extractions)
+    cross_field_consistency = evaluate_cross_field_consistency(extractions)
+    review_priority_queue = build_review_priority_queue(extractions, cross_field_consistency)
+    page_top_priority: dict[int, float] = {}
+    for item in review_priority_queue:
+        pn = int(item.get("page_num", 0) or 0)
+        page_top_priority[pn] = max(page_top_priority.get(pn, 0.0), float(item.get("priority_score", 0.0) or 0.0))
+    for ext in extractions:
+        pn = int(ext.get("page_num", 0) or 0)
+        ext["review_priority_score"] = round(page_top_priority.get(pn, 0.0), 2)
+        ext["cross_field_issues"] = [
+            d for d in cross_field_consistency.get("discrepancies", []) if pn in set(d.get("pages", []))
+        ]
     packet_corruption_risk = compute_packet_corruption_risk(extractions, confidence_scores)
     for ext in extractions:
         page_num = int(ext.get("page_num", 0) or 0)
@@ -319,6 +345,9 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         "packet_sections": packet_sections_payload,
         "extraction_routing": extraction_routing,
         "query_fields_results": query_field_rows,
+        "field_confidence_summary": field_confidence_summary,
+        "cross_field_consistency": cross_field_consistency,
+        "review_priority_queue": review_priority_queue,
         "packet_anchor_consensus": packet_anchor_consensus,
         "packet_corruption_risk": packet_corruption_risk,
         "total_pages": total_pages,
