@@ -51,6 +51,7 @@ import { listDocuments, deleteDocument } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useDocumentStore } from "@/stores/document-store";
 import { cn } from "@/lib/utils";
+import { displayProcessingStatus } from "@/lib/processing-labels";
 import { toast } from "sonner";
 
 interface DocumentSummary {
@@ -156,7 +157,7 @@ export default function DocumentsPage() {
             variant="outline"
             className={cn("text-[10px] capitalize", STATUS_STYLES[row.original.status] ?? STATUS_STYLES.uploaded)}
           >
-            {row.original.status.replace(/_/g, " ")}
+            {displayProcessingStatus(row.original.status)}
           </Badge>
         ),
       },
@@ -311,7 +312,7 @@ export default function DocumentsPage() {
                       </div>
                     </div>
                     <Badge variant="outline" className={cn("text-[10px] capitalize flex-shrink-0", STATUS_STYLES[row.original.status] ?? STATUS_STYLES.uploaded)}>
-                      {row.original.status.replace(/_/g, " ")}
+                      {displayProcessingStatus(row.original.status)}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-2 mt-3">

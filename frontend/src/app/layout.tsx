@@ -18,8 +18,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "AutoTranscript | Document Processing Platform",
-  description: "Enterprise AI-powered document processing, extraction, and compliance review",
+  title: "AutoAudit AI | Agentic Quality Assurance Platform",
+  description: "Agentic platform for extraction quality assurance, completeness validation, and compliance review",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

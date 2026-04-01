@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useDocumentStore, type PageData } from "@/stores/document-store";
@@ -21,33 +21,15 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { displayProcessingStatus, pipelineProgressFromStatus } from "@/lib/processing-labels";
 
-const STATUS_LABELS: Record<string, string> = {
-  uploading: "Uploading your file...",
-  ingested: "Preparing workflow...",
-  azure_di_running: "Extracting document intelligence...",
-  marker_ocr_running: "Extracting document intelligence...",
-  quality_scoring: "Validating confidence signals...",
-  merging_results: "Finalizing structured output...",
-  hitl_required: "Human validation required",
-  auto_approved: "Quality checks passed",
-  reviewed: "Validation complete",
-  completed: "Document ready",
-  error: "Processing interrupted",
-};
-
-const PIPELINE_PROGRESS: Record<string, number> = {
-  uploading: 10,
-  ingested: 20,
-  azure_di_running: 50,
-  marker_ocr_running: 50,
-  quality_scoring: 65,
-  merging_results: 75,
-  hitl_required: 80,
-  auto_approved: 85,
-  reviewed: 90,
-  completed: 100,
-};
+const STAGE_ORDER = [
+  { key: "upload", label: "Upload" },
+  { key: "intake", label: "Intake" },
+  { key: "extract", label: "Intake + OCR" },
+  { key: "validate", label: "Validate" },
+  { key: "finalize", label: "Finalize" },
+] as const;
 
 function useElapsedTime(active: boolean) {
   const [elapsed, setElapsed] = useState(0);
@@ -69,7 +51,7 @@ function useElapsedTime(active: boolean) {
 
 export function ProcessingDashboard() {
   const router = useRouter();
-  const { docId, filename, totalPages, processingStatus, ocrProgress, ocrProgressLabel, pages, error } =
+  const { docId, filename, totalPages, processingStatus, ocrProgress, ocrProgressLabel, timeline, pages, error } =
     useDocumentStore();
   useDocumentWebSocket(docId);
   useProcessingPollFallback(docId);
@@ -92,13 +74,55 @@ export function ProcessingDashboard() {
   const isOcrPhase = processingStatus === "azure_di_running" || processingStatus === "marker_ocr_running";
   const hasRealProgress = isOcrPhase && ocrProgress > 0;
 
+  // Smooth the OCR phase so progress feels continuous between server ticks.
+  const [smoothedOcrProgress, setSmoothedOcrProgress] = useState(0);
+  useEffect(() => {
+    if (!isOcrPhase) {
+      setSmoothedOcrProgress(0);
+      return;
+    }
+    setSmoothedOcrProgress((prev) => Math.max(prev, ocrProgress));
+  }, [isOcrPhase, ocrProgress]);
+
+  useEffect(() => {
+    if (!isOcrPhase || isComplete || isError) return;
+    const timer = setInterval(() => {
+      setSmoothedOcrProgress((prev) => {
+        // Keep gently advancing until close to completion, but never fake 100%.
+        const floor = Math.max(ocrProgress, 6);
+        const nudged = prev < floor ? floor : prev + 0.35;
+        return Math.min(97, nudged);
+      });
+    }, 700);
+    return () => clearInterval(timer);
+  }, [isOcrPhase, isComplete, isError, ocrProgress]);
+
+  const liveOcrProgress = useMemo(
+    () => (isOcrPhase ? Math.max(ocrProgress, smoothedOcrProgress) : 0),
+    [isOcrPhase, ocrProgress, smoothedOcrProgress],
+  );
+
   const statusLabel = hasRealProgress && ocrProgressLabel
     ? ocrProgressLabel
-    : STATUS_LABELS[processingStatus] ?? processingStatus.replace(/_/g, " ");
+    : displayProcessingStatus(processingStatus);
 
   const pipelinePercent = hasRealProgress
-    ? Math.round(20 + (ocrProgress / 100) * 50)
-    : PIPELINE_PROGRESS[processingStatus] ?? 0;
+    ? Math.round(20 + (liveOcrProgress / 100) * 50)
+    : pipelineProgressFromStatus(processingStatus);
+
+  const stageIndexByStatus: Record<string, number> = {
+    uploading: 0,
+    ingested: 1,
+    azure_di_running: 2,
+    marker_ocr_running: 2,
+    quality_scoring: 3,
+    merging_results: 4,
+    auto_approved: 4,
+    hitl_required: 4,
+    reviewed: 4,
+    completed: 4,
+  };
+  const currentStage = stageIndexByStatus[processingStatus] ?? 0;
 
   return (
     <div className="space-y-4">
@@ -172,7 +196,7 @@ export function ProcessingDashboard() {
 
           {/* Progress bar (active state only) */}
           {isActive && (
-            <div className="px-5 pb-3">
+            <div className="px-5 pb-3 space-y-3">
               <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5">
                 <span className="flex items-center gap-1.5">
                   <span className="relative flex size-1.5">
@@ -184,6 +208,50 @@ export function ProcessingDashboard() {
                 <span>{pipelinePercent}%</span>
               </div>
               <Progress value={pipelinePercent} className="h-1.5" />
+
+              {isOcrPhase && (
+                <div className="rounded-md border border-primary/20 bg-primary/5 p-2">
+                  <div className="flex items-center justify-between text-[11px] text-primary/90 mb-1">
+                    <span>Intake progress</span>
+                    <span className="tabular-nums">{Math.round(liveOcrProgress)}%</span>
+                  </div>
+                  <Progress value={liveOcrProgress} className="h-1.5" />
+                </div>
+              )}
+
+              <div className="grid grid-cols-5 gap-1.5">
+                {STAGE_ORDER.map((stage, idx) => (
+                  <div
+                    key={stage.key}
+                    className={cn(
+                      "rounded-md border px-2 py-1 text-[10px] text-center",
+                      idx < currentStage
+                        ? "border-success/30 bg-success/10 text-success"
+                        : idx === currentStage
+                        ? "border-primary/30 bg-primary/10 text-primary"
+                        : "border-border bg-muted/40 text-muted-foreground",
+                    )}
+                  >
+                    {stage.label}
+                  </div>
+                ))}
+              </div>
+
+              {timeline.length > 0 && (
+                <div className="rounded-md border border-border bg-muted/20 p-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Live activity</p>
+                  <div className="space-y-1">
+                    {timeline.slice(-4).map((e) => (
+                      <div key={e.id} className="text-[11px] text-muted-foreground flex items-center justify-between gap-2">
+                        <span className="truncate">{e.text}</span>
+                        <span className="tabular-nums text-[10px] text-muted-foreground/70">
+                          {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -705,7 +705,8 @@ class AzureDIOCRAdapter:
             last_pct = -1
 
             pm = poller.polling_method()
-            poll_interval = 5
+            # Poll more frequently so UI progress feels more real-time during long OCR jobs.
+            poll_interval = 2
 
             while not poller.done():
                 time.sleep(poll_interval)

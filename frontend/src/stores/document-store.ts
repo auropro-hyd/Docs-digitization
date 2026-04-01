@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { displayProcessingStatus, normalizeEngineTerms } from "@/lib/processing-labels";
 
 export type PageStatus =
   | "queued"
@@ -29,6 +30,12 @@ export interface PageData {
   status: PageStatus;
   markdown?: string;
   extraction?: Record<string, unknown>;
+}
+
+export interface TimelineEvent {
+  id: string;
+  ts: number;
+  text: string;
 }
 
 const STORAGE_KEY = "processing-doc";
@@ -64,12 +71,14 @@ interface DocumentState {
   processingStatus: ProcessingStatus;
   ocrProgress: number;
   ocrProgressLabel: string;
+  timeline: TimelineEvent[];
   pages: Map<number, PageData>;
   error: string | null;
 
   setDocId: (docId: string, filename: string) => void;
   setProcessingStatus: (status: ProcessingStatus) => void;
   setOcrProgress: (percent: number, label: string) => void;
+  addTimelineEvent: (text: string) => void;
   setTotalPages: (count: number) => void;
   updatePage: (pageNum: number, data: Partial<PageData>) => void;
   setError: (error: string | null) => void;
@@ -85,22 +94,55 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   processingStatus: persisted.docId ? "ingested" : "idle",
   ocrProgress: 0,
   ocrProgressLabel: "",
+  timeline: [],
   pages: new Map(),
   error: null,
 
   setDocId: (docId, filename) => {
     persistDoc(docId, filename);
-    set({ docId, filename, processingStatus: "uploading", error: null, pages: new Map(), totalPages: 0, ocrProgress: 0, ocrProgressLabel: "" });
+    const now = Date.now();
+    set({
+      docId,
+      filename,
+      processingStatus: "uploading",
+      error: null,
+      pages: new Map(),
+      totalPages: 0,
+      ocrProgress: 0,
+      ocrProgressLabel: "",
+      timeline: [{ id: `${now}-upload`, ts: now, text: "File selected for secure upload" }],
+    });
   },
 
-  setProcessingStatus: (status) => {
+  setProcessingStatus: (status) =>
+    set((state) => {
+      if (state.processingStatus === status) return state;
     if (TERMINAL_STATUSES.has(status)) {
       persistDoc(null, null);
     }
-    set({ processingStatus: status });
-  },
+      const now = Date.now();
+      const event: TimelineEvent = {
+        id: `${now}-${status}`,
+        ts: now,
+        text: displayProcessingStatus(status),
+      };
+      return { processingStatus: status, timeline: [...state.timeline.slice(-7), event] };
+    }),
 
-  setOcrProgress: (percent, label) => set({ ocrProgress: percent, ocrProgressLabel: label }),
+  setOcrProgress: (percent, label) =>
+    set((state) => ({
+      ocrProgress: percent,
+      ocrProgressLabel: normalizeEngineTerms(label),
+      timeline:
+        percent === 0 || percent === 100
+          ? [...state.timeline.slice(-7), { id: `${Date.now()}-ocr`, ts: Date.now(), text: normalizeEngineTerms(label) }]
+          : state.timeline,
+    })),
+
+  addTimelineEvent: (text) =>
+    set((state) => ({
+      timeline: [...state.timeline.slice(-7), { id: `${Date.now()}-evt`, ts: Date.now(), text: normalizeEngineTerms(text) }],
+    })),
 
   setTotalPages: (count) =>
     set((state) => {
@@ -135,6 +177,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       processingStatus: "idle",
       ocrProgress: 0,
       ocrProgressLabel: "",
+      timeline: [],
       pages: new Map(),
       error: null,
     });

@@ -18,7 +18,7 @@ def run_acceptance(
     *,
     compare_report_path: str,
     single_report_path: str,
-    min_quality_f1_delta: float = -0.01,
+    min_quality_f1_delta: float = 0.0,
     max_latency_ms_delta: float = 150.0,
     max_cost_usd_delta: float = 0.02,
     max_signature_fnr: float = 0.1,
@@ -97,7 +97,20 @@ if __name__ == "__main__":
             / "latest_report.json"
         ),
     )
+    parser.add_argument("--min-quality-f1-delta", type=float, default=0.0)
+    parser.add_argument("--max-latency-ms-delta", type=float, default=150.0)
+    parser.add_argument("--max-cost-usd-delta", type=float, default=0.02)
+    parser.add_argument("--max-signature-fnr", type=float, default=0.1)
+    parser.add_argument("--max-placeholder-errors", type=int, default=0)
     args = parser.parse_args()
-    out = run_acceptance(compare_report_path=args.compare_report, single_report_path=args.single_report)
+    out = run_acceptance(
+        compare_report_path=args.compare_report,
+        single_report_path=args.single_report,
+        min_quality_f1_delta=args.min_quality_f1_delta,
+        max_latency_ms_delta=args.max_latency_ms_delta,
+        max_cost_usd_delta=args.max_cost_usd_delta,
+        max_signature_fnr=args.max_signature_fnr,
+        max_placeholder_errors=args.max_placeholder_errors,
+    )
     print(json.dumps(out, indent=2))
     raise SystemExit(0 if out["status"] == "accepted" else 1)

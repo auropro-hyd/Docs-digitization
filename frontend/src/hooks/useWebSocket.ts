@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { DocumentWebSocket, type WSMessage } from "@/lib/websocket";
 import { useDocumentStore, type ProcessingStatus } from "@/stores/document-store";
 import { getDocument } from "@/lib/api";
+import { normalizeEngineTerms } from "@/lib/processing-labels";
 
 const VALID_STATUSES: Set<string> = new Set<string>([
   "idle",
@@ -26,23 +27,15 @@ function isActiveStatus(status: string): boolean {
   return !!status && !TERMINAL_STATUSES.has(status);
 }
 
-function sanitizeProgressLabel(label: string): string {
-  if (!label) return "";
-  return label
-    .replace(/azure\s*di/gi, "OCR")
-    .replace(/marker\s*ocr/gi, "OCR")
-    .replace(/docling/gi, "quality engine")
-    .replace(/ollama/gi, "language engine");
-}
-
 const NODE_TO_STATUS: Record<string, ProcessingStatus> = {
-  ingest_document: "azure_di_running",
-  run_azure_di_ocr: "merging_results",
-  run_marker_ocr: "merging_results",
-  merge_azure_di_results: "auto_approved",
-  merge_results: "auto_approved",
-  quality_scoring: "auto_approved",
-  auto_approve: "completed",
+  ingest_document: "ingested",
+  run_azure_di_ocr: "azure_di_running",
+  run_marker_ocr: "marker_ocr_running",
+  run_quality_scoring: "quality_scoring",
+  merge_azure_di_results: "merging_results",
+  merge_marker_results: "merging_results",
+  quality_scoring: "quality_scoring",
+  auto_approve: "auto_approved",
   store_results: "completed",
   completed: "completed",
 };
@@ -87,7 +80,7 @@ export function useValidateRestoredDoc(): void {
 
 export function useDocumentWebSocket(docId: string | null): void {
   const wsRef = useRef<DocumentWebSocket | null>(null);
-  const { processingStatus, setProcessingStatus, setTotalPages, setOcrProgress, updatePage, setError } = useDocumentStore();
+  const { processingStatus, setProcessingStatus, setTotalPages, setOcrProgress, updatePage, setError, addTimelineEvent } = useDocumentStore();
 
   const shouldConnect = docId && isActiveStatus(processingStatus);
 
@@ -111,7 +104,7 @@ export function useDocumentWebSocket(docId: string | null): void {
       if (msg.type === "progress") {
         const pct = typeof msg.percent === "number" ? msg.percent : 0;
         const label = typeof msg.label === "string" ? msg.label : "";
-        setOcrProgress(pct, sanitizeProgressLabel(label));
+        setOcrProgress(pct, normalizeEngineTerms(label));
       }
 
       if (msg.type === "page_update" && msg.page_num) {
@@ -128,6 +121,12 @@ export function useDocumentWebSocket(docId: string | null): void {
       if (msg.type === "hitl_required") {
         setProcessingStatus("hitl_required");
       }
+
+      if (msg.type === "quality_gate") {
+        const status = typeof msg.status === "string" ? msg.status : "ok";
+        const severity = typeof msg.severity === "string" ? msg.severity : "low";
+        addTimelineEvent(`Input quality check: ${status} (${severity})`);
+      }
     });
 
     ws.connect();
@@ -137,7 +136,7 @@ export function useDocumentWebSocket(docId: string | null): void {
       ws.disconnect();
       wsRef.current = null;
     };
-  }, [shouldConnect, docId, setProcessingStatus, setTotalPages, setOcrProgress, updatePage, setError]);
+  }, [shouldConnect, docId, setProcessingStatus, setTotalPages, setOcrProgress, updatePage, setError, addTimelineEvent]);
 }
 
 /**

@@ -91,8 +91,8 @@ export function Sidebar() {
             animate={{ opacity: 1 }}
             className="min-w-0"
           >
-            <span className="text-sm font-semibold text-sidebar-foreground tracking-tight">AutoTranscript</span>
-            <span className="block text-[10px] text-muted-foreground -mt-0.5">Trusted Document Processing</span>
+            <span className="text-sm font-semibold text-sidebar-foreground tracking-tight">AutoAudit AI</span>
+            <span className="block text-[10px] text-muted-foreground -mt-0.5">Autonomous Quality Assurance</span>
           </motion.div>
         )}
       </div>
@@ -182,7 +182,7 @@ export function Sidebar() {
             >
               <Avatar className="size-8 flex-shrink-0">
                 <AvatarFallback className="bg-primary/10 text-primary text-xs font-medium">
-                  AT
+                  AA
                 </AvatarFallback>
               </Avatar>
               {!collapsed && (

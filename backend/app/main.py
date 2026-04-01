@@ -21,6 +21,10 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
+# Keep SDK transport chatter out of dev terminal output; surface app-level progress via WebSocket/UI instead.
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.ai.documentintelligence").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

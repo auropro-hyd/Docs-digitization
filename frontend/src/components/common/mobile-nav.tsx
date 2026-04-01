@@ -73,7 +73,7 @@ export function MobileNavSheet() {
           <div className="size-8 rounded-lg bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-sm">
             <FileText className="size-4 text-primary-foreground" strokeWidth={2.5} />
           </div>
-          <SheetTitle className="text-sm font-semibold">AutoTranscript</SheetTitle>
+          <SheetTitle className="text-sm font-semibold">AutoAudit AI</SheetTitle>
         </SheetHeader>
         <nav className="p-3 space-y-1 flex-1 overflow-y-auto">
           {SHEET_LINKS.map((item) => {

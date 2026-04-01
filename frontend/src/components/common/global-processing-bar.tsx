@@ -5,11 +5,12 @@ import { useDocumentStore } from "@/stores/document-store";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { useHydrated } from "@/hooks/useHydrated";
+import { displayProcessingStatus } from "@/lib/processing-labels";
 
 const TERMINAL = new Set(["idle", "completed", "error"]);
 
 export function GlobalProcessingBar() {
-  const { docId, filename, processingStatus } = useDocumentStore();
+  const { docId, filename, processingStatus, ocrProgress } = useDocumentStore();
   const hydrated = useHydrated();
 
   const isActive = hydrated && docId && !TERMINAL.has(processingStatus);
@@ -34,8 +35,11 @@ export function GlobalProcessingBar() {
               Processing {filename || "document"}...
             </span>
             <span className="text-primary/60 capitalize">
-              {processingStatus.replace(/_/g, " ")}
+              {displayProcessingStatus(processingStatus)}
             </span>
+            {ocrProgress > 0 && ocrProgress < 100 && (
+              <span className="ml-auto text-primary/70 tabular-nums">{Math.round(ocrProgress)}%</span>
+            )}
           </Link>
         </motion.div>
       )}
