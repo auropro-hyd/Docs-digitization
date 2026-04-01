@@ -1,0 +1,16 @@
+version: 1
+
+template_families:
+  bpr_core:
+    aliases: [batch production and control record, bpcr, bmr]
+    enable_custom_model: true
+  manufacturing_checklists:
+    aliases: [checklist, equipment checklist, pre-start checklist]
+    enable_custom_model: true
+  analysis_reports:
+    aliases: [certificate of analysis, analytical report, ar report]
+    enable_custom_model: false
+
+fallback:
+  default_family: bpr_core
+  use_baseline_when_unknown: true

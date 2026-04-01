@@ -177,6 +177,9 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     from app.core.services.cross_field_consistency import evaluate_cross_field_consistency
     from app.core.services.query_field_merge import merge_query_fields
     from app.core.services.review_priority import build_review_priority_queue
+    from app.core.services.rollout_guardrails import select_canary_variant
+    from app.core.services.template_family_router import route_template_family
+    from app.core.services.custom_model_shadow import summarize_shadow_delta
     from app.core.services.packet_anchor_consensus import (
         evaluate_packet_anchor_consensus,
         page_anchor_issues,
@@ -263,9 +266,20 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     packet_sections = decompose_packet(page_markdown)
     packet_sections_payload = enrich_packet_sections_with_family(sections_as_dicts(packet_sections))
     extraction_routing = route_extraction_strategy(packet_sections_payload)
+    settings = get_settings()
+    template_routing = route_template_family(
+        packet_sections_payload,
+        extraction_family=str(extraction_routing.get("primary_family", "")),
+    )
+    rollout_control = select_canary_variant(
+        state["doc_id"],
+        canary_enabled=settings.azure_di.canary_enabled,
+        canary_percent=settings.azure_di.canary_query_fields_percent,
+    )
     query_field_rows: list[dict] = []
     if (
-        get_settings().azure_di.query_fields_enabled
+        settings.azure_di.query_fields_enabled
+        and rollout_control.get("variant") == "routed_query"
         and extraction_routing.get("critical_fields")
         and hasattr(container.ocr_engine, "extract_query_fields")
     ):
@@ -299,6 +313,7 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         ext["key_value_pairs"] = merged_kv
         ext["query_field_merge_trace"] = merge_trace
         ext["extraction_strategy_family"] = extraction_routing.get("primary_family", "")
+        ext["template_family"] = template_routing.get("template_family", "")
     packet_anchor_consensus = evaluate_packet_anchor_consensus(extractions)
     for ext in extractions:
         ext["packet_anchor_issues"] = page_anchor_issues(ext.get("page_num", -1), packet_anchor_consensus)
@@ -315,6 +330,24 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     field_confidence_summary = summarize_field_confidence(extractions)
     cross_field_consistency = evaluate_cross_field_consistency(extractions)
     review_priority_queue = build_review_priority_queue(extractions, cross_field_consistency)
+    shadow_custom_model = {"enabled": False, "summary": {}}
+    if settings.azure_di.custom_model_shadow_enabled and hasattr(container.ocr_engine, "extract_custom_model"):
+        try:
+            custom_rows = await container.ocr_engine.extract_custom_model(
+                state["pdf_path"],
+                template_family=template_routing.get("template_family", ""),
+            )
+            baseline_rows = [
+                kv for ext in extractions for kv in ext.get("key_value_pairs", [])
+            ]
+            shadow_custom_model = {
+                "enabled": True,
+                "template_family": template_routing.get("template_family", ""),
+                "summary": summarize_shadow_delta(baseline_rows, custom_rows or []),
+            }
+        except Exception:
+            logger.exception("custom-model shadow run failed; continuing baseline path")
+            shadow_custom_model = {"enabled": True, "error": "shadow_run_failed", "summary": {}}
     page_top_priority: dict[int, float] = {}
     for item in review_priority_queue:
         pn = int(item.get("page_num", 0) or 0)
@@ -344,7 +377,10 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         "confidence_scores": confidence_scores,
         "packet_sections": packet_sections_payload,
         "extraction_routing": extraction_routing,
+        "template_routing": template_routing,
+        "rollout_control": rollout_control,
         "query_fields_results": query_field_rows,
+        "shadow_custom_model": shadow_custom_model,
         "field_confidence_summary": field_confidence_summary,
         "cross_field_consistency": cross_field_consistency,
         "review_priority_queue": review_priority_queue,

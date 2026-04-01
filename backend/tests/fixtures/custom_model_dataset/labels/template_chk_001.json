@@ -1,0 +1,7 @@
+{
+  "sample_id": "template_chk_001",
+  "fields": {
+    "batch_no": "B-001",
+    "sample_sent_to_qcd": "yes"
+  }
+}

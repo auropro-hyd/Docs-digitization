@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import uuid
+from statistics import mean
 from pathlib import Path
 from time import perf_counter
 
@@ -256,6 +257,73 @@ async def list_documents():
     docs.sort(key=lambda x: x["created_at"], reverse=True)
 
     return {"documents": docs, "total": len(docs)}
+
+
+@router.get("/quality-dashboard")
+async def quality_dashboard():
+    """Aggregate extraction quality/latency/feedback metrics for monitoring."""
+    settings = get_settings()
+    base = Path(settings.storage.base_path)
+    docs = []
+    if base.exists():
+        docs = [d for d in base.iterdir() if d.is_dir()]
+
+    latency_ms_per_page: list[float] = []
+    mean_page_conf: list[float] = []
+    retraining_triggers = 0
+    total_corrections = 0
+
+    for d in docs:
+        result_file = d / "result.json"
+        if not result_file.exists():
+            continue
+        try:
+            payload = json.loads(result_file.read_text())
+        except Exception:
+            continue
+        telemetry = payload.get("extraction_telemetry", {}) or {}
+        latency = telemetry.get("latency", {}) or {}
+        if isinstance(latency.get("ms_per_page"), (int, float)):
+            latency_ms_per_page.append(float(latency["ms_per_page"]))
+
+        page_scores = [p.get("confidence", 0.0) for p in telemetry.get("pages", []) if isinstance(p, dict)]
+        if page_scores:
+            mean_page_conf.append(float(sum(page_scores) / len(page_scores)))
+
+        total_corrections += int((payload.get("correction_summary") or {}).get("total_corrections", 0) or 0)
+        if bool((payload.get("retraining_trigger") or {}).get("should_trigger_retraining", False)):
+            retraining_triggers += 1
+
+    compare_report_path = (
+        Path(__file__).resolve().parents[3]
+        / "tests"
+        / "fixtures"
+        / "extraction_benchmark"
+        / "reports"
+        / "latest_compare_report.json"
+    )
+    benchmark_compare = {}
+    if compare_report_path.exists():
+        try:
+            benchmark_compare = json.loads(compare_report_path.read_text())
+        except Exception:
+            benchmark_compare = {}
+
+    return {
+        "documents_scanned": len(docs),
+        "quality": {
+            "mean_page_confidence": round(mean(mean_page_conf), 4) if mean_page_conf else 0.0,
+            "benchmark_compare_delta": (benchmark_compare or {}).get("delta", {}),
+        },
+        "latency": {
+            "mean_ms_per_page": round(mean(latency_ms_per_page), 2) if latency_ms_per_page else 0.0,
+            "samples": len(latency_ms_per_page),
+        },
+        "feedback_loop": {
+            "total_corrections": total_corrections,
+            "documents_triggered_for_retraining": retraining_triggers,
+        },
+    }
 
 
 async def _run_pipeline(doc_id: str, pdf_path: str):

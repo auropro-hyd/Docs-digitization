@@ -85,6 +85,13 @@ class AzureDIConfig(BaseModel):
     drift_threshold_correction_rate: float = 0.08
     drift_threshold_critical_error_rate: float = 0.03
     drift_min_corrections_for_trigger: int = 20
+    canary_enabled: bool = True
+    canary_query_fields_percent: int = 50
+    rollback_min_quality_f1_delta: float = -0.01
+    rollback_max_latency_ms_delta: float = 150.0
+    rollback_max_cost_usd_delta: float = 0.02
+    custom_model_enabled: bool = False
+    custom_model_shadow_enabled: bool = True
 
     def features_for_profile(self, profile: str | None) -> list[str]:
         key = (profile or "default").strip().lower()

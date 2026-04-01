@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "sample_id": "template_bpr_001",
+      "template_family": "bpr_core",
+      "split": "train"
+    },
+    {
+      "sample_id": "template_chk_001",
+      "template_family": "manufacturing_checklists",
+      "split": "val"
+    }
+  ]
+}

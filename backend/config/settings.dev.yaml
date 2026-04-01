@@ -21,6 +21,13 @@ azure_di:
   quality_gate_block_on_critical: false
   quality_gate_sample_pages: 3
   query_fields_enabled: true
+  canary_enabled: true
+  canary_query_fields_percent: 50
+  rollback_min_quality_f1_delta: -0.01
+  rollback_max_latency_ms_delta: 150.0
+  rollback_max_cost_usd_delta: 0.02
+  custom_model_enabled: false
+  custom_model_shadow_enabled: true
 
 # Marker settings (active when pipeline.mode = marker_docling)
 marker:
