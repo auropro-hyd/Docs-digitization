@@ -61,6 +61,31 @@ class AzureDIConfig(BaseModel):
         "formulas",
         "languages",
     ])
+    feature_profiles: dict[str, list[str]] = Field(default_factory=lambda: {
+        "default": ["barcodes", "keyValuePairs", "ocrHighResolution", "styleFont", "languages"],
+        "bpr_core": ["barcodes", "keyValuePairs", "ocrHighResolution", "styleFont", "languages", "formulas"],
+        "manufacturing_checklists": ["barcodes", "keyValuePairs", "ocrHighResolution", "styleFont", "languages"],
+        "instrument_data_reports": [
+            "barcodes",
+            "keyValuePairs",
+            "ocrHighResolution",
+            "styleFont",
+            "languages",
+            "formulas",
+        ],
+        "analysis_reports": ["barcodes", "keyValuePairs", "ocrHighResolution", "styleFont", "languages"],
+    })
+    quality_gate_enabled: bool = True
+    quality_gate_block_on_critical: bool = False
+    quality_gate_sample_pages: int = 3
+    quality_gate_min_render_width: int = 1200
+    quality_gate_min_render_height: int = 1600
+    quality_gate_min_contrast_std: float = 26.0
+    query_fields_enabled: bool = True
+
+    def features_for_profile(self, profile: str | None) -> list[str]:
+        key = (profile or "default").strip().lower()
+        return list(self.feature_profiles.get(key) or self.feature_profiles.get("default") or self.features)
 
 
 class LLMConfig(BaseModel):

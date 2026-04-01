@@ -82,6 +82,30 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
     try:
         from app.core.services.layout_markdown_sanitizer import classify_parser_repair_severity
         from app.core.services.selection_semantics import summarize_selection_semantics
+        from app.core.services.document_quality_gate import check_document_quality
+
+        settings = get_settings()
+        document_quality = {}
+        if settings.azure_di.quality_gate_enabled:
+            document_quality = check_document_quality(
+                state["pdf_path"],
+                sample_pages=settings.azure_di.quality_gate_sample_pages,
+                min_width=settings.azure_di.quality_gate_min_render_width,
+                min_height=settings.azure_di.quality_gate_min_render_height,
+                min_contrast_std=settings.azure_di.quality_gate_min_contrast_std,
+                block_on_critical=settings.azure_di.quality_gate_block_on_critical,
+            )
+            await container.notification.send_update(doc_id, {
+                "type": "quality_gate",
+                "status": document_quality.get("policy", {}).get("decision", "ok"),
+                "severity": document_quality.get("policy", {}).get("severity", "low"),
+            })
+            if document_quality.get("policy", {}).get("decision") == "block":
+                return {
+                    "status": "error",
+                    "error": "Document quality gate blocked OCR run",
+                    "document_quality": document_quality,
+                }
 
         result = await container.ocr_engine.extract(
             state["pdf_path"],
@@ -124,6 +148,7 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
         return {
             "azure_di_results": azure_results,
             "raw_markdown": raw_markdown,
+            "document_quality": document_quality,
             "table_metadata": result.table_metadata,
             "key_value_pairs": [kv.model_dump() for kv in result.key_value_pairs],
             "styles": [s.model_dump() for s in result.styles],
@@ -146,6 +171,9 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
 
     from app.core.services.validation_rules import validate_page_extraction
     from app.core.services.extraction_family_policy import enrich_packet_sections_with_family
+    from app.core.services.extraction_router import route_extraction_strategy
+    from app.core.services.field_normalization import normalize_kv_record
+    from app.core.services.query_field_merge import merge_query_fields
     from app.core.services.packet_anchor_consensus import (
         evaluate_packet_anchor_consensus,
         page_anchor_issues,
@@ -231,6 +259,21 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     }
     packet_sections = decompose_packet(page_markdown)
     packet_sections_payload = enrich_packet_sections_with_family(sections_as_dicts(packet_sections))
+    extraction_routing = route_extraction_strategy(packet_sections_payload)
+    query_field_rows: list[dict] = []
+    if (
+        get_settings().azure_di.query_fields_enabled
+        and extraction_routing.get("critical_fields")
+        and hasattr(container.ocr_engine, "extract_query_fields")
+    ):
+        try:
+            query_field_rows = await container.ocr_engine.extract_query_fields(
+                state["pdf_path"],
+                extraction_routing.get("critical_fields", []),
+            )
+        except Exception:
+            logger.exception("query-fields extraction path failed; proceeding with layout-only data")
+            query_field_rows = []
     packet_section_map: dict[int, dict] = {}
     for sec in packet_sections_payload:
         for p in range(int(sec.get("start_page", 0)), int(sec.get("end_page", -1)) + 1):
@@ -245,6 +288,14 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
             }
     for ext in extractions:
         ext.update(packet_section_map.get(ext.get("page_num", -1), {}))
+        family = str(ext.get("extraction_family", "") or "")
+        normalized_kv = [normalize_kv_record(kv, family=family) for kv in ext.get("key_value_pairs", [])]
+        page_num = int(ext.get("page_num", 0) or 0)
+        page_query_rows = [q for q in query_field_rows if int(q.get("page_num", 0) or 0) == page_num]
+        merged_kv, merge_trace = merge_query_fields(normalized_kv, page_query_rows)
+        ext["key_value_pairs"] = merged_kv
+        ext["query_field_merge_trace"] = merge_trace
+        ext["extraction_strategy_family"] = extraction_routing.get("primary_family", "")
     packet_anchor_consensus = evaluate_packet_anchor_consensus(extractions)
     for ext in extractions:
         ext["packet_anchor_issues"] = page_anchor_issues(ext.get("page_num", -1), packet_anchor_consensus)
@@ -266,6 +317,8 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         "extractions": extractions,
         "confidence_scores": confidence_scores,
         "packet_sections": packet_sections_payload,
+        "extraction_routing": extraction_routing,
+        "query_fields_results": query_field_rows,
         "packet_anchor_consensus": packet_anchor_consensus,
         "packet_corruption_risk": packet_corruption_risk,
         "total_pages": total_pages,

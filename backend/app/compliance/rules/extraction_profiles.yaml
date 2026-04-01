@@ -94,6 +94,13 @@ families:
 
 defaults:
   fallback_family: general_records
+  fallback_order:
+    - bpr_core
+    - manufacturing_checklists
+    - instrument_data_reports
+    - analysis_reports
+    - sieving_reports
+    - general_records
   anchor_identifiers:
     batch_no:
       - batch no

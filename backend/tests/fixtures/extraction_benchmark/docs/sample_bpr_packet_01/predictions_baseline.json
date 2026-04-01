@@ -1,0 +1,23 @@
+{
+  "sample_id": "sample_bpr_packet_01",
+  "fields": [
+    {
+      "field_id": "batch_no",
+      "raw_value": "2538104192",
+      "normalized_value": "2538104192",
+      "page_num": 1
+    },
+    {
+      "field_id": "bpcr_number",
+      "raw_value": "UIIBEHSIIO3",
+      "normalized_value": "uiibehsiio3",
+      "page_num": 1
+    },
+    {
+      "field_id": "effective_date",
+      "raw_value": "09/04/2025",
+      "normalized_value": "09/04/2025",
+      "page_num": 1
+    }
+  ]
+}

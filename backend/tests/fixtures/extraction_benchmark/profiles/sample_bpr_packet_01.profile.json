@@ -1,0 +1,6 @@
+{
+  "sample_id": "sample_bpr_packet_01",
+  "document_type": "batch_record",
+  "expected_family": "bpr_core",
+  "notes": "Baseline sample for benchmark runner and schema validation."
+}

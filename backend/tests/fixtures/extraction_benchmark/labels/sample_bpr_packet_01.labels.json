@@ -1,0 +1,46 @@
+{
+  "sample_id": "sample_bpr_packet_01",
+  "document_type": "batch_record",
+  "fields": [
+    {
+      "field_id": "batch_no",
+      "raw_value": "2538104192",
+      "normalized_value": "2538104192",
+      "expected_page": 1,
+      "expected_region": [0.52, 0.18, 0.76, 0.22],
+      "criticality": "critical",
+      "placeholder_allowed": false,
+      "handwriting_expected": false
+    },
+    {
+      "field_id": "bpcr_number",
+      "raw_value": "UIIBEHSII03",
+      "normalized_value": "uiibehsii03",
+      "expected_page": 1,
+      "expected_region": [0.20, 0.13, 0.45, 0.17],
+      "criticality": "critical",
+      "placeholder_allowed": false,
+      "handwriting_expected": false
+    },
+    {
+      "field_id": "effective_date",
+      "raw_value": "09/04/2025",
+      "normalized_value": "09/04/2025",
+      "expected_page": 1,
+      "expected_region": [0.14, 0.28, 0.30, 0.31],
+      "criticality": "major",
+      "placeholder_allowed": false,
+      "handwriting_expected": false
+    },
+    {
+      "field_id": "sample_sent_to_qcd",
+      "raw_value": "-",
+      "normalized_value": "-",
+      "expected_page": 12,
+      "expected_region": [0.61, 0.45, 0.66, 0.48],
+      "criticality": "major",
+      "placeholder_allowed": true,
+      "handwriting_expected": false
+    }
+  ]
+}

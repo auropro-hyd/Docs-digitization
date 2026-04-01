@@ -9,6 +9,18 @@ azure_di:
   features:
     - barcodes
     - keyValuePairs
+    - ocrHighResolution
+    - styleFont
+    - languages
+  feature_profiles:
+    default: [barcodes, keyValuePairs, ocrHighResolution, styleFont, languages]
+    bpr_core: [barcodes, keyValuePairs, ocrHighResolution, styleFont, languages, formulas]
+    manufacturing_checklists: [barcodes, keyValuePairs, ocrHighResolution, styleFont, languages]
+    instrument_data_reports: [barcodes, keyValuePairs, ocrHighResolution, styleFont, languages, formulas]
+  quality_gate_enabled: true
+  quality_gate_block_on_critical: false
+  quality_gate_sample_pages: 3
+  query_fields_enabled: true
 
 # Marker settings (active when pipeline.mode = marker_docling)
 marker:

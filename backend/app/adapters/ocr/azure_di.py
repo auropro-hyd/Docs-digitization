@@ -302,6 +302,11 @@ _EMPTY_FIGURE_RE = re.compile(
 )
 _SELECTION_SELECTED_RE = re.compile(r':selected:')
 _SELECTION_UNSELECTED_RE = re.compile(r':unselected:')
+_PLACEHOLDER_VALUES = {"-", "n/a", "na", "not applicable", "nil"}
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(text or "").strip().lower()).strip("_")
 
 
 def _reconstruct_full_markdown(content: str, result) -> str:
@@ -553,16 +558,29 @@ def _detect_signatures(result, styles: list[StyleSpan], pages) -> list[Signature
         val_regions = getattr(val_elem, "bounding_regions", None) if val_elem else None
         br = _to_bounding_region(val_regions, page_num) if val_regions else None
 
-        status = "signed" if val_text else "unsigned"
-        confidence = getattr(kvp, "confidence", 0.0)
+        value_norm = val_text.strip().lower()
+        has_value_text = bool(value_norm) and value_norm not in _PLACEHOLDER_VALUES
+        confidence = float(getattr(kvp, "confidence", 0.0) or 0.0)
 
         hw_near = any(
             s.is_handwritten and s.confidence > 0.5
             for s in styles
             if _spans_overlap_page(s, page_num, pages)
         )
-        if hw_near and not val_text:
-            status = "signed"
+        score = 0.0
+        reason_codes: list[str] = []
+        if any(kw in key_text for kw in sig_keywords):
+            score += 0.45
+            reason_codes.append("signature_keyword_match")
+        if has_value_text:
+            score += 0.35
+            reason_codes.append("non_placeholder_value_present")
+        if hw_near:
+            score += 0.2
+            reason_codes.append("nearby_handwriting_detected")
+
+        status = "signed" if score >= 0.55 and (has_value_text or hw_near) else "unsigned"
+        confidence = round(min(1.0, max(confidence, score)), 3)
 
         label = getattr(key_elem, "content", "").strip()
         signatures.append(SignatureRegion(
@@ -571,6 +589,17 @@ def _detect_signatures(result, styles: list[StyleSpan], pages) -> list[Signature
             confidence=confidence,
             bounding_region=br,
             label=label,
+            reason_codes=reason_codes,
+            evidence={
+                "source": "kv_signature_key",
+                "key_text": label,
+                "has_value_text": has_value_text,
+                "value_length": len(val_text),
+                "keyword_matched": any(kw in key_text for kw in sig_keywords),
+                "handwriting_nearby": hw_near,
+                "region_present": br is not None,
+                "decision_score": round(score, 3),
+            },
         ))
 
     hw_by_page: dict[int, list[StyleSpan]] = {}
@@ -590,11 +619,19 @@ def _detect_signatures(result, styles: list[StyleSpan], pages) -> list[Signature
         total_hw_len = sum(s.length for s in hw_spans)
         if total_hw_len > 20:
             avg_conf = sum(s.confidence for s in hw_spans) / len(hw_spans)
+            score = min(0.8, 0.45 + min(0.35, total_hw_len / 120.0))
             signatures.append(SignatureRegion(
                 page_num=pn,
-                status="signed",
-                confidence=round(avg_conf, 3),
+                status="signed" if score >= 0.55 else "unsigned",
+                confidence=round(max(avg_conf, score), 3),
                 label="Handwritten content detected",
+                reason_codes=["handwriting_density_trigger"],
+                evidence={
+                    "source": "handwriting_fallback",
+                    "handwriting_span_count": len(hw_spans),
+                    "handwritten_content_density": total_hw_len,
+                    "decision_score": round(score, 3),
+                },
             ))
 
     return signatures
@@ -816,3 +853,51 @@ class AzureDIOCRAdapter:
 
     def supports_selection_marks(self) -> bool:
         return True
+
+    async def extract_query_fields(self, pdf_path: str, query_fields: list[str]) -> list[dict]:
+        """Optional targeted extraction path using Azure query_fields."""
+        if not query_fields:
+            return []
+        client = self._get_client()
+        loop = asyncio.get_event_loop()
+
+        def _analyze_query_fields():
+            from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+
+            with open(pdf_path, "rb") as f:
+                pdf_bytes = f.read()
+
+            try:
+                poller = client.begin_analyze_document(
+                    "prebuilt-layout",
+                    body=AnalyzeDocumentRequest(bytes_source=pdf_bytes),
+                    query_fields=query_fields,
+                )
+                result = poller.result()
+            except TypeError:
+                logger.warning("Azure SDK does not support query_fields on this version/endpoint")
+                return []
+            except Exception:
+                logger.exception("Query fields extraction failed")
+                return []
+
+            rows: list[dict] = []
+            for doc in getattr(result, "documents", None) or []:
+                fields = getattr(doc, "fields", None) or {}
+                for key, val in fields.items():
+                    content = getattr(val, "content", "") or ""
+                    conf = float(getattr(val, "confidence", 0.0) or 0.0)
+                    regions = getattr(val, "bounding_regions", None) or []
+                    page_num = getattr(regions[0], "page_number", 0) if regions else 0
+                    rows.append({
+                        "field_id": _slug(key),
+                        "key": key,
+                        "value": content,
+                        "normalized_value": content.strip(),
+                        "confidence": conf,
+                        "page_num": page_num,
+                        "bounding_region": _to_bounding_region(regions, page_num) if regions else None,
+                    })
+            return rows
+
+        return await loop.run_in_executor(None, _analyze_query_fields)

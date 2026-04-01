@@ -40,7 +40,7 @@ endif
 	infra-up infra-down infra-restart infra-status infra-logs \
 	db-logs db-shell db-reset \
 	ollama-up ollama-down ollama-pull ollama-list ollama-logs \
-	test test-unit test-integration test-cov test-all \
+	test test-unit test-integration test-cov test-all extraction-benchmark extraction-benchmark-compare \
 	lint lint-fix format typecheck lint-frontend check-all \
 	build build-backend build-frontend \
 	docker-build docker-up docker-down docker-logs docker-restart \
@@ -228,6 +228,12 @@ test-cov: ## Run unit tests with coverage report
 	PYTHONPATH=$(BACKEND_DIR) $(VENV_BIN)/pytest $(BACKEND_DIR)/tests/unit -v --cov=app --cov-report=term-missing --cov-report=html:$(BACKEND_DIR)/htmlcov
 
 test-all: test-unit test-integration ## Run all tests (unit + integration)
+
+extraction-benchmark: venv ## Run extraction benchmark on fixture dataset
+	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -m tests.benchmark.run_extraction_benchmark
+
+extraction-benchmark-compare: venv ## Compare baseline vs routed extraction benchmark
+	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -m tests.benchmark.run_extraction_benchmark --mode compare
 
 # ═════════════════════════════════════════════════════════════════
 #  CODE QUALITY — Linting, formatting, type checking

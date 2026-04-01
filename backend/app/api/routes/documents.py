@@ -7,6 +7,7 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
+from time import perf_counter
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -15,6 +16,51 @@ from app.config.settings import get_settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _pipeline_features() -> dict:
+    settings = get_settings()
+    if settings.pipeline.mode == "azure_di":
+        return {
+            "mode": "azure_di",
+            "features": list(settings.azure_di.features),
+        }
+    features = [
+        "paginate_output" if settings.marker.paginate_output else "",
+        "extract_images" if settings.marker.extract_images else "",
+        "llm_assist" if settings.marker.use_llm else "",
+    ]
+    return {
+        "mode": "marker_docling",
+        "features": [f for f in features if f],
+    }
+
+
+def _build_extraction_telemetry(result_data: dict, elapsed_ms: int) -> dict:
+    scores = result_data.get("confidence_scores", {}) or {}
+    pages = []
+    for ext in result_data.get("extractions", []) or []:
+        page_num = int(ext.get("page_num", 0) or 0)
+        pages.append({
+            "page_num": page_num,
+            "confidence": float(scores.get(page_num, scores.get(str(page_num), 0.0)) or 0.0),
+            "parser_repair_count": int(ext.get("parser_repair_count", 0) or 0),
+            "parser_repair_severity": ext.get("parser_repair_severity", "none"),
+            "handwritten_count": int(ext.get("handwritten_count", 0) or 0),
+            "selection_ambiguity": bool((ext.get("selection_semantics") or {}).get("has_ambiguity", False)),
+            "anchor_issue_count": len(ext.get("packet_anchor_issues", []) or []),
+            "risk_level": (ext.get("corruption_risk") or {}).get("level", "low"),
+            "risk_score": float((ext.get("corruption_risk") or {}).get("score", 0.0) or 0.0),
+        })
+    return {
+        "strategy": _pipeline_features(),
+        "latency": {
+            "total_ms": elapsed_ms,
+            "total_pages": len(pages),
+            "ms_per_page": round(elapsed_ms / max(1, len(pages)), 2),
+        },
+        "pages": pages,
+    }
 
 
 @router.get("/health")
@@ -220,6 +266,7 @@ async def _run_pipeline(doc_id: str, pdf_path: str):
 
     lock_file.write_text(doc_id)
     logger.info(f"Starting pipeline for doc_id={doc_id}, pdf={pdf_path}")
+    started = perf_counter()
 
     try:
         from app.workflow.document_graph import build_document_graph
@@ -259,6 +306,8 @@ async def _run_pipeline(doc_id: str, pdf_path: str):
 
         result_path = doc_dir / "result.json"
         result_data = accumulated
+        elapsed_ms = int((perf_counter() - started) * 1000)
+        result_data["extraction_telemetry"] = _build_extraction_telemetry(result_data, elapsed_ms)
         result_path.write_text(json.dumps(result_data, indent=2, default=str))
         logger.info(f"[{doc_id}] Pipeline complete. Results saved to {result_path}")
 

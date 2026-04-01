@@ -1,0 +1,28 @@
+version: 1
+
+placeholder_semantics:
+  global_allowed_values:
+    - "-"
+    - "n/a"
+    - "na"
+    - "not applicable"
+    - "nil"
+
+  defaults:
+    allowed_field_ids:
+      - remarks
+      - comments
+      - observation
+      - sample_sent_to_qcd
+      - reviewer_remarks
+
+  by_family:
+    manufacturing_checklists:
+      allowed_field_ids:
+        - yes_no_na_decisions
+        - sample_sent_to_qcd
+        - line_clearance_observation
+    analysis_reports:
+      allowed_field_ids:
+        - analyst_remarks
+        - reviewer_remarks

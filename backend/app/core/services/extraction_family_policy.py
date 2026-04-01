@@ -30,6 +30,7 @@ class FamilyPolicy(BaseModel):
 
 class FamilyDefaults(BaseModel):
     fallback_family: str = "general_records"
+    fallback_order: list[str] = Field(default_factory=list)
     anchor_identifiers: dict[str, list[str]] = Field(default_factory=dict)
     minimum_consensus_ratio: float = 0.75
 
@@ -43,6 +44,7 @@ class ExtractionProfilesConfig(BaseModel):
     def _normalize(self):
         self.families = {_norm(k).replace(" ", "_"): v for k, v in self.families.items()}
         self.defaults.fallback_family = _norm(self.defaults.fallback_family).replace(" ", "_")
+        self.defaults.fallback_order = [_norm(v).replace(" ", "_") for v in self.defaults.fallback_order if _norm(v)]
         self.defaults.anchor_identifiers = {
             _norm(anchor).replace(" ", "_"): [_norm(s) for s in synonyms if _norm(s)]
             for anchor, synonyms in self.defaults.anchor_identifiers.items()
@@ -102,3 +104,8 @@ def enrich_packet_sections_with_family(packet_sections: list[dict]) -> list[dict
         item["extraction_family_reason"] = reason
         enriched.append(item)
     return enriched
+
+
+def get_family_policy(family_id: str) -> FamilyPolicy | None:
+    config = load_extraction_profiles()
+    return config.families.get(_norm(family_id).replace(" ", "_"))

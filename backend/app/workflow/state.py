@@ -55,6 +55,7 @@ class DocumentState(TypedDict):
     confidence_scores: Annotated[dict, _merge_dicts]
     raw_markdown: Annotated[dict, _merge_dicts]
     table_metadata: list
+    document_quality: dict
 
     # ── Enriched metadata (Azure DI features) ─────────────────
     key_value_pairs: list

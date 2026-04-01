@@ -76,6 +76,8 @@ class SignatureRegion(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     bounding_region: BoundingRegion | None = None
     label: str = ""
+    evidence: dict = Field(default_factory=dict)
+    reason_codes: list[str] = Field(default_factory=list)
 
 
 class LanguageSpan(BaseModel):
