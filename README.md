@@ -107,7 +107,7 @@ cd Docs-digitization
 
 make setup                            # Create venv, install deps, start infra
 cp backend/.env.example backend/.env  # Add your Azure DI credentials
-make dev                              # Start backend (8000) + frontend (3000)
+make dev                              # Start backend (8100) + frontend (3100)
 
 # Process a document
 make health                           # Verify backend is running
@@ -168,7 +168,7 @@ Enforced by `settings_customise_sources()` — an ops override always wins.
 
 ## Documentation
 
-Detailed technical docs live in [`wiki/`](wiki/README.md) — 25 pages covering architecture, OCR engines, workflow, frontend, and DevOps.
+Detailed technical docs live in [`wiki/`](wiki/README.md), covering architecture, OCR engines, workflow, frontend, compliance governance, and DevOps.
 
 **Start here:** [Architecture Overview](wiki/architecture/overview.md) | [Pipeline Modes](wiki/pipeline-modes.md) | [Local Setup](wiki/devops/local-setup.md) | [Quick Commands](wiki/quick_commands.md)
 

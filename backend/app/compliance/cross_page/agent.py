@@ -25,6 +25,7 @@ from app.compliance.cross_page.evaluator import (
     gather_section_content,
     group_rules_by_sections,
 )
+from app.compliance.cross_page.interface import resolve_requirement
 from app.compliance.cross_page.resolver import SectionResolver
 from app.compliance.evaluator import assemble_agent_report
 from app.compliance.models import (
@@ -32,6 +33,7 @@ from app.compliance.models import (
     DocumentSegmentation,
     RuleBatchResult,
     RuleEvaluation,
+    SectionResolution,
     SectionRef,
 )
 from app.compliance.rules.registry import AuditRule, RuleBatch, RuleRegistry
@@ -81,9 +83,26 @@ class ReconciliationAgent:
 
         resolution = await resolver.resolve(rules_with_sections, self._segmentation)
 
+        # Deterministic cross-section requirement resolver (config-driven).
+        existing_resolved_ids = {r.rule_id for r in resolution.resolutions}
+        for rule in all_rules:
+            if rule.id in existing_resolved_ids or not rule.cross_section_requirements:
+                continue
+            for req_id in rule.cross_section_requirements:
+                req_resolution = resolve_requirement(self._segmentation, req_id)
+                matched_ids = sorted(set(
+                    list(req_resolution.evidence.source_section_ids) +
+                    list(req_resolution.evidence.target_section_ids)
+                ))
+                resolution.resolutions.append(SectionResolution(
+                    rule_id=rule.id,
+                    matched_section_ids=matched_ids,
+                    applicable=req_resolution.applicable,
+                    reason=f"{req_id}: {req_resolution.reason}",
+                ))
+
         all_section_ids = [s.section_id for s in self._segmentation.sections]
         for r in wildcard_rules:
-            from app.compliance.models import SectionResolution
             resolution.resolutions.append(SectionResolution(
                 rule_id=r.id,
                 matched_section_ids=all_section_ids,

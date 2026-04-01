@@ -84,9 +84,9 @@ Controls Azure Document Intelligence (active when `pipeline.mode = azure_di`):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `endpoint` | `str` | (placeholder) | Azure DI resource endpoint (cloud URL or `http://localhost:5000` for disconnected container) |
+| `endpoint` | `str` | `https://<resource>.cognitiveservices.azure.com` | Azure DI resource endpoint (cloud URL or `http://localhost:5000` for disconnected container) |
 | `api_key` | `str` | (empty) | Azure DI API key |
-| `features` | `list[str]` | `["barcodes", "keyValuePairs"]` | Enabled DI features |
+| `features` | `list[str]` | `["barcodes", "keyValuePairs", "ocrHighResolution", "styleFont", "formulas", "languages"]` | Enabled DI features |
 
 ### LLMConfig
 
@@ -106,7 +106,7 @@ Controls the LLM provider for compliance analysis and other AI tasks:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | `str` | `postgresql+asyncpg://postgres:postgres@localhost:5432/autotranscription` | Async database URL |
-| `sync_url` | `str` | `postgresql://postgres:postgres@localhost:5432/autotranscription` | Sync database URL (migrations) |
+| `sync_url` | `str` | `postgresql://postgres:postgres@localhost:5432/autotranscription` | Sync database URL for schema management tasks |
 | `echo` | `bool` | `False` | Enable SQL query logging |
 
 ### StorageConfig
@@ -122,8 +122,8 @@ Controls the LLM provider for compliance analysis and other AI tasks:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `auto_approve_threshold` | `float` | `0.9` | Confidence score above which pages are auto-approved |
-| `review_threshold` | `float` | `0.7` | Confidence score below which pages require human review |
+| `auto_approve_threshold` | `float` | `0.8` | Confidence score above which pages are auto-approved |
+| `review_threshold` | `float` | `0.6` | Confidence score below which pages require human review |
 | `batch_review_enabled` | `bool` | `True` | Enable batch review mode |
 
 ## Per-Environment YAML Files

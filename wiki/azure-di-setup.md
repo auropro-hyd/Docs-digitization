@@ -61,7 +61,7 @@ Production (On-Prem):
    ```bash
    make backend  # Start the backend
    # In another terminal:
-   curl -X POST http://localhost:8000/api/documents/process-file \
+   curl -X POST http://localhost:8100/api/documents/process-file \
      -F "file=@path/to/your/document.pdf"
    ```
 

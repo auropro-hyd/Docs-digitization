@@ -45,6 +45,8 @@ export interface ComplianceProgressState {
   overallScore: number | null;
   totalFindings: number;
   startedAt: number | null;
+  endedAt: number | null;
+  finalDurationSec: number | null;
   segmentationLabel: string;
   segmentationSections: number;
 }
@@ -52,6 +54,7 @@ export interface ComplianceProgressState {
 interface ComplianceStore extends ComplianceProgressState {
   startRun: () => void;
   handleProgress: (data: Record<string, unknown>) => void;
+  hydrateFromReport: (report: Record<string, unknown>) => void;
   reset: () => void;
 }
 
@@ -96,6 +99,8 @@ const INITIAL: ComplianceProgressState = {
   overallScore: null,
   totalFindings: 0,
   startedAt: null,
+  endedAt: null,
+  finalDurationSec: null,
   segmentationLabel: "",
   segmentationSections: 0,
 };
@@ -104,7 +109,15 @@ export const useComplianceStore = create<ComplianceStore>((set, get) => ({
   ...INITIAL,
 
   startRun: () =>
-    set({ ...INITIAL, phase: "orchestrator", label: "Analyzing document type...", startedAt: Date.now(), agents: initialAgents() }),
+    set({
+      ...INITIAL,
+      phase: "orchestrator",
+      label: "Analyzing document type...",
+      startedAt: Date.now(),
+      endedAt: null,
+      finalDurationSec: null,
+      agents: initialAgents(),
+    }),
 
   handleProgress: (data) => {
     const phase = data.phase as string;
@@ -301,19 +314,115 @@ export const useComplianceStore = create<ComplianceStore>((set, get) => ({
     }
 
     if (phase === "complete") {
+      const now = Date.now();
+      const startedAt = get().startedAt;
+      const computedDuration = startedAt ? Math.max(1, Math.round((now - startedAt) / 1000)) : null;
       set({
         phase: "complete",
         overallPercent: 100,
         overallScore: (data.overall_score as number) ?? null,
         totalFindings: (data.total_findings as number) || 0,
         label: "Compliance audit complete",
+        endedAt: now,
+        finalDurationSec: computedDuration,
       });
       return;
     }
 
     if (phase === "error") {
-      set({ phase: "error", label: (data.label as string) || "Audit failed" });
+      set({ phase: "error", label: (data.label as string) || "Audit failed", endedAt: Date.now() });
     }
+  },
+
+  hydrateFromReport: (report) => {
+    const now = Date.now();
+    const agentReports = (report.agent_reports as Array<Record<string, unknown>> | undefined) || [];
+    const skippedAgents = (report.skipped_agents as Array<{ category: string; reason: string }> | undefined) || [];
+    const applicableAgents = agentReports
+      .map((ar) => ar.agent)
+      .filter((a): a is string => typeof a === "string");
+
+    const agents = initialAgents();
+
+    for (const ar of agentReports) {
+      const agent = ar.agent as string | undefined;
+      if (!agent || !agents[agent]) continue;
+
+      const evals = (ar.all_evaluations as Array<Record<string, unknown>> | undefined) || [];
+      const rules = evals.map((ev) => {
+        const statusRaw = String(ev.status || "uncertain");
+        const validStatuses = ["pending", "evaluating", "compliant", "non_compliant", "not_applicable", "uncertain"] as const;
+        const status = validStatuses.includes(statusRaw as typeof validStatuses[number])
+          ? (statusRaw as RuleProgress["status"])
+          : "uncertain";
+        const confidence = typeof ev.confidence === "number" ? ev.confidence : 1;
+        return {
+          id: String(ev.rule_id || ""),
+          text: String(ev.rule_text || ""),
+          category: String(ev.rule_category || "general"),
+          severity: String(ev.severity || "medium"),
+          status,
+          confidence,
+        };
+      });
+
+      const totalRules =
+        (typeof ar.total_rules === "number" ? ar.total_rules : 0) || rules.length || 0;
+
+      agents[agent] = {
+        ...agents[agent],
+        status: "complete",
+        percent: 100,
+        batchesComplete: typeof ar.batches_complete === "number" ? ar.batches_complete : 0,
+        batchesTotal: typeof ar.batches_total === "number" ? ar.batches_total : 0,
+        findingsCount: typeof ar.total_findings === "number" ? ar.total_findings : 0,
+        needsReviewCount: typeof ar.needs_review_count === "number" ? ar.needs_review_count : 0,
+        label: String(ar.summary || "Evaluation complete"),
+        rules,
+        prescreen: {
+          pagesDone: 0,
+          pagesTotal: 0,
+          percent: 100,
+          totalRules,
+          avgApplicable: null,
+          status: "complete",
+        },
+      };
+    }
+
+    for (const s of skippedAgents) {
+      if (!agents[s.category]) continue;
+      agents[s.category] = {
+        ...agents[s.category],
+        status: "skipped",
+        skipReason: s.reason || "Not applicable",
+      };
+    }
+
+    const trail = (report.audit_trail as Record<string, unknown> | undefined) || {};
+    const durationFromTrail =
+      typeof trail.duration_seconds === "number" && trail.duration_seconds > 0
+        ? Math.round(trail.duration_seconds)
+        : null;
+    const finalDurationSec = durationFromTrail;
+    const startedAt = finalDurationSec ? now - finalDurationSec * 1000 : now;
+
+    set({
+      phase: "complete",
+      overallPercent: 100,
+      label: "Compliance audit complete",
+      agents,
+      applicableAgents,
+      skippedAgents,
+      documentType: typeof report.document_type === "string" ? report.document_type : "",
+      overallScore: typeof report.overall_score === "number" ? report.overall_score : null,
+      totalFindings: typeof report.total_findings === "number" ? report.total_findings : 0,
+      startedAt,
+      endedAt: now,
+      finalDurationSec,
+      segmentationLabel: "",
+      segmentationSections: 0,
+    });
   },
 
   reset: () => set({ ...INITIAL, agents: initialAgents() }),

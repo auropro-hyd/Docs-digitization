@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +47,11 @@ interface ComplianceReportProps {
   report: Record<string, any>;
   docId: string;
   onReRun?: () => void;
+  initialFocus?: {
+    tab?: "all" | string;
+    hitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
+    severityFilter?: "all" | "critical" | "major" | "minor" | "observation";
+  };
 }
 
 import { AGENT_DISPLAY_NAMES, type ComplianceFinding as BaseFinding } from "@/types/compliance";
@@ -65,6 +70,7 @@ interface RuleResult {
   confidence: number;
   reasoning: string;
   evidence: string;
+  applicability_trace?: string[];
   page_numbers: number[];
 }
 
@@ -161,6 +167,18 @@ function RuleEvaluationsList({ evaluations }: { evaluations: RuleResult[] }) {
                           <p className="text-[11px] text-muted-foreground whitespace-pre-wrap italic">&ldquo;{ev.evidence}&rdquo;</p>
                         </div>
                       )}
+                      {ev.applicability_trace && ev.applicability_trace.length > 0 && (
+                        <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-900/10 border-l-2 border-emerald-400">
+                          <p className="text-[11px] font-medium text-foreground mb-1">Why this rule applied</p>
+                          <ul className="space-y-0.5 list-disc pl-4">
+                            {ev.applicability_trace.map((step, idx) => (
+                              <li key={`${ev.rule_id}-trace-${idx}`} className="text-[11px] text-muted-foreground">
+                                {step}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       {!ev.reasoning && !ev.evidence && (
                         <p className="text-[11px] text-muted-foreground italic">No reasoning or evidence recorded.</p>
                       )}
@@ -176,10 +194,15 @@ function RuleEvaluationsList({ evaluations }: { evaluations: RuleResult[] }) {
   );
 }
 
-export function ComplianceReportView({ report, docId, onReRun }: ComplianceReportProps) {
-  const [activeTab, setActiveTab] = useState("all");
+export function ComplianceReportView({ report, docId, onReRun, initialFocus }: ComplianceReportProps) {
+  const modelScore = Number((report.model_score as number | undefined) ?? report.overall_score ?? 0);
+  const reviewAdjustedScore = report.review_adjusted_score as number | undefined;
+
+  const [activeTab, setActiveTab] = useState(initialFocus?.tab || "all");
   const [highlightFinding, setHighlightFinding] = useState<string | null>(null);
   const [findings, setFindings] = useState<Finding[]>((report.findings || []) as Finding[]);
+  const [viewHitlFilter, setViewHitlFilter] = useState<"all" | "needs_review" | "reviewed" | "auto">(initialFocus?.hitlFilter || "all");
+  const [viewSeverityFilter, setViewSeverityFilter] = useState<"all" | "critical" | "major" | "minor" | "observation">(initialFocus?.severityFilter || "all");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agentReports = (report.agent_reports || []) as Array<Record<string, any>>;
@@ -198,6 +221,20 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
       prev.map((f) => (f.finding_id === findingId ? { ...f, ...updates } : f)),
     );
   }, []);
+
+  useEffect(() => {
+    if (initialFocus?.tab) setActiveTab(initialFocus.tab);
+    if (initialFocus?.hitlFilter) setViewHitlFilter(initialFocus.hitlFilter);
+    if (initialFocus?.severityFilter) setViewSeverityFilter(initialFocus.severityFilter);
+  }, [initialFocus?.tab, initialFocus?.hitlFilter, initialFocus?.severityFilter]);
+
+  useEffect(() => {
+    if (viewHitlFilter !== "needs_review") return;
+    const firstPending = findings.find((f) => f.hitl_status === "needs_review");
+    if (firstPending) {
+      setHighlightFinding(firstPending.finding_id);
+    }
+  }, [viewHitlFilter, findings]);
 
   const activeAgentReport =
     activeTab === "all"
@@ -241,7 +278,8 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Compliance Report</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {(report.filename as string) || "Document"} — Score: {String(report.overall_score)}/100
+            {(report.filename as string) || "Document"} — Model score: {modelScore}/100
+            {typeof reviewAdjustedScore === "number" ? ` • Review-adjusted: ${reviewAdjustedScore}/100` : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -253,18 +291,18 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => handleExport("html", "all")}>
-                Export full report (HTML)
+                Export complete report (HTML)
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport("md", "all")}>
-                Export full report (Markdown)
+                Export complete report (Markdown)
               </DropdownMenuItem>
               {activeAgentId && activeAgentLabel && (
                 <>
                   <DropdownMenuItem onClick={() => handleExport("html", "agent")}>
-                    Export {activeAgentLabel} only (HTML)
+                    Export selected agent: {activeAgentLabel} (HTML)
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleExport("md", "agent")}>
-                    Export {activeAgentLabel} only (Markdown)
+                    Export selected agent: {activeAgentLabel} (Markdown)
                   </DropdownMenuItem>
                 </>
               )}
@@ -272,7 +310,7 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
           </DropdownMenu>
           {onReRun && (
             <Button variant="outline" size="sm" onClick={onReRun}>
-              <RefreshCw className="size-4 mr-2" /> Re-run
+              <RefreshCw className="size-4 mr-2" /> Run again
             </Button>
           )}
         </div>
@@ -283,7 +321,7 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
         <CardContent className="py-3 px-4">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-medium text-foreground flex items-center gap-1.5">
-              <Route className="size-3.5 text-primary" /> Review flow
+              <Route className="size-3.5 text-primary" /> Decision workflow
             </span>
             <Badge variant="outline" className="text-[10px]">1. Executive Summary</Badge>
             <ChevronRight className="size-3 text-muted-foreground" />
@@ -299,6 +337,16 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
         </CardContent>
       </Card>
 
+      {/* Reviewer impact guidance */}
+      <Card className="border-emerald-300/40 bg-emerald-50/40 dark:bg-emerald-900/10">
+        <CardContent className="py-3 px-4">
+          <p className="text-xs text-foreground">
+            Reviewer scoring impact: <strong>Confirm</strong> keeps finding penalty, <strong>False Positive</strong> removes penalty,
+            <strong> Modify</strong> recalculates penalty based on updated severity. Model score stays fixed; review-adjusted score updates.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Executive summary */}
       <ExecutiveSummary report={report as Parameters<typeof ExecutiveSummary>[0]["report"]} />
 
@@ -310,10 +358,9 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
               <div className="flex items-center gap-3">
                 <Eye className="size-5 text-warning" />
                 <div>
-                  <p className="text-sm font-medium">Human Review Required</p>
+                  <p className="text-sm font-medium">Human Validation Queue</p>
                   <p className="text-xs text-muted-foreground">
-                    {hitlCounts.needsReview} finding{hitlCounts.needsReview !== 1 ? "s" : ""} have
-                    {"<"}80% confidence and need your review
+                    {hitlCounts.needsReview} finding{hitlCounts.needsReview !== 1 ? "s" : ""} currently require reviewer confirmation
                   </p>
                 </div>
               </div>
@@ -392,7 +439,7 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
           <Card className="border-muted">
             <CardContent className="py-3 px-4 flex flex-wrap items-center gap-2">
               <FileText className="size-4 text-primary" />
-              <span className="text-sm font-medium">Combined Report View</span>
+              <span className="text-sm font-medium">Portfolio View</span>
               <Badge variant="secondary" className="text-[10px]">
                 {agentReports.length} agents
               </Badge>
@@ -409,6 +456,8 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
             docId={docId}
             onFindingUpdate={handleFindingUpdate}
             highlightId={highlightFinding || undefined}
+            initialHitlFilter={viewHitlFilter}
+            initialSeverityFilter={viewSeverityFilter}
           />
         </TabsContent>
 
@@ -426,8 +475,13 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
                 <CardContent className="py-3 px-4 flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium">{agentLabel} Report</span>
                   <Badge variant="secondary" className="text-[10px]">
-                    Score {String(ar.score)}/100
+                    Model {String((ar.model_score as number | undefined) ?? ar.score)}/100
                   </Badge>
+                  {typeof ar.review_adjusted_score === "number" && (
+                    <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 dark:text-emerald-400">
+                      Review {String(ar.review_adjusted_score)}/100
+                    </Badge>
+                  )}
                   <Badge variant="secondary" className="text-[10px]">
                     {agentFindings.length} findings
                   </Badge>
@@ -468,6 +522,9 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
                 docId={docId}
                 onFindingUpdate={handleFindingUpdate}
                 highlightId={highlightFinding || undefined}
+                initialHitlFilter={viewHitlFilter}
+                initialAgentFilter={agent}
+                initialSeverityFilter={viewSeverityFilter}
               />
               <RuleEvaluationsList evaluations={allEvals} />
             </TabsContent>
@@ -514,9 +571,16 @@ export function ComplianceReportView({ report, docId, onReRun }: ComplianceRepor
               <span>Orchestrator: {String(trail.orchestrator_model)}</span>
             </div>
             {methodology && (
-              <p className="text-[11px] text-muted-foreground/70 mt-1.5">
-                Score formula: {String(methodology.formula)}
-              </p>
+              <div className="mt-1.5 space-y-1">
+                <p className="text-[11px] text-muted-foreground/70">
+                  Model score formula: {String(methodology.formula)}
+                </p>
+                {methodology.review_adjusted_formula && (
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Review-adjusted formula: {String(methodology.review_adjusted_formula)}
+                  </p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

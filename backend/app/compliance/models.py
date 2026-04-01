@@ -81,6 +81,7 @@ class RuleEvaluation(BaseModel):
     evidence: str = ""
     description: str = ""
     recommendation: str = ""
+    applicability_trace: list[str] = Field(default_factory=list)
 
 
 class CrossReference(BaseModel):
@@ -219,6 +220,7 @@ class ComplianceFinding(BaseModel):
     evidence: str = ""
     description: str = ""
     recommendation: str = ""
+    applicability_trace: list[str] = Field(default_factory=list)
     resolved: bool = False
     hitl_status: str = "auto_approved"
     hitl_note: str = ""
@@ -253,6 +255,7 @@ class RuleResult(BaseModel):
     confidence: float = 1.0
     reasoning: str = ""
     evidence: str = ""
+    applicability_trace: list[str] = Field(default_factory=list)
     page_numbers: list[int] = Field(default_factory=list)
 
 
@@ -262,6 +265,9 @@ class AgentReport(BaseModel):
     agent: str
     agent_display: str = ""
     score: float = 100.0
+    model_score: float = 100.0
+    review_adjusted_score: float | None = None
+    score_decomposition: dict = Field(default_factory=dict)
     total_rules: int = 0
     total_findings: int = 0
     severity_counts: dict[str, int] = Field(default_factory=dict)
@@ -280,6 +286,16 @@ class ScoreMethodology(BaseModel):
         "agent_score = 100 * (compliant_rules / applicable_rules); "
         "overall_score = mean(agent_scores)"
     )
+    review_adjusted_formula: str = (
+        "review_adjusted_score = max(0, 100 - sum(finding penalties)); "
+        "user_rejected findings contribute 0 penalty"
+    )
+    policy: dict[str, str] = Field(default_factory=lambda: {
+        "not_applicable": "excluded from denominator",
+        "uncertain": "counted as non-compliant in model score",
+        "retry_exhausted_or_error": "excluded from denominator",
+        "review_adjustment": "severity-weight penalties from non-rejected findings",
+    })
 
 
 class AuditTrail(BaseModel):
@@ -307,6 +323,9 @@ class ComplianceReport(BaseModel):
     model_versions: dict[str, str] = Field(default_factory=dict)
 
     overall_score: float = 100.0
+    model_score: float = 100.0
+    review_adjusted_score: float | None = None
+    score_decomposition: dict = Field(default_factory=dict)
     score_methodology: ScoreMethodology = Field(default_factory=ScoreMethodology)
 
     executive_summary: ExecutiveSummary = Field(default_factory=ExecutiveSummary)

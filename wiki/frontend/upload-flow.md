@@ -83,9 +83,9 @@ The backend pipeline emits status updates through WebSocket as the document move
 idle
   → uploading              (file sent to server)
   → ingested               (stored, metadata extracted)
-  → marker_ocr_running     (Marker OCR processing)
-  → azure_di_running       (Azure Document Intelligence processing)
-  → quality_scoring        (Docling quality assessment)
+  → marker_ocr_running     (OCR extraction processing)
+  → azure_di_running       (OCR extraction processing)
+  → quality_scoring        (quality assessment)
   → merging_results        (combining OCR outputs)
   → hitl_required          (low-confidence pages need human review)
     OR auto_approved       (all pages above threshold)

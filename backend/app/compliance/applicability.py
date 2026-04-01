@@ -20,6 +20,10 @@ from __future__ import annotations
 import logging
 
 from app.compliance.models import ApplicabilityScreenResult, RuleEvaluation
+from app.compliance.rules.profiles import (
+    normalize_document_type,
+    normalize_section_type,
+)
 from app.compliance.rules.registry import AuditRule
 from app.core.ports.llm import LLMProvider
 
@@ -114,29 +118,42 @@ class ApplicabilityGate:
     def filter_rules(
         self,
         rules: list[AuditRule],
+        document_type: str,
         page_type: str,
         section_info: dict | None,
         extraction: dict,
-    ) -> tuple[list[AuditRule], list[RuleEvaluation]]:
+    ) -> tuple[list[AuditRule], list[RuleEvaluation], dict[str, list[str]]]:
         """Static filter chain (no LLM calls). Used when mode is ``"static"``.
 
         Filter order:
           1. Cannot-evaluate  (evaluation_mode == "cannot_evaluate")
-          2. Page type mismatch
+          2. Document type mismatch
           3. Section type mismatch
-          4. Keyword absence
+          4. Page type mismatch
+          5. Keyword absence
         """
         applicable: list[AuditRule] = []
         skipped: list[RuleEvaluation] = []
+        traces: dict[str, list[str]] = {}
 
+        section_type = self._normalized_section_type(section_info)
         for rule in rules:
-            reason = self._should_skip(rule, page_type, section_info, extraction)
+            reason, trace = self._should_skip(
+                rule,
+                document_type=document_type,
+                page_type=page_type,
+                section_type=section_type,
+                extraction=extraction,
+                include_keyword_gate=True,
+            )
+            traces[rule.id] = trace
             if reason is not None:
                 skipped.append(RuleEvaluation(
                     rule_id=rule.id,
                     status="not_applicable",
                     confidence=1.0,
                     reasoning=reason,
+                    applicability_trace=trace,
                 ))
             else:
                 applicable.append(rule)
@@ -147,43 +164,100 @@ class ApplicabilityGate:
                 len(skipped), len(rules), page_type,
             )
 
-        return applicable, skipped
+        return applicable, skipped, traces
 
     def _should_skip(
         self,
         rule: AuditRule,
+        document_type: str,
         page_type: str,
-        section_info: dict | None,
+        section_type: str,
         extraction: dict,
-    ) -> str | None:
-        """Return a skip reason string, or None if the rule is applicable."""
+        include_keyword_gate: bool,
+    ) -> tuple[str | None, list[str]]:
+        """Return (skip_reason | None, applicability_trace)."""
+
+        normalized_doc_type = normalize_document_type(document_type)
+        trace: list[str] = []
 
         if rule.evaluation_mode == "cannot_evaluate":
-            return rule.cannot_evaluate_reason or "Rule requires external data not available for evaluation"
+            reason = rule.cannot_evaluate_reason or "Rule requires external data not available for evaluation"
+            trace.append(f"cannot_evaluate: fail ({reason})")
+            return reason, trace
+        trace.append("cannot_evaluate: pass")
+
+        if rule.applicable_document_types:
+            allowed_doc_types = {normalize_document_type(v) for v in rule.applicable_document_types}
+            if normalized_doc_type not in allowed_doc_types:
+                reason = (
+                    f"Document type '{normalized_doc_type}' is not in applicable types "
+                    f"{sorted(allowed_doc_types)} for this rule"
+                )
+                trace.append(f"document_type: fail ({reason})")
+                return reason, trace
+            trace.append(f"document_type: pass ({normalized_doc_type} in {sorted(allowed_doc_types)})")
+        else:
+            trace.append("document_type: pass (no include constraints)")
+
+        if rule.excluded_document_types:
+            excluded_doc_types = {normalize_document_type(v) for v in rule.excluded_document_types}
+            if normalized_doc_type in excluded_doc_types:
+                reason = f"Document type '{normalized_doc_type}' is excluded for this rule"
+                trace.append(f"document_type_exclusion: fail ({reason})")
+                return reason, trace
+            trace.append("document_type_exclusion: pass")
+        else:
+            trace.append("document_type_exclusion: pass (no exclusions)")
+
+        if rule.applicable_section_types and section_type:
+            allowed_sections = {normalize_section_type(v) for v in rule.applicable_section_types}
+            if section_type not in allowed_sections:
+                reason = (
+                    f"Section type '{section_type}' is not in applicable types "
+                    f"{sorted(allowed_sections)} for this rule"
+                )
+                trace.append(f"section_type: fail ({reason})")
+                return reason, trace
+            trace.append(f"section_type: pass ({section_type} in {sorted(allowed_sections)})")
+        elif rule.applicable_section_types and not section_type:
+            trace.append("section_type: pass (section missing; deferred)")
+        else:
+            trace.append("section_type: pass (no section constraints)")
 
         if rule.applicable_page_types and page_type not in rule.applicable_page_types:
-            return (
+            reason = (
                 f"Page type '{page_type}' is not in applicable types "
                 f"{rule.applicable_page_types} for this rule"
             )
+            trace.append(f"page_type: fail ({reason})")
+            return reason, trace
+        if rule.applicable_page_types:
+            trace.append(f"page_type: pass ({page_type} in {rule.applicable_page_types})")
+        else:
+            trace.append("page_type: pass (no page constraints)")
 
-        if rule.applicable_section_types and section_info:
-            sec_type = section_info.get("section_type", "")
-            if sec_type and sec_type not in rule.applicable_section_types:
-                return (
-                    f"Section type '{sec_type}' is not in applicable types "
-                    f"{rule.applicable_section_types} for this rule"
-                )
-
-        if rule.keywords:
+        if include_keyword_gate and rule.keywords:
             md_lower = extraction.get("markdown", "").lower()
             if not any(kw.lower() in md_lower for kw in rule.keywords):
-                return (
+                reason = (
                     f"None of the required keywords {rule.keywords[:5]} "
                     f"found on this page"
                 )
+                trace.append(f"keyword_gate: fail ({reason})")
+                return reason, trace
+            trace.append("keyword_gate: pass")
+        elif include_keyword_gate:
+            trace.append("keyword_gate: pass (no keyword constraints)")
+        else:
+            trace.append("keyword_gate: deferred_to_prescreen")
 
-        return None
+        return None, trace
+
+    @staticmethod
+    def _normalized_section_type(section_info: dict | None) -> str:
+        if not section_info:
+            return ""
+        return normalize_section_type(str(section_info.get("section_type", "")))
 
     # ── LLM pre-screen (Tier 2) ──────────────────────────────
 
@@ -232,12 +306,14 @@ class ApplicabilityGate:
     async def filter_rules_hybrid(
         self,
         rules: list[AuditRule],
+        document_type: str,
+        page_type: str,
         extraction: dict,
         page_num: int,
         llm: LLMProvider,
         section_info: dict | None = None,
         prescreen_cache: dict[int, set[str]] | None = None,
-    ) -> tuple[list[AuditRule], list[RuleEvaluation]]:
+    ) -> tuple[list[AuditRule], list[RuleEvaluation], dict[str, list[str]]]:
         """Two-tier filtering: static gate for cannot-evaluate, then LLM pre-screen.
 
         Parameters
@@ -247,23 +323,35 @@ class ApplicabilityGate:
             a previous LLM pre-screen call. If the page is already cached, the
             LLM call is skipped.
         """
-        # Tier 1: static cannot-evaluate gate
+        # Tier 1: deterministic static gate (cannot_evaluate -> doc_type -> section -> page)
         tier1_applicable: list[AuditRule] = []
         skipped: list[RuleEvaluation] = []
+        traces: dict[str, list[str]] = {}
+        section_type = self._normalized_section_type(section_info)
 
         for rule in rules:
-            if rule.evaluation_mode == "cannot_evaluate":
+            reason, trace = self._should_skip(
+                rule,
+                document_type=document_type,
+                page_type=page_type,
+                section_type=section_type,
+                extraction=extraction,
+                include_keyword_gate=False,
+            )
+            traces[rule.id] = trace
+            if reason is not None:
                 skipped.append(RuleEvaluation(
                     rule_id=rule.id,
                     status="not_applicable",
                     confidence=1.0,
-                    reasoning=rule.cannot_evaluate_reason or "Rule requires external data not available for evaluation",
+                    reasoning=reason,
+                    applicability_trace=trace,
                 ))
             else:
                 tier1_applicable.append(rule)
 
         if not tier1_applicable:
-            return [], skipped
+            return [], skipped, traces
 
         # Tier 2: LLM pre-screen (cached per page)
         if prescreen_cache is not None and page_num in prescreen_cache:
@@ -278,13 +366,17 @@ class ApplicabilityGate:
         applicable: list[AuditRule] = []
         for rule in tier1_applicable:
             if rule.id in applicable_ids:
+                traces.setdefault(rule.id, []).append("llm_prescreen: pass")
                 applicable.append(rule)
             else:
+                rule_trace = traces.setdefault(rule.id, [])
+                rule_trace.append("llm_prescreen: fail")
                 skipped.append(RuleEvaluation(
                     rule_id=rule.id,
                     status="not_applicable",
                     confidence=0.9,
                     reasoning="LLM pre-screen determined this rule is not applicable to this page content",
+                    applicability_trace=rule_trace,
                 ))
 
         if skipped:
@@ -293,4 +385,4 @@ class ApplicabilityGate:
                 len(skipped), len(rules), page_num,
             )
 
-        return applicable, skipped
+        return applicable, skipped, traces

@@ -7,8 +7,11 @@ defaults:
   scope: page
   severity: major
   evaluation_mode: llm
+  applicable_document_types: [batch_record, sop]
+  excluded_document_types: []
   applicable_page_types: [form, content]
   applicable_section_types: [manufacturing_operations]
+  cross_section_requirements: []
   keywords: []
   pass_criteria: ""
   skip_conditions: []
@@ -21,6 +24,7 @@ categories:
   # ── SOP Reference Validation (rules 1-4) ──────────────────
   sop_reference_validation:
     severity: major
+    applicable_section_types: [manufacturing_operations, in_process_report, qc_report]
     rules:
       1:
         keywords: [SOP, procedure, reference, according to, as per]
@@ -46,6 +50,7 @@ categories:
   # ── Step Alignment (rules 5-8) ────────────────────────────
   step_alignment:
     severity: major
+    applicable_section_types: [manufacturing_operations]
     rules:
       5:
         pass_criteria: >
@@ -101,6 +106,7 @@ categories:
   # ── Parameter Compliance (rules 14-16) ────────────────────
   parameter_compliance:
     severity: major
+    applicable_section_types: [manufacturing_operations, in_process_report, qc_report]
     rules:
       14:
         keywords: [parameter, range, setpoint, limit, temperature, pressure, RPM, speed]

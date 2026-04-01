@@ -92,7 +92,7 @@ export function Sidebar() {
             className="min-w-0"
           >
             <span className="text-sm font-semibold text-sidebar-foreground tracking-tight">AutoTranscript</span>
-            <span className="block text-[10px] text-muted-foreground -mt-0.5">Document Intelligence</span>
+            <span className="block text-[10px] text-muted-foreground -mt-0.5">Trusted Document Processing</span>
           </motion.div>
         )}
       </div>

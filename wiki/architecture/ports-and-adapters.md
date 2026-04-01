@@ -340,7 +340,8 @@ Used in **local dev** and **on-prem production**.
 Used in **Azure staging** deployments.
 
 - Connects via `azure_connection_string` to an Azure Blob Storage container
-- Currently a placeholder (methods raise `NotImplementedError`) -- to be implemented when staging deployment is configured
+- Adapter contract is defined and selected through `storage.backend=azure_blob`
+- Filesystem remains the active default backend unless Azure Blob credentials are explicitly configured
 
 ### Switching Backends
 

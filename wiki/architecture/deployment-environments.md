@@ -6,14 +6,14 @@ The platform runs in three environments, each with different adapter configurati
 
 | Component | Local Dev | Azure Staging | On-Prem Production |
 |-----------|-----------|---------------|-------------------|
-| **FastAPI** | `uvicorn` (localhost:8000) | Azure App Service | Docker / systemd |
+| **FastAPI** | `uvicorn` (localhost:8100) | Azure App Service | Docker / systemd |
 | **Pipeline Mode** | `azure_di` or `marker_docling` (configurable) | `azure_di` | `azure_di` or `marker_docling` |
 | **OCR Engine** | Marker (GPU/CPU) or Azure DI (cloud API) | Azure DI (cloud API) | Azure DI (disconnected container) or Marker (GPU) |
 | **Quality Scoring (Docling)** | Local (CPU) | Local in App Service container | Local (CPU) |
 | **LLM** | Ollama local (gemma2:9b) | Ollama on ACI | Ollama local (gemma2:9b) |
 | **Database** | PostgreSQL Docker | Azure DB for PostgreSQL | PostgreSQL local |
 | **Storage** | Filesystem (`./data/`) | Azure Blob Storage | Filesystem |
-| **Frontend** | `next dev` (localhost:3000) | Azure Static Web Apps | Nginx serving static build |
+| **Frontend** | `next dev` (localhost:3100) | Azure Static Web Apps | Nginx serving static build |
 | **Notifications** | WebSocket (single worker) | PG LISTEN/NOTIFY + WebSocket | WebSocket (single worker) |
 
 ## Deployment Flow
@@ -181,7 +181,7 @@ hitl:
 - **Ollama** runs locally with `gemma2:9b` pulled via `infra/scripts/pull-ollama-models.sh`
 - **PostgreSQL** runs in Docker (see `infra/docker/`)
 - **Docling** runs locally on CPU (used in both modes)
-- **Frontend** runs via `next dev` with hot reload, connecting to `localhost:8000`
+- **Frontend** runs via `next dev` with hot reload, connecting to `localhost:8100`
 
 Setup script: `infra/scripts/setup-local.sh`
 

@@ -21,6 +21,8 @@ import {
   Copy,
   PenTool,
   KeyRound,
+  PanelTopClose,
+  PanelTopOpen,
   CheckCheck,
   Download,
   FileDown,
@@ -59,6 +61,7 @@ interface SignatureInfo {
   confidence: number;
   label: string;
   component_id?: string;
+  bounding_region?: BoundingRegion | null;
   decision?: ComponentDecision;
 }
 
@@ -67,7 +70,22 @@ interface KVPair {
   value: string;
   confidence: number;
   component_id?: string;
+  bounding_region?: BoundingRegion | null;
   decision?: ComponentDecision;
+}
+
+interface BoundingRegion {
+  page_num: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface PageDimensions {
+  width?: number;
+  height?: number;
+  unit?: string;
 }
 
 interface ReviewPage {
@@ -81,6 +99,7 @@ interface ReviewPage {
   signatures?: SignatureInfo[];
   keyValuePairs?: KVPair[];
   handwrittenCount?: number;
+  pageDimensions?: PageDimensions;
 }
 
 interface ReviewInterfaceProps {
@@ -95,11 +114,39 @@ interface ReviewInterfaceProps {
   onFlag: (pageNum: number, reason?: string) => Promise<void>;
 }
 
+type RightPaneMode = "continuous" | "parity";
+type NormalizedRect = { x: number; y: number; width: number; height: number };
+type FocusTarget = {
+  pageNum: number;
+  componentId?: string;
+  label: string;
+  highlightRect?: NormalizedRect | null;
+};
+
 const PAGE_BREAK_RE = /<!-- PageBreak -->/g;
 
 function splitByPageBreaks(md: string): string[] {
   if (!md) return [];
   return md.split(PAGE_BREAK_RE).map((s) => s.trim()).filter(Boolean);
+}
+
+function toNormalizedRect(
+  region?: BoundingRegion | null,
+  dims?: PageDimensions,
+): NormalizedRect | null {
+  if (!region || !dims?.width || !dims.height) return null;
+  if (dims.width <= 0 || dims.height <= 0) return null;
+  const x = region.x / dims.width;
+  const y = region.y / dims.height;
+  const width = region.width / dims.width;
+  const height = region.height / dims.height;
+  if (![x, y, width, height].every((v) => Number.isFinite(v))) return null;
+  return {
+    x: Math.max(0, Math.min(1, x)),
+    y: Math.max(0, Math.min(1, y)),
+    width: Math.max(0.01, Math.min(1, width)),
+    height: Math.max(0.01, Math.min(1, height)),
+  };
 }
 
 const VALID_TABLE_SECTIONS = ["thead", "tbody", "tfoot", "colgroup", "caption"];
@@ -165,6 +212,99 @@ const mdComponents = {
   table: TableWrapper,
 };
 
+function CollapsibleKVList({
+  pairs,
+  onFocus,
+  activeComponentId,
+}: {
+  pairs: KVPair[];
+  onFocus: (item: KVPair) => void;
+  activeComponentId?: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? pairs : pairs.slice(0, 4);
+  return (
+    <div className="grid gap-1">
+      {visible.map((kv, i) => (
+        <button
+          key={`${kv.key}-${i}`}
+          type="button"
+          onClick={() => onFocus(kv)}
+          className={cn(
+            "w-full text-left flex items-baseline gap-2 text-xs rounded px-1 py-0.5 hover:bg-accent/40 transition-colors",
+            kv.component_id && activeComponentId === kv.component_id ? "bg-primary/10 ring-1 ring-primary/30" : "",
+          )}
+        >
+          <span className="font-medium text-foreground min-w-[100px] shrink-0">{kv.key}:</span>
+          <span className="text-muted-foreground">{kv.value || <em className="italic">empty</em>}</span>
+          {kv.confidence > 0 && (
+            <span
+              className={cn(
+                "text-[9px] ml-auto shrink-0",
+                kv.confidence >= 0.8 ? "text-success" : kv.confidence >= 0.6 ? "text-warning" : "text-destructive",
+              )}
+            >
+              {Math.round(kv.confidence * 100)}%
+            </span>
+          )}
+        </button>
+      ))}
+      {pairs.length > 4 && (
+        <button
+          type="button"
+          className="text-[10px] text-primary hover:underline text-left mt-1"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show fewer fields" : `Show all ${pairs.length} fields`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CollapsibleSignatureList({
+  signatures,
+  onFocus,
+  activeComponentId,
+}: {
+  signatures: SignatureInfo[];
+  onFocus: (item: SignatureInfo) => void;
+  activeComponentId?: string | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? signatures : signatures.slice(0, 3);
+  return (
+    <div className="space-y-1">
+      {visible.map((sig, i) => (
+        <button
+          key={`${sig.label}-${i}`}
+          type="button"
+          onClick={() => onFocus(sig)}
+          className={cn(
+            "w-full text-left flex items-center gap-2 text-xs rounded px-1 py-0.5 hover:bg-accent/40 transition-colors",
+            sig.component_id && activeComponentId === sig.component_id ? "bg-primary/10 ring-1 ring-primary/30" : "",
+          )}
+        >
+          <PenTool className="size-3 text-info shrink-0" />
+          <span>{sig.label || "Signature detected"}</span>
+          <span className={cn("text-[9px] ml-auto", sig.confidence >= 0.8 ? "text-success" : "text-warning")}>
+            {Math.round(sig.confidence * 100)}%
+          </span>
+        </button>
+      ))}
+      {signatures.length > 3 && (
+        <button
+          type="button"
+          className="text-[10px] text-primary hover:underline text-left mt-1"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show fewer signatures" : `Show all ${signatures.length} signatures`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ReviewInterface({
   docId,
   pages,
@@ -183,6 +323,10 @@ export function ReviewInterface({
   const [flagReason, setFlagReason] = useState("");
   const [flagPageNum, setFlagPageNum] = useState<number | null>(null);
   const [mobileTab, setMobileTab] = useState<string>("digitized");
+  const [showStructuredFields, setShowStructuredFields] = useState(true);
+  const [rightPaneMode, setRightPaneMode] = useState<RightPaneMode>("parity");
+  const [strictSync, setStrictSync] = useState(false);
+  const [focusedTarget, setFocusedTarget] = useState<FocusTarget | null>(null);
   const isMobile = useIsMobile();
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -201,10 +345,11 @@ export function ReviewInterface({
 
   // ── Scroll-sync: IntersectionObserver watches page sections ──
   useEffect(() => {
+    if (rightPaneMode !== "continuous") return;
     const container = scrollContainerRef.current;
     if (!container || pages.length === 0) return;
 
-    const visiblePages = new Set<number>();
+    const visibility = new Map<number, number>();
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -213,39 +358,48 @@ export function ReviewInterface({
         for (const entry of entries) {
           const pageNum = Number(entry.target.getAttribute("data-page"));
           if (isNaN(pageNum)) continue;
-          if (entry.isIntersecting) {
-            visiblePages.add(pageNum);
+          if (entry.isIntersecting && entry.intersectionRatio > 0) {
+            visibility.set(pageNum, entry.intersectionRatio);
           } else {
-            visiblePages.delete(pageNum);
+            visibility.delete(pageNum);
           }
         }
 
-        if (visiblePages.size > 0) {
-          const topPage = Math.min(...visiblePages);
+        if (visibility.size > 0) {
+          let topPage = -1;
+          let maxRatio = -1;
+          for (const [p, ratio] of visibility.entries()) {
+            if (ratio > maxRatio) {
+              maxRatio = ratio;
+              topPage = p;
+            } else if (ratio === maxRatio && p < topPage) {
+              topPage = p;
+            }
+          }
           const idx = pages.findIndex((p) => p.pageNum === topPage);
           if (idx >= 0) setCurrentIndex(idx);
         }
       },
       {
         root: container,
-        rootMargin: "0px 0px -70% 0px",
-        threshold: 0,
+        rootMargin: "-10% 0px -45% 0px",
+        threshold: [0.1, 0.25, 0.5, 0.75],
       },
     );
 
     pageRefs.current.forEach((el) => observer.observe(el));
     return () => {
       observer.disconnect();
-      visiblePages.clear();
+      visibility.clear();
     };
-  }, [pages]);
+  }, [pages, rightPaneMode]);
 
   const goToPage = useCallback(
     (idx: number) => {
       isScrollingProgrammatically.current = true;
       setCurrentIndex(idx);
       const pageNum = pages[idx]?.pageNum;
-      if (pageNum && pageRefs.current.has(pageNum)) {
+      if (rightPaneMode === "continuous" && pageNum && pageRefs.current.has(pageNum)) {
         pageRefs.current.get(pageNum)?.scrollIntoView({ behavior: "smooth", block: "start" });
         setTimeout(() => {
           isScrollingProgrammatically.current = false;
@@ -254,7 +408,7 @@ export function ReviewInterface({
         isScrollingProgrammatically.current = false;
       }
     },
-    [pages],
+    [pages, rightPaneMode],
   );
 
   const goNext = useCallback(() => {
@@ -264,6 +418,17 @@ export function ReviewInterface({
   const goPrev = useCallback(() => {
     if (currentIndex > 0) goToPage(currentIndex - 1);
   }, [currentIndex, goToPage]);
+
+  const focusTarget = useCallback(
+    (target: FocusTarget) => {
+      const idx = pages.findIndex((p) => p.pageNum === target.pageNum);
+      if (idx >= 0 && idx !== currentIndex) {
+        goToPage(idx);
+      }
+      setFocusedTarget(target);
+    },
+    [currentIndex, goToPage, pages],
+  );
 
   const handleApprove = useCallback(
     async (pageNum: number) => {
@@ -386,6 +551,7 @@ export function ReviewInterface({
 
   // Scroll to initial page on mount
   useEffect(() => {
+    if (rightPaneMode !== "continuous") return;
     if (startIndex > 0) {
       const pageNum = pages[startIndex]?.pageNum;
       if (pageNum) {
@@ -399,6 +565,22 @@ export function ReviewInterface({
       }
     }
   }, []);
+
+  // Optional strict sync for full-document mode:
+  // keep the active right-pane page aligned whenever page index changes.
+  useEffect(() => {
+    if (rightPaneMode !== "continuous" || !strictSync) return;
+    const pageNum = pages[currentIndex]?.pageNum;
+    if (!pageNum) return;
+    const target = pageRefs.current.get(pageNum);
+    if (!target) return;
+    isScrollingProgrammatically.current = true;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    const timer = setTimeout(() => {
+      isScrollingProgrammatically.current = false;
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [currentIndex, pages, rightPaneMode, strictSync]);
 
   if (!currentPage) return null;
 
@@ -421,7 +603,7 @@ export function ReviewInterface({
   const renderPageComponents = (page: ReviewPage, markdownContent: string) => (
     <div className="space-y-2">
       {/* KV Pairs as reviewable components */}
-      {page.keyValuePairs && page.keyValuePairs.length > 0 && (
+      {showStructuredFields && page.keyValuePairs && page.keyValuePairs.length > 0 && (
         <ReviewableComponent
           componentId={page.keyValuePairs[0]?.component_id ?? `p${page.pageNum}-kv-group`}
           label={`Key-Value Fields (${page.keyValuePairs.length})`}
@@ -435,27 +617,23 @@ export function ReviewInterface({
           onApprove={handleComponentApprove}
           onFlag={handleComponentFlag}
         >
-          <div className="grid gap-1">
-            {page.keyValuePairs.map((kv, i) => (
-              <div key={i} className="flex items-baseline gap-2 text-xs">
-                <span className="font-medium text-foreground min-w-[100px] shrink-0">{kv.key}:</span>
-                <span className="text-muted-foreground">{kv.value || <em className="italic">empty</em>}</span>
-                {kv.confidence > 0 && (
-                  <span className={cn(
-                    "text-[9px] ml-auto shrink-0",
-                    kv.confidence >= 0.8 ? "text-success" : kv.confidence >= 0.6 ? "text-warning" : "text-destructive"
-                  )}>
-                    {Math.round(kv.confidence * 100)}%
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          <CollapsibleKVList
+            pairs={page.keyValuePairs}
+            activeComponentId={focusedTarget?.componentId}
+            onFocus={(item) =>
+              focusTarget({
+                pageNum: page.pageNum,
+                componentId: item.component_id,
+                label: item.key || "Key-value field",
+                highlightRect: toNormalizedRect(item.bounding_region, page.pageDimensions),
+              })
+            }
+          />
         </ReviewableComponent>
       )}
 
       {/* Signatures as reviewable components */}
-      {page.signatures && page.signatures.filter((s) => s.status === "signed").length > 0 && (
+      {showStructuredFields && page.signatures && page.signatures.filter((s) => s.status === "signed").length > 0 && (
         <ReviewableComponent
           componentId={page.signatures.find((s) => s.component_id)?.component_id ?? `p${page.pageNum}-sig-group`}
           label={`Signatures (${page.signatures.filter((s) => s.status === "signed").length})`}
@@ -470,20 +648,18 @@ export function ReviewInterface({
           onApprove={handleComponentApprove}
           onFlag={handleComponentFlag}
         >
-          <div className="space-y-1">
-            {page.signatures.filter((s) => s.status === "signed").map((sig, i) => (
-              <div key={i} className="flex items-center gap-2 text-xs">
-                <PenTool className="size-3 text-info shrink-0" />
-                <span>{sig.label || "Signature detected"}</span>
-                <span className={cn(
-                  "text-[9px] ml-auto",
-                  sig.confidence >= 0.8 ? "text-success" : "text-warning"
-                )}>
-                  {Math.round(sig.confidence * 100)}%
-                </span>
-              </div>
-            ))}
-          </div>
+          <CollapsibleSignatureList
+            signatures={page.signatures.filter((s) => s.status === "signed")}
+            activeComponentId={focusedTarget?.componentId}
+            onFocus={(item) =>
+              focusTarget({
+                pageNum: page.pageNum,
+                componentId: item.component_id,
+                label: item.label || "Signature",
+                highlightRect: toNormalizedRect(item.bounding_region, page.pageDimensions),
+              })
+            }
+          />
         </ReviewableComponent>
       )}
 
@@ -521,7 +697,7 @@ export function ReviewInterface({
             ref={(el) => {
               if (el) pageRefs.current.set(pageNum, el);
             }}
-            className="mb-2"
+            className="mb-2 scroll-mt-20"
           >
             <PageDivider
               pageNum={pageNum}
@@ -549,7 +725,7 @@ export function ReviewInterface({
           ref={(el) => {
             if (el) pageRefs.current.set(page.pageNum, el);
           }}
-          className="mb-2"
+          className="mb-2 scroll-mt-20"
         >
           <PageDivider
             pageNum={page.pageNum}
@@ -566,7 +742,7 @@ export function ReviewInterface({
         </div>
       ));
 
-  const fullDocContent = (
+  const continuousDocContent = (
     <div ref={scrollContainerRef} className="h-full overflow-y-auto">
       <div className="p-4 lg:p-6">
         <div className="flex items-center justify-between mb-4">
@@ -581,6 +757,39 @@ export function ReviewInterface({
           </Tooltip>
         </div>
         {renderSections}
+      </div>
+    </div>
+  );
+
+  const currentPageMarkdown = hasFullDoc
+    ? (pageSections[currentPage.pageNum - 1] ?? currentPage.markdown)
+    : currentPage.markdown;
+
+  const parityDocContent = (
+    <div className="h-full overflow-y-auto">
+      <div className="p-4 lg:p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold text-foreground">Digitized Content</h3>
+          <Badge variant="outline" className="text-[10px]">
+            Parallel page view
+          </Badge>
+        </div>
+        <div className="mb-2">
+          <PageDivider
+            pageNum={currentPage.pageNum}
+            page={currentPage}
+            isFirst
+            actionLoading={actionLoading}
+            onApproveAll={handleApproveAllComponents}
+            onFlag={openFlagDialog}
+            statusBadge={pageStatusBadge}
+          />
+          {currentPageMarkdown ? (
+            renderPageComponents(currentPage, currentPageMarkdown)
+          ) : (
+            <p className="text-sm text-muted-foreground">No extraction data for this page.</p>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -631,6 +840,72 @@ export function ReviewInterface({
         </div>
 
         <div className="flex items-center gap-1.5">
+          {!isMobile && (
+            <>
+              <Button
+                variant={rightPaneMode === "parity" ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setRightPaneMode("parity")}
+              >
+                Parallel
+              </Button>
+              <Button
+                variant={rightPaneMode === "continuous" ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setRightPaneMode("continuous")}
+              >
+                Full flow
+              </Button>
+              {rightPaneMode === "continuous" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => setStrictSync((v) => !v)}
+                    >
+                      {strictSync ? "Strict sync on" : "Strict sync off"}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Keeps the active page pinned in the right pane while navigating
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </>
+          )}
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setShowStructuredFields((v) => !v)}
+              >
+                {showStructuredFields ? (
+                  <>
+                    <PanelTopClose className="size-3.5 mr-1" />
+                    <span className="hidden sm:inline">Hide fields</span>
+                  </>
+                ) : (
+                  <>
+                    <PanelTopOpen className="size-3.5 mr-1" />
+                    <span className="hidden sm:inline">Show fields</span>
+                  </>
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {showStructuredFields
+                ? "Collapse field/signature blocks for tighter page alignment"
+                : "Show field/signature blocks for focused metadata review"}
+            </TooltipContent>
+          </Tooltip>
+
           <DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -709,21 +984,35 @@ export function ReviewInterface({
         {isMobile ? (
           <div className="h-full">
             {mobileTab === "original" ? (
-              <PdfViewer url={pdfUrl} pageNumber={currentPage.pageNum} className="h-full flex flex-col" />
+              <PdfViewer
+                url={pdfUrl}
+                pageNumber={currentPage.pageNum}
+                className="h-full flex flex-col"
+                focusLabel={focusedTarget?.label}
+                focusPulseKey={focusedTarget ? `${focusedTarget.pageNum}-${focusedTarget.label}-${focusedTarget.componentId || "x"}` : undefined}
+                highlightRect={focusedTarget?.pageNum === currentPage.pageNum ? focusedTarget.highlightRect : null}
+              />
             ) : (
-              fullDocContent
+              rightPaneMode === "parity" ? parityDocContent : continuousDocContent
             )}
           </div>
         ) : (
           <PanelGroup orientation="horizontal" id="review-split">
             <Panel defaultSize={50} minSize={25}>
-              <PdfViewer url={pdfUrl} pageNumber={currentPage.pageNum} className="h-full flex flex-col" />
+              <PdfViewer
+                url={pdfUrl}
+                pageNumber={currentPage.pageNum}
+                className="h-full flex flex-col"
+                focusLabel={focusedTarget?.label}
+                focusPulseKey={focusedTarget ? `${focusedTarget.pageNum}-${focusedTarget.label}-${focusedTarget.componentId || "x"}` : undefined}
+                highlightRect={focusedTarget?.pageNum === currentPage.pageNum ? focusedTarget.highlightRect : null}
+              />
             </Panel>
             <PanelResizeHandle className="w-1.5 bg-border hover:bg-primary/20 transition-colors flex items-center justify-center">
               <GripVertical className="size-3 text-muted-foreground" />
             </PanelResizeHandle>
             <Panel defaultSize={50} minSize={25}>
-              {fullDocContent}
+              {rightPaneMode === "parity" ? parityDocContent : continuousDocContent}
             </Panel>
           </PanelGroup>
         )}

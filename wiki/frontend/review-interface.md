@@ -34,8 +34,8 @@ The interface is a full-height flexbox column with three sections:
 ### Left Pane — Original Document
 
 - Title bar: "Original Document"
-- PDF.js viewer placeholder showing the current page number
-- Designed to render the source PDF page for side-by-side comparison (PDF.js integration pending)
+- PDF viewer rendering the source page with page-level navigation and sync support
+- Keeps the selected page aligned with the extracted-content panel during review flow
 
 ### Right Pane — Extracted Data
 

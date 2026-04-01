@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 
 from app.compliance.models import DocumentSection, DocumentSegmentation
+from app.compliance.rules.profiles import normalize_section_type
 from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ def build_page_to_section(seg: DocumentSegmentation) -> dict[int, dict]:
         info = {
             "section_id": sec.section_id,
             "section_name": sec.name,
-            "section_type": sec.section_type,
+            "section_type": normalize_section_type(sec.section_type),
             "start_page": sec.start_page,
             "end_page": sec.end_page,
         }

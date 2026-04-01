@@ -7,8 +7,11 @@ defaults:
   scope: page
   severity: major
   evaluation_mode: llm
+  applicable_document_types: [batch_record]
+  excluded_document_types: []
   applicable_page_types: [form]
   applicable_section_types: []
+  cross_section_requirements: []
   keywords: []
   pass_criteria: ""
   skip_conditions: []
@@ -21,6 +24,7 @@ categories:
   # ── Checkbox Completeness (rules 1-4) ─────────────────────
   checkbox_completeness:
     severity: major
+    applicable_section_types: [manufacturing_operations, line_clearance, cleaning_log, equipment_usage_log]
     rules:
       1:
         pass_criteria: >
@@ -50,6 +54,7 @@ categories:
   # ── Signature Verification (rules 5-9) ────────────────────
   signature_verification:
     severity: critical
+    applicable_section_types: [manufacturing_operations, qc_report, line_clearance, cleaning_log]
     rules:
       5:
         pass_criteria: >
@@ -92,6 +97,7 @@ categories:
   # ── Date Completeness (rules 10-13) ───────────────────────
   date_completeness:
     severity: major
+    applicable_section_types: [manufacturing_operations, qc_report, in_process_report]
     rules:
       10:
         pass_criteria: >
@@ -130,6 +136,7 @@ categories:
   # ── Blank Field Detection (rules 14-16) ───────────────────
   blank_field_detection:
     severity: major
+    applicable_section_types: [manufacturing_operations, qc_report, in_process_report, material_dispensing]
     rules:
       14:
         pass_criteria: >
@@ -155,6 +162,7 @@ categories:
   # ── Attachment Verification (rules 17-20) ──────────────────
   attachment_verification:
     severity: minor
+    applicable_page_types: [form, content, printed]
     rules:
       17:
         scope: document

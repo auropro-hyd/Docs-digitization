@@ -9,17 +9,17 @@ const STATUS_CONFIG: Record<
   { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string; pulse?: boolean }
 > = {
   idle: { label: "Ready", variant: "secondary", className: "bg-muted text-muted-foreground" },
-  uploading: { label: "Uploading", variant: "outline", className: "border-info text-info", pulse: true },
-  ingested: { label: "Ingested", variant: "outline", className: "border-info text-info", pulse: true },
-  marker_ocr_running: { label: "Marker OCR", variant: "outline", className: "border-chart-2 text-chart-2", pulse: true },
-  azure_di_running: { label: "Azure DI", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
-  quality_scoring: { label: "Scoring", variant: "outline", className: "border-warning text-warning", pulse: true },
-  merging_results: { label: "Merging", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
-  hitl_required: { label: "Review Required", variant: "outline", className: "border-warning text-warning" },
-  auto_approved: { label: "Auto-Approved", variant: "outline", className: "border-success text-success" },
-  reviewed: { label: "Reviewed", variant: "outline", className: "border-success text-success" },
-  completed: { label: "Complete", variant: "outline", className: "border-success text-success" },
-  error: { label: "Error", variant: "destructive", className: "" },
+  uploading: { label: "Secure Upload", variant: "outline", className: "border-info text-info", pulse: true },
+  ingested: { label: "Workflow Queued", variant: "outline", className: "border-info text-info", pulse: true },
+  marker_ocr_running: { label: "Text Intelligence", variant: "outline", className: "border-chart-2 text-chart-2", pulse: true },
+  azure_di_running: { label: "Text Intelligence", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
+  quality_scoring: { label: "Confidence Analysis", variant: "outline", className: "border-warning text-warning", pulse: true },
+  merging_results: { label: "Result Assembly", variant: "outline", className: "border-chart-1 text-chart-1", pulse: true },
+  hitl_required: { label: "Action Needed", variant: "outline", className: "border-warning text-warning" },
+  auto_approved: { label: "Quality Confirmed", variant: "outline", className: "border-success text-success" },
+  reviewed: { label: "Validation Complete", variant: "outline", className: "border-success text-success" },
+  completed: { label: "Ready", variant: "outline", className: "border-success text-success" },
+  error: { label: "Attention", variant: "destructive", className: "" },
 };
 
 interface StatusIndicatorProps {

@@ -38,7 +38,12 @@ import {
   Plus,
 } from "lucide-react";
 
-type PageState = "loading" | "pre-run" | "running" | "report" | "error";
+type PageState = "loading" | "pre-run" | "running" | "summary" | "report" | "error";
+type ReportFocus = {
+  tab?: "all" | string;
+  hitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
+  severityFilter?: "all" | "critical" | "major" | "minor" | "observation";
+};
 
 function ComplianceContent() {
   const searchParams = useSearchParams();
@@ -47,6 +52,7 @@ function ComplianceContent() {
   const [pageState, setPageState] = useState<PageState>("loading");
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
   const [reportReady, setReportReady] = useState(false);
+  const [reportFocus, setReportFocus] = useState<ReportFocus>({ tab: "all", hitlFilter: "all", severityFilter: "all" });
   const [errorMsg, setErrorMsg] = useState("");
   const [filename, setFilename] = useState<string | null>(null);
 
@@ -58,7 +64,7 @@ function ComplianceContent() {
   const [showNewAgent, setShowNewAgent] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
-  const { phase, startRun, handleProgress, reset } = useComplianceStore();
+  const { phase, startRun, handleProgress, hydrateFromReport, reset } = useComplianceStore();
   const wsRef = useRef<DocumentWebSocket | null>(null);
 
   const fetchAgents = useCallback(async () => {
@@ -108,8 +114,10 @@ function ComplianceContent() {
           if (!cancelled) {
             setReport(data);
             setReportReady(true);
+            hydrateFromReport(data as Record<string, unknown>);
             setFilename(((data as Record<string, unknown>).filename as string) ?? null);
-            setPageState("report");
+            setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
+            setPageState("summary");
           }
         } else if (status.status === "running") {
           startRun();
@@ -125,8 +133,10 @@ function ComplianceContent() {
             if (!cancelled) {
               setReport(data);
               setReportReady(true);
+              hydrateFromReport(data as Record<string, unknown>);
               setFilename(((data as Record<string, unknown>).filename as string) ?? null);
-              setPageState("report");
+              setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
+              setPageState("summary");
             }
           } catch {
             if (!cancelled) setPageState("pre-run");
@@ -162,7 +172,9 @@ function ComplianceContent() {
           const data = await getComplianceReport(docId);
           setReport(data);
           setReportReady(true);
-          setPageState("running");
+          hydrateFromReport(data as Record<string, unknown>);
+          setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
+          setPageState("summary");
           toast.success("Compliance audit complete. Review and export when ready.");
         } catch {
           setErrorMsg("Audit completed but failed to load report");
@@ -192,7 +204,9 @@ function ComplianceContent() {
           const data = await getComplianceReport(docId);
           setReport(data);
           setReportReady(true);
-          setPageState("running");
+          hydrateFromReport(data as Record<string, unknown>);
+          setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
+          setPageState("summary");
           wsRef.current?.disconnect();
           wsRef.current = null;
           toast.success("Compliance audit complete. Open report when ready.");
@@ -242,6 +256,7 @@ function ComplianceContent() {
       startRun();
       setReportReady(false);
       setReport(null);
+      setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
       setPageState("running");
       connectWS();
       await runComplianceReview(docId, Array.from(selectedAgents));
@@ -257,6 +272,7 @@ function ComplianceContent() {
     reset();
     setReport(null);
     setReportReady(false);
+    setReportFocus({ tab: "all", hitlFilter: "all", severityFilter: "all" });
     setPageState("pre-run");
   };
 
@@ -438,13 +454,16 @@ function ComplianceContent() {
         </motion.div>
       )}
 
-      {pageState === "running" && (
-        <ComplianceProgress
+      {(pageState === "running" || pageState === "summary") && (
+          <ComplianceProgress
           docId={docId}
           filename={filename}
           reportReady={reportReady}
-          onViewReport={() => setPageState("report")}
-          onCancel={() => setShowCancelConfirm(true)}
+          onViewReport={(focus) => {
+            setReportFocus(focus || { tab: "all", hitlFilter: "all", severityFilter: "all" });
+            setPageState("report");
+          }}
+          onCancel={pageState === "running" ? () => setShowCancelConfirm(true) : undefined}
         />
       )}
 
@@ -460,7 +479,12 @@ function ComplianceContent() {
       />
 
       {pageState === "report" && report && (
-        <ComplianceReportView report={report} docId={docId} onReRun={handleReRun} />
+        <ComplianceReportView
+          report={report}
+          docId={docId}
+          onReRun={handleReRun}
+          initialFocus={reportFocus}
+        />
       )}
 
       {pageState === "error" && (

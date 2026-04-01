@@ -88,6 +88,9 @@ class LanguageSpan(BaseModel):
 class OCRPageResult(BaseModel):
     page_num: int
     markdown: str = ""
+    page_width: float | None = None
+    page_height: float | None = None
+    page_unit: str | None = None
     words: list[OCRWord] = Field(default_factory=list)
     barcodes: list[BarcodeResult] = Field(default_factory=list)
     selection_marks: list[SelectionMark] = Field(default_factory=list)

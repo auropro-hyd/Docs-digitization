@@ -9,8 +9,11 @@ defaults:
   scope: page
   severity: observation
   evaluation_mode: llm
+  applicable_document_types: [batch_record]
+  excluded_document_types: []
   applicable_page_types: []
   applicable_section_types: []
+  cross_section_requirements: []
   keywords: []
   pass_criteria: ""
   skip_conditions: []
@@ -43,8 +46,13 @@ categories:
       2:
         applicable_page_types: [form, content]
         applicable_section_types: [electronic_records, automated_systems]
+        pass_criteria: >
+          For electronically generated pages/records, there should be
+          traceable operator identity evidence such as "Printed By",
+          user/operator ID, electronic signature, or equivalent footer metadata.
+          Presence of print metadata with operator and timestamp satisfies this.
         skip_conditions:
-          - "Page contains no electronic or system-generated entries -> not_applicable"
+          - "Page contains no electronic/system-generated indicators (e.g., Printed By, system footer) -> not_applicable"
         keywords: [login, electronic signature, operator id, user id, system]
 
       3:
@@ -128,12 +136,21 @@ categories:
       11:
         applicable_page_types: [form, content]
         applicable_section_types: [electronic_records, automated_systems]
+        pass_criteria: >
+          If the page indicates it is system-generated, the footer/content
+          should identify who generated or printed it (e.g., Printed By and
+          timestamp metadata).
         skip_conditions:
           - "Page contains no automated or system-driven processes -> not_applicable"
         keywords: [automated, system, process initiated, auto, PLC]
 
       12:
         applicable_section_types: [deviation, oos_investigation, oot_investigation]
+        pass_criteria: >
+          Deviation/OOS/OOT records should include completion evidence:
+          completion date and required role sign-offs (manufacturing, QC, QA
+          as applicable by template). If the section exists but required
+          completion/signature fields are empty, mark non-compliant.
         skip_conditions:
           - "Page contains no deviation or OOS/OOT investigation content -> not_applicable"
         keywords: [deviation, OOS, OOT, investigation, root cause, CAPA]
@@ -340,6 +357,10 @@ categories:
 
       37:
         applicable_section_types: [electronic_records, raw_data]
+        pass_criteria: >
+          For pages referencing electronic/system-captured data, there should
+          be metadata suggesting original system provenance (system name,
+          generated/printed timestamp, or comparable print metadata).
         skip_conditions:
           - "Page is a paper record with no electronic data references -> not_applicable"
 
@@ -414,6 +435,8 @@ categories:
 
       47:
         scope: document
+        cross_section_requirements:
+          - material_usage_vs_dispensing
         keywords: [material, balance, quantity, yield, weight, reconciliation]
         applicable_section_types: [manufacturing_operations, material_dispensing]
         notes: "Best evaluated as cross-page to compare across process stages."
@@ -431,6 +454,8 @@ categories:
 
       50:
         scope: document
+        cross_section_requirements:
+          - qc_vs_coa_consistency
         keywords: [QC, CoA, certificate, analysis, test result]
         applicable_section_types: [qc_report, certificate_of_analysis]
         notes: "Requires cross-page comparison between QC section and CoA."
@@ -530,6 +555,8 @@ categories:
     severity: major
     scope: document
     applicable_page_types: []
+    cross_section_requirements:
+      - inter_section_consistency
     notes: >
       Consistency rules are cross-page by nature. They are evaluated at
       document scope and compared across sections. Per-page evaluation
@@ -545,6 +572,8 @@ categories:
         keywords: [material code, batch number, lot number]
 
       66:
+        cross_section_requirements:
+          - operation_vs_weighing_reconciliation
         keywords: [requisition, dispensing, material]
 
       67:

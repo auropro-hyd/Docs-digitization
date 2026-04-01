@@ -29,7 +29,7 @@ The same `AzureDIOCRAdapter` class is used in all environments. Only the endpoin
 
 ```python
 class AzureDIConfig(BaseModel):
-    endpoint: str = "https://placeholder.cognitiveservices.azure.com"
+    endpoint: str = "https://<resource>.cognitiveservices.azure.com"
     api_key: str = ""
     features: list[str] = Field(
         default_factory=lambda: ["barcodes", "keyValuePairs"]

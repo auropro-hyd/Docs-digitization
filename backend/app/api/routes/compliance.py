@@ -65,6 +65,111 @@ def _load_report(doc_id: str) -> dict | None:
     return json.loads(result_path.read_text(encoding="utf-8"))
 
 
+def _deduction_weights(report_data: dict) -> dict[str, int]:
+    weights = report_data.get("score_methodology", {}).get("deduction_weights", {})
+    default = {
+        "critical": 10,
+        "major": 5,
+        "minor": 2,
+        "observation": 1,
+    }
+    if not isinstance(weights, dict):
+        return default
+    merged = dict(default)
+    for k, v in weights.items():
+        try:
+            merged[str(k).lower()] = int(v)
+        except Exception:
+            continue
+    return merged
+
+
+def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
+    penalties_by_severity = {k: 0 for k in ["critical", "major", "minor", "observation"]}
+    entries: list[dict] = []
+    total_penalty = 0
+    included = 0
+
+    for f in findings:
+        status = str(f.get("hitl_status", "auto_approved"))
+        if status == "user_rejected":
+            continue
+        sev = str(f.get("severity", "observation")).lower()
+        penalty = int(weights.get(sev, 1))
+        total_penalty += penalty
+        penalties_by_severity[sev] = penalties_by_severity.get(sev, 0) + penalty
+        included += 1
+        entries.append({
+            "finding_id": f.get("finding_id"),
+            "rule_id": f.get("rule_id"),
+            "severity": sev,
+            "hitl_status": status,
+            "penalty": penalty,
+        })
+
+    return {
+        "score": round(max(0.0, 100.0 - float(total_penalty)), 1),
+        "total_penalty": total_penalty,
+        "included_findings": included,
+        "penalties_by_severity": penalties_by_severity,
+        "penalty_entries": entries,
+    }
+
+
+def _recompute_review_adjusted_scores(report_data: dict) -> None:
+    """Deterministically update review-adjusted scoring fields in-place."""
+    weights = _deduction_weights(report_data)
+    methodology = report_data.setdefault("score_methodology", {})
+    methodology.setdefault(
+        "review_adjusted_formula",
+        "review_adjusted_score = max(0, 100 - sum(finding penalties)); user_rejected findings contribute 0 penalty",
+    )
+    methodology.setdefault("policy", {
+        "not_applicable": "excluded from denominator",
+        "uncertain": "counted as non-compliant in model score",
+        "retry_exhausted_or_error": "excluded from denominator",
+        "review_adjustment": "severity-weight penalties from non-rejected findings",
+    })
+
+    agent_rows = []
+    for ar in report_data.get("agent_reports", []):
+        model_score = float(ar.get("model_score", ar.get("score", 100.0)))
+        ar["model_score"] = round(model_score, 1)
+        ar["score"] = ar["model_score"]  # preserve model score in legacy key
+        dec = _score_from_findings(ar.get("findings", []), weights)
+        ar["review_adjusted_score"] = dec["score"]
+        ar["score_decomposition"] = dec
+        agent_rows.append({
+            "agent": ar.get("agent"),
+            "total_rules": int(ar.get("total_rules", 0) or 0),
+            "model_score": ar["model_score"],
+            "review_adjusted_score": ar["review_adjusted_score"],
+            "total_penalty": dec["total_penalty"],
+        })
+
+    model_overall = float(report_data.get("model_score", report_data.get("overall_score", 0.0)))
+    report_data["model_score"] = round(model_overall, 1)
+    report_data["overall_score"] = report_data["model_score"]  # preserve legacy key
+
+    weight_sum = sum(max(0, r["total_rules"]) for r in agent_rows)
+    if weight_sum > 0:
+        review_score = sum(
+            r["review_adjusted_score"] * max(0, r["total_rules"])
+            for r in agent_rows
+        ) / weight_sum
+    elif agent_rows:
+        review_score = sum(r["review_adjusted_score"] for r in agent_rows) / len(agent_rows)
+    else:
+        review_score = report_data["model_score"]
+
+    report_data["review_adjusted_score"] = round(float(review_score), 1)
+    report_data["score_decomposition"] = {
+        "policy": methodology.get("policy", {}),
+        "agent_scores": agent_rows,
+        "overall_review_adjusted_score": report_data["review_adjusted_score"],
+    }
+
+
 # ── POST /run ─────────────────────────────────────────────────
 
 
@@ -172,6 +277,7 @@ async def get_compliance_report(doc_id: str):
     report = _load_report(doc_id)
     if report is None:
         raise HTTPException(status_code=404, detail="No compliance report found. Run an audit first.")
+    _recompute_review_adjusted_scores(report)
     return report
 
 
@@ -327,6 +433,7 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
     if not found:
         raise HTTPException(status_code=404, detail=f"Finding {finding_id} not found.")
 
+    _recompute_review_adjusted_scores(report_data)
     result_path.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
 
     updated = next(
@@ -517,7 +624,10 @@ def _build_agent_scoped_report(report: dict, agent_id: str) -> dict:
     scoped["findings"] = scoped_findings
     scoped["total_findings"] = len(scoped_findings)
     scoped["severity_counts"] = target.get("severity_counts", {})
-    scoped["overall_score"] = target.get("score", report.get("overall_score", 0))
+    scoped["overall_score"] = target.get("model_score", target.get("score", report.get("overall_score", 0)))
+    scoped["model_score"] = target.get("model_score", target.get("score", report.get("overall_score", 0)))
+    scoped["review_adjusted_score"] = target.get("review_adjusted_score", scoped["overall_score"])
+    scoped["score_decomposition"] = target.get("score_decomposition", {})
     scoped["skipped_agents"] = []
 
     summary = dict(report.get("executive_summary", {}))
@@ -539,6 +649,7 @@ async def export_compliance_report(
     report = _load_report(doc_id)
     if report is None:
         raise HTTPException(status_code=404, detail="No compliance report found.")
+    _recompute_review_adjusted_scores(report)
 
     export_report = report
     stem = Path(report.get("filename", doc_id)).stem
@@ -574,7 +685,8 @@ def _esc(text: object) -> str:
 
 def _build_report_html(report: dict, stem: str) -> str:
     """Build a professional HTML compliance report."""
-    score = report.get("overall_score", 0)
+    score = report.get("model_score", report.get("overall_score", 0))
+    review_score = report.get("review_adjusted_score", score)
     summary = report.get("executive_summary", {})
     sev = report.get("severity_counts", {})
     trail = report.get("audit_trail", {})
@@ -594,7 +706,9 @@ def _build_report_html(report: dict, stem: str) -> str:
              f'{report.get("total_pages", "?")} pages</p>')
     h.append(f'<p class="meta">Generated: {_esc(str(report.get("generated_at", "")))}</p>')
     h.append(f'<div class="score-ring {_score_class(score)}">{score:.0f}</div>')
-    h.append(f'<p class="meta">Overall Compliance Score (out of 100)</p>')
+    h.append(f'<p class="meta">Model Score (out of 100)</p>')
+    if review_score is not None:
+        h.append(f'<p class="meta" style="margin-top:0.35rem">Review-Adjusted Score: <strong>{float(review_score):.1f}</strong>/100</p>')
     h.append("</div>")
 
     # --- Executive Summary ---
@@ -637,7 +751,12 @@ def _build_report_html(report: dict, stem: str) -> str:
     for ar in report.get("agent_reports", []):
         agent_name = ar.get("agent_display", ar.get("agent", "?"))
         h.append(f'<h2 class="page-break">{_esc(agent_name)}</h2>')
-        h.append(f'<p>Score: <strong>{ar.get("score", "N/A")}/100</strong> &mdash; '
+        model_score = ar.get("model_score", ar.get("score", "N/A"))
+        review_adj = ar.get("review_adjusted_score")
+        score_text = f'Model: <strong>{model_score}/100</strong>'
+        if review_adj is not None:
+            score_text += f' &mdash; Review-adjusted: <strong>{review_adj}/100</strong>'
+        h.append(f'<p>{score_text} &mdash; '
                  f'Rules: {ar.get("total_rules", 0)} &mdash; '
                  f'Findings: {ar.get("total_findings", 0)}</p>')
 
@@ -797,7 +916,12 @@ def _build_report_markdown(report: dict) -> str:
     lines.append("")
 
     summary = report.get("executive_summary", {})
-    lines.append(f"**Overall Score: {report.get('overall_score', 'N/A')}/100**")
+    model_score = report.get("model_score", report.get("overall_score", "N/A"))
+    review_score = report.get("review_adjusted_score")
+    if review_score is not None:
+        lines.append(f"**Model Score: {model_score}/100**  \n**Review-Adjusted Score: {review_score}/100**")
+    else:
+        lines.append(f"**Overall Score: {model_score}/100**")
     lines.append("")
     if summary.get("overall_assessment"):
         lines.append(f"## Executive Summary\n\n{summary['overall_assessment']}")
@@ -833,7 +957,12 @@ def _build_report_markdown(report: dict) -> str:
 
     for ar in report.get("agent_reports", []):
         lines.append(f"## {ar.get('agent_display', ar.get('agent', '?'))}")
-        lines.append(f"\nScore: **{ar.get('score', 'N/A')}/100** | "
+        ar_model = ar.get("model_score", ar.get("score", "N/A"))
+        ar_review = ar.get("review_adjusted_score")
+        score_line = f"Model Score: **{ar_model}/100**"
+        if ar_review is not None:
+            score_line += f" | Review-Adjusted: **{ar_review}/100**"
+        lines.append(f"\n{score_line} | "
                       f"Rules: {ar.get('total_rules', 0)} | "
                       f"Findings: {ar.get('total_findings', 0)}\n")
 

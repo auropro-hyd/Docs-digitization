@@ -32,6 +32,7 @@ from app.compliance.models import (
     SkippedCategory,
 )
 from app.compliance.orchestrator import ComplianceOrchestrator
+from app.compliance.rules.profiles import normalize_document_type
 from app.compliance.rules.registry import get_registry
 from app.compliance.segmentation import (
     DocumentSegmenter,
@@ -96,6 +97,7 @@ async def run_compliance_pipeline(
     orch_result = await orchestrator.analyze(
         filename, total_pages, extractions, key_value_pairs,
     )
+    orch_result.document_type = normalize_document_type(orch_result.document_type)
     llm_call_count += 1
 
     if user_selected:
@@ -292,6 +294,7 @@ async def run_compliance_pipeline(
 
         report = await agent.review_document(
             extractions,
+            document_type=orch_result.document_type,
             progress_callback=_agent_progress,
             prescreen_callback=_prescreen_progress,
             section_map=section_map if section_map else None,
@@ -449,6 +452,9 @@ async def run_compliance_pipeline(
             "orchestrator": config.orchestrator_model,
         },
         overall_score=round(overall_score, 1),
+        model_score=round(overall_score, 1),
+        review_adjusted_score=round(overall_score, 1),
+        score_decomposition={},
         score_methodology=ScoreMethodology(),
         executive_summary=exec_summary,
         total_findings=len(all_findings),
@@ -535,6 +541,9 @@ def _build_empty_report(doc_id, filename, total_pages, orch_result, started_at, 
             "orchestrator": config.orchestrator_model,
         },
         overall_score=100.0,
+        model_score=100.0,
+        review_adjusted_score=100.0,
+        score_decomposition={},
         executive_summary=ExecutiveSummary(
             overall_assessment="This document was determined to not be relevant for compliance auditing.",
             key_risks=[],

@@ -10,6 +10,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import compliance, documents, review, rules
+from app.compliance.rules.profiles import validate_compliance_configs
+from app.compliance.rules.registry import get_registry
 from app.api.websocket import router as ws_router
 from app.config.settings import get_settings
 
@@ -25,6 +27,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     data_dir = Path(settings.storage.base_path)
     data_dir.mkdir(parents=True, exist_ok=True)
+    validate_compliance_configs(get_registry())
     yield
     from app.core.task_manager import task_manager
     await task_manager.shutdown(timeout=10)

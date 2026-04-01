@@ -265,6 +265,7 @@ async def run_agent_evaluation(
     batches: list[RuleBatch],
     extractions: list[dict],
     llm: LLMProvider,
+    document_type: str = "batch_record",
     max_concurrent: int = 10,
     progress_callback=None,
     prescreen_callback=None,
@@ -326,10 +327,19 @@ async def run_agent_evaluation(
                 nonlocal pages_done
                 page_num = ext.get("page_num", 0)
                 sec_info = section_map.get(page_num) if section_map else None
+                page_type = classify_page_type(ext)
                 try:
-                    applicable_ids = await gate.llm_prescreen(
-                        all_agent_rules, ext, page_num, llm, sec_info,
+                    candidate_rules, _, _ = await gate.filter_rules_hybrid(
+                        all_agent_rules,
+                        document_type=document_type,
+                        page_type=page_type,
+                        extraction=ext,
+                        page_num=page_num,
+                        llm=llm,
+                        section_info=sec_info,
+                        prescreen_cache=None,
                     )
+                    applicable_ids = {r.id for r in candidate_rules}
                     prescreen_cache[page_num] = applicable_ids
                 except Exception:
                     logger.warning(
@@ -382,33 +392,26 @@ async def run_agent_evaluation(
         page_num = ext.get("page_num", 0)
         sec_info = section_map.get(page_num) if section_map else None
 
-        if mode == "llm" and prescreen_cache:
-            applicable_ids = prescreen_cache.get(page_num, set())
-            applicable_rules: list[AuditRule] = []
-            gate_evals: list[RuleEvaluation] = []
-            for rule in batch.rules:
-                if rule.evaluation_mode == "cannot_evaluate":
-                    gate_evals.append(RuleEvaluation(
-                        rule_id=rule.id,
-                        status="not_applicable",
-                        confidence=1.0,
-                        reasoning=rule.cannot_evaluate_reason or "Rule requires external data not available for evaluation",
-                    ))
-                elif rule.id in applicable_ids:
-                    applicable_rules.append(rule)
-                else:
-                    gate_evals.append(RuleEvaluation(
-                        rule_id=rule.id,
-                        status="not_applicable",
-                        confidence=0.9,
-                        reasoning="LLM pre-screen determined this rule is not applicable to this page content",
-                    ))
+        if mode == "llm":
+            if page_num not in page_type_cache:
+                page_type_cache[page_num] = classify_page_type(ext)
+            page_type = page_type_cache[page_num]
+            applicable_rules, gate_evals, gate_trace_map = await gate.filter_rules_hybrid(
+                batch.rules,
+                document_type=document_type,
+                page_type=page_type,
+                extraction=ext,
+                page_num=page_num,
+                llm=llm,
+                section_info=sec_info,
+                prescreen_cache=prescreen_cache,
+            )
         else:
             if page_num not in page_type_cache:
                 page_type_cache[page_num] = classify_page_type(ext)
             page_type = page_type_cache[page_num]
-            applicable_rules, gate_evals = gate.filter_rules(
-                batch.rules, page_type, sec_info, ext,
+            applicable_rules, gate_evals, gate_trace_map = gate.filter_rules(
+                batch.rules, document_type, page_type, sec_info, ext,
             )
 
         if not applicable_rules:
@@ -432,6 +435,8 @@ async def run_agent_evaluation(
                 sub_batch, enriched, page_num, llm,
                 section_info=sec_info,
             )
+            for ev in llm_result.evaluations:
+                ev.applicability_trace = gate_trace_map.get(ev.rule_id, [])
             merged_evals = list(llm_result.evaluations) + gate_evals
             merged_result = RuleBatchResult(
                 evaluations=merged_evals,
@@ -611,6 +616,9 @@ def assemble_agent_report(
                     existing_re.reasoning = ev.reasoning
                 if ev.evidence and not existing_re.evidence:
                     existing_re.evidence = ev.evidence
+                for step in ev.applicability_trace:
+                    if step not in existing_re.applicability_trace:
+                        existing_re.applicability_trace.append(step)
             else:
                 raw_eval_map[ev.rule_id] = RuleResult(
                     rule_id=ev.rule_id,
@@ -621,6 +629,7 @@ def assemble_agent_report(
                     confidence=confidence,
                     reasoning=ev.reasoning,
                     evidence=ev.evidence,
+                    applicability_trace=list(ev.applicability_trace),
                     page_numbers=pn_list,
                 )
 
@@ -643,6 +652,7 @@ def assemble_agent_report(
                     evidence=ev.evidence,
                     description=ev.description,
                     recommendation=ev.recommendation,
+                    applicability_trace=list(ev.applicability_trace),
                     hitl_status=hitl_status,
                 )
                 all_findings.append(finding)
@@ -697,6 +707,7 @@ def assemble_agent_report(
         agent=agent,
         agent_display=AGENT_DISPLAY_NAMES.get(agent, agent),
         score=round(agent_score, 1),
+        model_score=round(agent_score, 1),
         total_rules=len(all_rules),
         total_findings=len(deduped),
         severity_counts=dict(severity_counts),
@@ -723,6 +734,9 @@ def _deduplicate_findings(findings: list[ComplianceFinding]) -> list[ComplianceF
                 existing.evidence = f.evidence
             if f.reasoning and not existing.reasoning:
                 existing.reasoning = f.reasoning
+            for step in f.applicability_trace:
+                if step not in existing.applicability_trace:
+                    existing.applicability_trace.append(step)
             existing.confidence = min(existing.confidence, f.confidence)
             existing.hitl_status = _compute_hitl_status(existing.confidence)
         else:

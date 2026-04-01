@@ -88,6 +88,9 @@ class AuditRule:
     # Applicability metadata (loaded from YAML config)
     applicable_page_types: list[str] = field(default_factory=list)
     applicable_section_types: list[str] = field(default_factory=list)
+    applicable_document_types: list[str] = field(default_factory=list)
+    excluded_document_types: list[str] = field(default_factory=list)
+    cross_section_requirements: list[str] = field(default_factory=list)
     skip_conditions: list[str] = field(default_factory=list)
     pass_criteria: str = ""
     evaluation_mode: str = "llm"  # "llm" | "cannot_evaluate"
@@ -109,7 +112,8 @@ class RuleBatch:
 
 _YAML_LIST_FIELDS = frozenset({
     "applicable_page_types", "applicable_section_types", "skip_conditions",
-    "keywords", "requires_external_data",
+    "keywords", "requires_external_data", "applicable_document_types",
+    "excluded_document_types", "cross_section_requirements",
 })
 _YAML_STR_FIELDS = frozenset({
     "scope", "severity", "evaluation_mode", "cannot_evaluate_reason",
@@ -166,6 +170,15 @@ def _slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
+def _as_str_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if value is None:
+        return []
+    text = str(value).strip()
+    return [text] if text else []
+
+
 def _finalise_rule(
     agent: str,
     num: int,
@@ -204,14 +217,17 @@ def _finalise_rule(
         severity_hint=ov.get("severity", severity),
         scope=ov.get("scope", scope),
         context_sections=context_sections,
-        applicable_page_types=ov.get("applicable_page_types", []),
-        applicable_section_types=ov.get("applicable_section_types", []),
-        skip_conditions=ov.get("skip_conditions", []),
+        applicable_page_types=_as_str_list(ov.get("applicable_page_types", [])),
+        applicable_section_types=_as_str_list(ov.get("applicable_section_types", [])),
+        applicable_document_types=_as_str_list(ov.get("applicable_document_types", [])),
+        excluded_document_types=_as_str_list(ov.get("excluded_document_types", [])),
+        cross_section_requirements=_as_str_list(ov.get("cross_section_requirements", [])),
+        skip_conditions=_as_str_list(ov.get("skip_conditions", [])),
         pass_criteria=str(ov.get("pass_criteria", "") or "").strip(),
         evaluation_mode=ov.get("evaluation_mode", "llm"),
         cannot_evaluate_reason=str(ov.get("cannot_evaluate_reason", "") or "").strip(),
-        requires_external_data=ov.get("requires_external_data", []),
-        keywords=ov.get("keywords", []),
+        requires_external_data=_as_str_list(ov.get("requires_external_data", [])),
+        keywords=_as_str_list(ov.get("keywords", [])),
         notes=str(ov.get("notes", "") or "").strip(),
     )
 

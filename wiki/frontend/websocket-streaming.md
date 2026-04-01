@@ -195,8 +195,8 @@ export function useDocumentWebSocket(docId: string | null) {
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_WS_URL` | `ws://localhost:8000` | WebSocket server base URL |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | REST API base URL (for reference) |
+| `NEXT_PUBLIC_WS_URL` | `ws://localhost:8100` | WebSocket server base URL |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8100` | REST API base URL (for reference) |
 
 ## Related Pages
 

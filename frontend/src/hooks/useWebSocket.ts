@@ -26,6 +26,15 @@ function isActiveStatus(status: string): boolean {
   return !!status && !TERMINAL_STATUSES.has(status);
 }
 
+function sanitizeProgressLabel(label: string): string {
+  if (!label) return "";
+  return label
+    .replace(/azure\s*di/gi, "OCR")
+    .replace(/marker\s*ocr/gi, "OCR")
+    .replace(/docling/gi, "quality engine")
+    .replace(/ollama/gi, "language engine");
+}
+
 const NODE_TO_STATUS: Record<string, ProcessingStatus> = {
   ingest_document: "azure_di_running",
   run_azure_di_ocr: "merging_results",
@@ -102,7 +111,7 @@ export function useDocumentWebSocket(docId: string | null): void {
       if (msg.type === "progress") {
         const pct = typeof msg.percent === "number" ? msg.percent : 0;
         const label = typeof msg.label === "string" ? msg.label : "";
-        setOcrProgress(pct, label);
+        setOcrProgress(pct, sanitizeProgressLabel(label));
       }
 
       if (msg.type === "page_update" && msg.page_num) {

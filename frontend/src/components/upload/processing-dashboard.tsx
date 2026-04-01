@@ -23,17 +23,17 @@ import {
 import { cn } from "@/lib/utils";
 
 const STATUS_LABELS: Record<string, string> = {
-  uploading: "Uploading document...",
-  ingested: "Document ingested",
-  azure_di_running: "Running OCR extraction...",
-  marker_ocr_running: "Running OCR extraction...",
-  quality_scoring: "Scoring quality...",
-  merging_results: "Merging results...",
-  hitl_required: "Human review required",
-  auto_approved: "Reviewing quality...",
-  reviewed: "Review complete",
-  completed: "Processing complete",
-  error: "Processing failed",
+  uploading: "Uploading your file...",
+  ingested: "Preparing workflow...",
+  azure_di_running: "Extracting document intelligence...",
+  marker_ocr_running: "Extracting document intelligence...",
+  quality_scoring: "Validating confidence signals...",
+  merging_results: "Finalizing structured output...",
+  hitl_required: "Human validation required",
+  auto_approved: "Quality checks passed",
+  reviewed: "Validation complete",
+  completed: "Document ready",
+  error: "Processing interrupted",
 };
 
 const PIPELINE_PROGRESS: Record<string, number> = {
@@ -205,13 +205,13 @@ export function ProcessingDashboard() {
                     onClick={() => router.push(`/review?doc=${docId}`)}
                   >
                     <PenLine className="size-3.5 mr-1.5" />
-                    Review Pages
+                    Open Review
                     <ArrowRight className="size-3.5 ml-1" />
                   </Button>
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/compliance?doc=${docId}`}>
                       <ShieldCheck className="size-3.5 mr-1.5" />
-                      Compliance
+                      Open Compliance
                     </Link>
                   </Button>
                   <Button
@@ -221,7 +221,7 @@ export function ProcessingDashboard() {
                     onClick={() => useDocumentStore.getState().reset()}
                   >
                     <RotateCcw className="size-3 mr-1" />
-                    New upload
+                    Start New File
                   </Button>
                 </>
               )}
@@ -232,7 +232,7 @@ export function ProcessingDashboard() {
                   onClick={() => useDocumentStore.getState().reset()}
                 >
                   <RotateCcw className="size-3.5 mr-1.5" />
-                  Try again
+                  Restart
                 </Button>
               )}
             </div>

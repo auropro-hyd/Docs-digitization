@@ -36,20 +36,36 @@ const AGENT_COLORS: Record<string, string> = {
   reconciliation: "bg-rose-500",
 };
 
-function ElapsedTimer({ startedAt }: { startedAt: number | null }) {
+function ElapsedTimer({
+  startedAt,
+  endedAt,
+  finalDurationSec,
+}: {
+  startedAt: number | null;
+  endedAt: number | null;
+  finalDurationSec: number | null;
+}) {
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef(0);
 
+  const frozenElapsed =
+    typeof finalDurationSec === "number" && finalDurationSec >= 0
+      ? finalDurationSec
+      : startedAt && endedAt
+      ? Math.max(0, Math.floor((endedAt - startedAt) / 1000))
+      : null;
+
   useEffect(() => {
-    if (!startedAt) return;
+    if (!startedAt || frozenElapsed !== null) return;
     timerRef.current = window.setInterval(() => {
       setElapsed(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => clearInterval(timerRef.current);
-  }, [startedAt]);
+  }, [startedAt, frozenElapsed]);
 
-  const mins = Math.floor(elapsed / 60);
-  const secs = elapsed % 60;
+  const displaySeconds = frozenElapsed ?? elapsed;
+  const mins = Math.floor(displaySeconds / 60);
+  const secs = displaySeconds % 60;
   return (
     <span className="tabular-nums text-sm text-muted-foreground">
       {mins}:{secs.toString().padStart(2, "0")}
@@ -208,11 +224,9 @@ function PrescreenIndicator({ prescreen }: { prescreen: PrescreenProgress }) {
 function AgentCard({
   progress,
   docId,
-  exportEnabled,
 }: {
   progress: AgentProgress;
   docId: string;
-  exportEnabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [exporting, setExporting] = useState<"html" | "md" | null>(null);
@@ -220,7 +234,11 @@ function AgentCard({
   const color = AGENT_COLORS[progress.agent] || "bg-primary";
   const hasRules = progress.rules.length > 0;
   const isPrescreening = progress.status === "prescreening";
-  const canExportThisAgent = exportEnabled && progress.status === "complete";
+  const hasPrescreen =
+    progress.prescreen.status !== "idle" ||
+    progress.prescreen.totalRules > 0 ||
+    progress.prescreen.pagesTotal > 0;
+  const canExportThisAgent = progress.status === "complete";
 
   const exportAgent = async (format: "html" | "md") => {
     if (!canExportThisAgent) return;
@@ -280,7 +298,7 @@ function AgentCard({
             </div>
           </div>
 
-          {isPrescreening && (
+          {isPrescreening && hasPrescreen && (
             <div className="space-y-2">
               <div>
                 <div className="flex items-center justify-between text-[10px] text-cyan-700 dark:text-cyan-300 mb-1">
@@ -300,7 +318,7 @@ function AgentCard({
             </div>
           )}
 
-          {progress.status === "running" && (
+          {progress.status === "running" && hasPrescreen && (
             <div className="space-y-1.5">
               <div>
                 <div className="flex items-center justify-between text-[10px] text-cyan-700 dark:text-cyan-300 mb-1">
@@ -321,9 +339,35 @@ function AgentCard({
             </div>
           )}
 
+          {progress.status === "running" && !hasPrescreen && (
+            <div className="space-y-1.5">
+              {(() => {
+                const l = progress.label.toLowerCase();
+                const stageTitle = l.includes("discover")
+                  ? "Cross-page discovery"
+                  : l.includes("section")
+                  ? "Section mapping"
+                  : l.includes("recon")
+                  ? "Reconciliation"
+                  : "Cross-section evaluation";
+                return (
+                  <div>
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+                      <span>{stageTitle}</span>
+                      <span>{progress.percent}%</span>
+                    </div>
+                    <Progress value={progress.percent} className="h-1.5" />
+                  </div>
+                );
+              })()}
+              <p className="text-[11px] text-muted-foreground truncate">{progress.label}</p>
+              <RuleStats rules={progress.rules} />
+            </div>
+          )}
+
           {progress.status === "complete" && (
             <div>
-              {progress.prescreen.status === "complete" && (
+              {progress.prescreen.status === "complete" && hasPrescreen && (
                 <div className="flex items-center gap-1.5 mb-1.5">
                   <CheckCircle className="size-3 text-cyan-600 dark:text-cyan-400 flex-shrink-0" />
                   <span className="text-[10px] text-cyan-700 dark:text-cyan-300">
@@ -367,7 +411,7 @@ function AgentCard({
                 title={
                   canExportThisAgent
                     ? "Export this agent report as HTML"
-                    : "Enabled once this agent is complete and report is generated"
+                    : "Enabled once this agent is complete"
                 }
               >
                 <Download className="size-3 mr-1" />
@@ -382,7 +426,7 @@ function AgentCard({
                 title={
                   canExportThisAgent
                     ? "Export this agent report as Markdown"
-                    : "Enabled once this agent is complete and report is generated"
+                    : "Enabled once this agent is complete"
                 }
               >
                 <Download className="size-3 mr-1" />
@@ -425,11 +469,15 @@ export function ComplianceProgress({
   docId: string;
   filename?: string | null;
   onCancel?: () => void;
-  onViewReport?: () => void;
+  onViewReport?: (focus?: {
+    tab?: "all" | string;
+    hitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
+    severityFilter?: "all" | "critical" | "major" | "minor" | "observation";
+  }) => void;
   reportReady?: boolean;
 }) {
   const {
-    phase, overallPercent, label, agents, totalFindings, startedAt,
+    phase, overallPercent, label, agents, totalFindings, startedAt, endedAt, finalDurationSec,
     segmentationLabel, segmentationSections, applicableAgents, skippedAgents,
   } = useComplianceStore();
   const visibleAgentIds = new Set([
@@ -446,6 +494,30 @@ export function ComplianceProgress({
   const needsReview = agentList.reduce((s, a) => s + a.needsReviewCount, 0);
   const completedAgents = agentList.filter((a) => a.status === "complete").length;
   const applicableAgentCount = agentList.filter((a) => a.status !== "skipped").length;
+  const lowConfidenceRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status !== "pending" && r.confidence < 0.8).length,
+    0,
+  );
+  const evaluatedRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status !== "pending" && r.status !== "evaluating").length,
+    0,
+  );
+  const failedRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status === "non_compliant").length,
+    0,
+  );
+  const criticalRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status === "non_compliant" && r.severity === "critical").length,
+    0,
+  );
+  const majorRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status === "non_compliant" && r.severity === "major").length,
+    0,
+  );
+  const uncertainRules = agentList.reduce(
+    (sum, a) => sum + a.rules.filter((r) => r.status === "uncertain").length,
+    0,
+  );
 
   const isSegmenting = phase === "segmentation";
   const segDone = segmentationSections > 0;
@@ -482,15 +554,13 @@ export function ComplianceProgress({
               </div>
             </div>
             <div className="flex items-center gap-3 flex-shrink-0">
-              <Clock className="size-3.5 text-muted-foreground" />
-              <ElapsedTimer startedAt={startedAt} />
               {onCancel && (
                 <Button variant="ghost" size="sm" className="text-xs text-muted-foreground h-7 px-2" onClick={onCancel}>
                   Cancel
                 </Button>
               )}
-              {phase === "complete" && reportReady && onViewReport && (
-                <Button size="sm" className="h-7 text-xs" onClick={onViewReport}>
+              {(phase === "complete" || reportReady) && reportReady && onViewReport && (
+                <Button size="sm" className="h-7 text-xs" onClick={() => onViewReport({ tab: "all", hitlFilter: "all" })}>
                   View report
                 </Button>
               )}
@@ -498,6 +568,31 @@ export function ComplianceProgress({
           </div>
 
           <Progress value={overallPercent} className="h-2" />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className="text-[11px]" title="Total elapsed run time">
+              Elapsed: <span className="ml-1 font-medium"><ElapsedTimer startedAt={startedAt} endedAt={endedAt} finalDurationSec={finalDurationSec} /></span>
+            </Badge>
+            <Badge variant="outline" className="text-[11px]" title="Completed agents out of applicable agents">
+              Agents complete: <span className="ml-1 font-medium">{completedAgents}/{applicableAgentCount}</span>
+            </Badge>
+            <Badge variant="outline" className="text-[11px]" title="Total findings identified so far">
+              Findings: <span className="ml-1 font-medium">{findingsSoFar}</span>
+            </Badge>
+            <Badge variant="outline" className="text-[11px]" title="Findings requiring human decision">
+              Review queue: <span className="ml-1 font-medium">{needsReview}</span>
+            </Badge>
+            <Badge variant="outline" className="text-[11px]" title="Rules currently marked non-compliant">
+              Non-compliant: <span className="ml-1 font-medium">{failedRules}</span>
+            </Badge>
+            <Badge variant="outline" className="text-[11px]" title="Rules with confidence below 80%">
+              Low confidence: <span className="ml-1 font-medium">{lowConfidenceRules}</span>
+            </Badge>
+            {evaluatedRules > 0 && (
+              <Badge variant="outline" className="text-[11px]" title="Rules already evaluated (excluding pending)">
+                Evaluated rules: <span className="ml-1 font-medium">{evaluatedRules}</span>
+              </Badge>
+            )}
+          </div>
         </CardContent>
       </Card>
 
@@ -508,17 +603,16 @@ export function ComplianceProgress({
               key={a.agent}
               progress={a}
               docId={docId}
-              exportEnabled={Boolean(reportReady)}
             />
           ))}
         </AnimatePresence>
       </div>
 
-      {(findingsSoFar > 0 || needsReview > 0 || phase === "report") && (
+      {(findingsSoFar > 0 || needsReview > 0 || phase === "report" || reportReady) && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="flex items-center justify-center gap-6 text-sm text-muted-foreground"
+          className="flex flex-wrap items-center justify-center gap-4 text-sm text-muted-foreground"
         >
           {findingsSoFar > 0 && (
             <div className="flex items-center gap-2">
@@ -535,6 +629,50 @@ export function ComplianceProgress({
                 Needs review: <strong className="text-foreground">{needsReview}</strong>
               </span>
             </div>
+          )}
+          {onViewReport && (
+            <>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onViewReport({ tab: "all", hitlFilter: "all" })}>
+                Open findings
+              </Button>
+              {needsReview > 0 && (
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  title="Jump directly to findings that need review"
+                  onClick={() => onViewReport({ tab: "all", hitlFilter: "needs_review" })}
+                >
+                  Start review ({needsReview})
+                </Button>
+              )}
+              {criticalRules > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-destructive/40 text-destructive"
+                  title="Open critical severity findings"
+                  onClick={() => onViewReport({ tab: "all", hitlFilter: "all", severityFilter: "critical" })}
+                >
+                  Critical risk ({criticalRules})
+                </Button>
+              )}
+              {majorRules > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-warning/40 text-warning"
+                  title="Open major severity findings"
+                  onClick={() => onViewReport({ tab: "all", hitlFilter: "all", severityFilter: "major" })}
+                >
+                  Major risk ({majorRules})
+                </Button>
+              )}
+              {uncertainRules > 0 && (
+                <Badge variant="outline" className="text-xs" title="Findings requiring clarification due to low certainty">
+                  Uncertain findings: {uncertainRules}
+                </Badge>
+              )}
+            </>
           )}
           {phase === "report" && (
             <Badge variant="outline" className="text-xs animate-pulse">

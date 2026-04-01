@@ -124,7 +124,7 @@ Converges Azure DI OCR and Docling quality branches. For each page:
 |--------|--------|--------|
 | Azure DI min word confidence | 0.35 | Lowest per-word confidence on the page |
 | Docling mean quality | 0.35 | Average of layout, table, OCR, parse scores |
-| Validation rules | 0.30 | Custom rule engine (placeholder at 0.8) |
+| Validation rules | 0.30 | Custom validation pass rate (`rules_passed / rules_checked`) |
 
 3. Produces unified `extractions` list and `confidence_scores` dict
 
@@ -139,7 +139,7 @@ Converges Marker OCR and Docling quality branches. For each page:
 |--------|--------|--------|
 | Docling mean quality | 0.40 | Average of layout, table, OCR, parse scores |
 | Marker table quality | 0.30 | Table detection score (1-5 scale, normalized) |
-| Validation rules | 0.30 | Custom rule engine (placeholder at 0.8) |
+| Validation rules | 0.30 | Custom validation pass rate (`rules_passed / rules_checked`) |
 
 3. Produces unified `extractions` list and `confidence_scores` dict
 

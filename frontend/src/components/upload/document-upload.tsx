@@ -31,11 +31,11 @@ export function DocumentUpload() {
 
   const validateFile = useCallback((file: File): boolean => {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
-      toast.error("Invalid file type", { description: "Only PDF documents are supported" });
+      toast.error("Unsupported file type", { description: "Please upload a PDF document." });
       return false;
     }
     if (file.size > MAX_FILE_SIZE) {
-      toast.error("File too large", { description: "Maximum file size is 100MB" });
+      toast.error("File exceeds limit", { description: "Maximum supported size is 100MB." });
       return false;
     }
     return true;
@@ -55,21 +55,21 @@ export function DocumentUpload() {
     setUploadProgress(0);
 
     try {
-      toast.loading("Uploading document...", { id: "upload" });
+      toast.loading("Uploading securely...", { id: "upload" });
 
       const result = await uploadDocument(selectedFile);
       setUploadProgress(100);
       setDocId(result.doc_id, result.filename);
 
-      toast.loading("Starting pipeline...", { id: "upload" });
+      toast.loading("Launching workflow...", { id: "upload" });
       await processDocument(result.doc_id);
       setProcessingStatus("ingested");
-      toast.success("Pipeline started", { id: "upload", description: "Document is being processed" });
+      toast.success("Processing started", { id: "upload", description: "Your file is now moving through the workflow." });
       setSelectedFile(null);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload failed";
+      const msg = err instanceof Error ? err.message : "Upload could not be completed";
       setStoreError(msg);
-      toast.error("Upload failed", { id: "upload", description: msg });
+      toast.error("Upload unsuccessful", { id: "upload", description: msg });
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -99,7 +99,7 @@ export function DocumentUpload() {
                 <div className="mt-3">
                   <Progress value={uploadProgress} className="h-1.5" />
                   <p className="text-xs text-muted-foreground mt-1">
-                    {uploadProgress < 100 ? "Uploading..." : "Processing..."}
+                    {uploadProgress < 100 ? "Uploading..." : "Preparing workflow..."}
                   </p>
                 </div>
               )}
@@ -123,7 +123,7 @@ export function DocumentUpload() {
               ) : (
                 <>
                   <Upload className="size-4 mr-2" />
-                  Process Document
+                  Start Processing
                 </>
               )}
             </Button>
@@ -164,15 +164,15 @@ export function DocumentUpload() {
             </div>
 
             <p className="text-sm font-medium text-foreground mb-1">
-              Drop your PDF here
+              Drop your PDF to begin
             </p>
             <p className="text-xs text-muted-foreground mb-4">
-              or click to browse · PDF up to 100MB
+              or browse files · PDF up to 100MB
             </p>
 
             <label>
               <Button variant="outline" size="sm" className="cursor-pointer" asChild>
-                <span>Browse Files</span>
+                <span>Select PDF</span>
               </Button>
               <input
                 type="file"

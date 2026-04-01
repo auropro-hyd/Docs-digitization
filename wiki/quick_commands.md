@@ -56,17 +56,17 @@ AT_PIPELINE__MODE=azure_di
 
 ```bash
 # Health check
-curl http://localhost:8000/api/documents/health
+curl http://localhost:8100/api/documents/health
 
 # Upload and process a PDF
-curl -X POST http://localhost:8000/api/documents/process-file \
+curl -X POST http://localhost:8100/api/documents/process-file \
   -F "file=@path/to/document.pdf"
 
 # Check results (replace DOC_ID)
-curl http://localhost:8000/api/documents/DOC_ID
+curl http://localhost:8100/api/documents/DOC_ID
 
 # List all documents
-curl http://localhost:8000/api/documents/
+curl http://localhost:8100/api/documents/
 ```
 
 ---
@@ -170,9 +170,9 @@ cat backend/.env                          # Check current env vars
 
 | Service | URL |
 |---------|-----|
-| Backend API | <http://localhost:8000> |
-| Health check | <http://localhost:8000/api/documents/health> |
-| Swagger docs | <http://localhost:8000/docs> |
-| ReDoc | <http://localhost:8000/redoc> |
-| Frontend | <http://localhost:3000> |
+| Backend API | <http://localhost:8100> |
+| Health check | <http://localhost:8100/api/documents/health> |
+| Swagger docs | <http://localhost:8100/docs> |
+| ReDoc | <http://localhost:8100/redoc> |
+| Frontend | <http://localhost:3100> |
 | Ollama | <http://localhost:11434> |

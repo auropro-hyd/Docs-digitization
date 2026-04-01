@@ -662,7 +662,7 @@ class AzureDIOCRAdapter:
             if progress_callback is None:
                 return poller.result()
 
-            progress_callback(0, "Submitted to Azure DI")
+            progress_callback(0, "Submitted for OCR analysis")
             last_pct = -1
 
             pm = poller.polling_method()
@@ -753,6 +753,9 @@ class AzureDIOCRAdapter:
                 OCRPageResult(
                     page_num=page_num,
                     markdown=page_markdown,
+                    page_width=getattr(az_page, "width", None),
+                    page_height=getattr(az_page, "height", None),
+                    page_unit=getattr(az_page, "unit", None),
                     words=words,
                     barcodes=barcodes,
                     selection_marks=selection_marks,

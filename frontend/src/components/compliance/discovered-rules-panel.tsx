@@ -102,10 +102,16 @@ export function DiscoveredRulesPanel({ docId }: DiscoveredRulesPanelProps) {
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="pt-0 space-y-2 max-h-80 overflow-y-auto">
+      <CardContent className="pt-0">
+        <div
+          className={cn(
+            "space-y-2",
+            rules.length > 4 && "max-h-[min(65vh,36rem)] overflow-y-auto pr-1",
+          )}
+        >
         {rules.map((rule, idx) => (
           <div
-            key={idx}
+            key={`${rule.discovered_at || "rule"}-${idx}`}
             className={cn(
               "p-3 rounded-lg border transition-colors",
               rule.promoted ? "bg-success/5 border-success/20" : "bg-muted/30",
@@ -142,8 +148,8 @@ export function DiscoveredRulesPanel({ docId }: DiscoveredRulesPanelProps) {
               >
                 {rule.priority}
               </Badge>
-              {rule.sections_semantic.map((s) => (
-                <Badge key={s} variant="outline" className="text-[9px] px-1 py-0 font-mono">
+              {rule.sections_semantic.map((s, sIdx) => (
+                <Badge key={`${rule.discovered_at || idx}-${s}-${sIdx}`} variant="outline" className="text-[9px] px-1 py-0 font-mono">
                   {s}
                 </Badge>
               ))}
@@ -153,6 +159,7 @@ export function DiscoveredRulesPanel({ docId }: DiscoveredRulesPanelProps) {
             )}
           </div>
         ))}
+        </div>
       </CardContent>
     </Card>
   );

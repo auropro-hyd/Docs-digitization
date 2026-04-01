@@ -1,0 +1,158 @@
+version: 1
+
+# Canonical document profiles used by deterministic gating.
+# - expected_sections defines valid section_type values per document_type.
+# - aliases support section naming variance from OCR/LLM segmentation.
+# - required marks critical sections for profile completeness checks.
+document_profiles:
+  batch_record:
+    aliases:
+      - bmr
+      - bpcr
+      - batch production record
+      - batch production and control record
+    expected_sections:
+      - section_type: manufacturing_operations
+        display_name: Manufacturing Operations
+        required: true
+        aliases:
+          - process operations
+          - operation log
+          - production operations
+      - section_type: material_dispensing
+        display_name: Raw Material Weighing and Dispensing
+        required: false
+        aliases:
+          - raw material weighing
+          - dispensing
+          - weighing log
+      - section_type: qc_report
+        display_name: QC Report
+        required: false
+        aliases:
+          - quality control report
+          - qcd report
+      - section_type: in_process_report
+        display_name: In-Process Control Report
+        required: false
+      - section_type: retention_sample
+        display_name: Retention Sample
+        required: false
+      - section_type: deviation
+        display_name: Deviation Record
+        required: false
+      - section_type: oos_investigation
+        display_name: OOS Investigation
+        required: false
+      - section_type: oot_investigation
+        display_name: OOT Investigation
+        required: false
+      - section_type: cleaning_log
+        display_name: Cleaning Log
+        required: false
+      - section_type: line_clearance
+        display_name: Line Clearance
+        required: false
+      - section_type: environmental_monitoring
+        display_name: Environmental Monitoring
+        required: false
+      - section_type: equipment_usage_log
+        display_name: Equipment Usage Log
+        required: false
+      - section_type: raw_data
+        display_name: Raw Data
+        required: false
+      - section_type: balance_printout
+        display_name: Balance Printout
+        required: false
+      - section_type: chromatogram
+        display_name: Chromatogram
+        required: false
+      - section_type: em_report
+        display_name: Environmental Monitoring Report
+        required: false
+      - section_type: yield_calculation
+        display_name: Yield Calculation
+        required: false
+      - section_type: certificate_of_analysis
+        display_name: Certificate of Analysis
+        required: false
+      - section_type: sampling
+        display_name: Sampling
+        required: false
+      - section_type: clean_room
+        display_name: Clean Room
+        required: false
+      - section_type: electronic_records
+        display_name: Electronic Records
+        required: false
+      - section_type: automated_systems
+        display_name: Automated Systems
+        required: false
+
+  sop:
+    aliases:
+      - standard operating procedure
+    expected_sections:
+      - section_type: sop_reference_validation
+        display_name: SOP Reference Validation
+        required: false
+      - section_type: step_alignment
+        display_name: Step Alignment
+        required: false
+      - section_type: deviation_documentation
+        display_name: Deviation Documentation
+        required: false
+      - section_type: parameter_compliance
+        display_name: Parameter Compliance
+        required: false
+      - section_type: material_handling
+        display_name: Material Handling
+        required: false
+
+  protocol:
+    aliases: []
+    expected_sections: []
+
+  certificate:
+    aliases:
+      - coa
+      - certificate of analysis
+    expected_sections:
+      - section_type: certificate_of_analysis
+        display_name: Certificate of Analysis
+        required: true
+
+  logbook:
+    aliases:
+      - equipment log
+      - usage log
+    expected_sections:
+      - section_type: equipment_usage_log
+        display_name: Equipment Usage Log
+        required: true
+
+  other:
+    aliases: []
+    expected_sections: []
+
+# Global aliases used by applicability matching.
+section_aliases:
+  manufacturing_operation: manufacturing_operations
+  manufacturing_operation_log: manufacturing_operations
+  manufacturing_log: manufacturing_operations
+  operation_sheet: manufacturing_operations
+  raw_material_weighing: material_dispensing
+  raw_material_dispensing: material_dispensing
+  dispensing_log: material_dispensing
+  qcd_report: qc_report
+  quality_control: qc_report
+  ipc_report: in_process_report
+  inprocess_report: in_process_report
+  emr: em_report
+  env_monitoring: environmental_monitoring
+  env_monitoring_report: em_report
+  equipment_log: equipment_usage_log
+  lineclearance: line_clearance
+  coa: certificate_of_analysis
+  coa_report: certificate_of_analysis

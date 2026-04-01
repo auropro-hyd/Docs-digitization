@@ -54,5 +54,6 @@ export interface ComplianceFinding {
   recommendation: string;
   hitl_status: string;
   resolved: boolean;
+  applicability_trace?: string[];
   user_comment?: string;
 }

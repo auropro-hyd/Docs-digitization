@@ -7,8 +7,11 @@ defaults:
   scope: section
   severity: critical
   evaluation_mode: llm
+  applicable_document_types: [batch_record]
+  excluded_document_types: []
   applicable_page_types: []
   applicable_section_types: []
+  cross_section_requirements: []
   keywords: []
   pass_criteria: ""
   skip_conditions: []
@@ -23,6 +26,8 @@ categories:
     severity: critical
     rules:
       1:
+        cross_section_requirements:
+          - operation_vs_weighing_reconciliation
         pass_criteria: >
           Total quantity of each raw material used in manufacturing must match
           the dispatched quantity. List each material with quantities from both
@@ -30,6 +35,8 @@ categories:
         keywords: [material, quantity, dispatched, used, weight, kg]
 
       2:
+        cross_section_requirements:
+          - operation_vs_weighing_reconciliation
         pass_criteria: >
           Raw material lot/batch numbers in manufacturing records must exactly
           match those in dispatch records. Flag any discrepancies.
@@ -56,6 +63,8 @@ categories:
     severity: critical
     rules:
       5:
+        cross_section_requirements:
+          - qc_vs_coa_consistency
         pass_criteria: >
           QC test values recorded in manufacturing steps must match values
           in the QC report section. Flag discrepancies including potential
@@ -79,6 +88,8 @@ categories:
         keywords: [attachment, report, reference, annexed, enclosed]
 
       8:
+        cross_section_requirements:
+          - sample_sent_vs_qc_report
         pass_criteria: >
           Every sampling step in manufacturing must have a corresponding
           analytical report in the QC or IPC report sections.

@@ -54,6 +54,7 @@ interface Finding extends BaseFinding {
   hitl_reviewed_at: string | null;
   source?: string;
   section_refs?: SectionRef[];
+  applicability_trace?: string[];
 }
 
 interface FindingsTableProps {
@@ -61,6 +62,9 @@ interface FindingsTableProps {
   docId: string;
   onFindingUpdate?: (findingId: string, updates: Partial<Finding>) => void;
   highlightId?: string;
+  initialHitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
+  initialAgentFilter?: string;
+  initialSeverityFilter?: "all" | "critical" | "major" | "minor" | "observation";
 }
 
 const SEVERITY_CONFIG: Record<string, { label: string; icon: typeof AlertCircle; cls: string; badgeCls: string }> = {
@@ -197,6 +201,9 @@ function HITLReviewActions({
 
       {!alreadyReviewed && (
         <>
+          <div className="text-[11px] text-muted-foreground bg-muted/50 rounded px-2 py-1.5">
+            Score impact: Confirm keeps this finding penalty, False Positive removes it, Modify recalculates it from updated severity.
+          </div>
           <Textarea
             value={reviewNote}
             onChange={(e) => setReviewNote(e.target.value)}
@@ -302,10 +309,10 @@ function FilterSelects({
       <Select value={hitlFilter} onValueChange={setHitlFilter}>
         <SelectTrigger className={cn("h-8 text-xs", wWide)}><SelectValue placeholder="Review" /></SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">All review</SelectItem>
-          <SelectItem value="needs_review">Needs review</SelectItem>
-          <SelectItem value="reviewed">Reviewed</SelectItem>
-          <SelectItem value="auto">Auto-approved</SelectItem>
+          <SelectItem value="all">All review states</SelectItem>
+          <SelectItem value="needs_review">Needs action</SelectItem>
+          <SelectItem value="reviewed">Reviewed by user</SelectItem>
+          <SelectItem value="auto">Auto-cleared</SelectItem>
         </SelectContent>
       </Select>
       <Select value={severityFilter} onValueChange={setSeverityFilter}>
@@ -336,7 +343,7 @@ function FilterSelects({
         </SelectContent>
       </Select>
       <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
-        <SelectTrigger className={cn("h-8 text-xs", w)}><SelectValue placeholder="Sort by" /></SelectTrigger>
+        <SelectTrigger className={cn("h-8 text-xs", w)}><SelectValue placeholder="Sort" /></SelectTrigger>
         <SelectContent>
           <SelectItem value="severity">Severity</SelectItem>
           <SelectItem value="confidence">Confidence</SelectItem>
@@ -352,21 +359,38 @@ function FilterSelects({
 
 const PAGE_SIZE = 25;
 
-export function FindingsTable({ findings: initialFindings, docId, onFindingUpdate, highlightId }: FindingsTableProps) {
+export function FindingsTable({
+  findings: initialFindings,
+  docId,
+  onFindingUpdate,
+  highlightId,
+  initialHitlFilter = "all",
+  initialAgentFilter = "all",
+  initialSeverityFilter = "all",
+}: FindingsTableProps) {
   const [findings, setFindings] = useState<Finding[]>(initialFindings);
+  const [severityFilter, setSeverityFilter] = useState(initialSeverityFilter);
+  const [agentFilter, setAgentFilter] = useState(initialAgentFilter);
+  const [resolvedFilter, setResolvedFilter] = useState("all");
+  const [hitlFilter, setHitlFilter] = useState(initialHitlFilter);
+  const [sortKey, setSortKey] = useState<SortKey>("severity");
+  const [expandedId, setExpandedId] = useState<string | null>(highlightId || null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const isSmall = useMediaQuery("(max-width: 639px)");
 
   // Sync local state when parent passes updated findings (e.g. after resolve)
   React.useEffect(() => {
     setFindings(initialFindings);
   }, [initialFindings]);
-  const [severityFilter, setSeverityFilter] = useState("all");
-  const [agentFilter, setAgentFilter] = useState("all");
-  const [resolvedFilter, setResolvedFilter] = useState("all");
-  const [hitlFilter, setHitlFilter] = useState("all");
-  const [sortKey, setSortKey] = useState<SortKey>("severity");
-  const [expandedId, setExpandedId] = useState<string | null>(highlightId || null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const isSmall = useMediaQuery("(max-width: 639px)");
+  React.useEffect(() => {
+    setSeverityFilter(initialSeverityFilter);
+  }, [initialSeverityFilter]);
+  React.useEffect(() => {
+    setHitlFilter(initialHitlFilter);
+  }, [initialHitlFilter]);
+  React.useEffect(() => {
+    setAgentFilter(initialAgentFilter);
+  }, [initialAgentFilter]);
 
   const agents = useMemo(() => [...new Set(findings.map((f) => f.agent))], [findings]);
   const needsReviewCount = useMemo(() => findings.filter((f) => f.hitl_status === "needs_review").length, [findings]);
@@ -446,7 +470,7 @@ export function FindingsTable({ findings: initialFindings, docId, onFindingUpdat
                 }}
               >
                 <Eye className="size-2.5 mr-0.5" />
-                {needsReviewCount} pending review
+                {needsReviewCount} in review queue
               </Badge>
             )}
           </div>
@@ -454,14 +478,14 @@ export function FindingsTable({ findings: initialFindings, docId, onFindingUpdat
             <Sheet>
               <SheetTrigger asChild>
                 <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5">
-                  <Filter className="size-3" /> Filters
+                  <Filter className="size-3" /> Filters & views
                   {(severityFilter !== "all" || agentFilter !== "all" || resolvedFilter !== "all" || hitlFilter !== "all") && (
                     <Badge variant="secondary" className="text-[10px] px-1 py-0 ml-1">Active</Badge>
                   )}
                 </Button>
               </SheetTrigger>
               <SheetContent side="bottom" className="pb-8">
-                <SheetHeader><SheetTitle className="text-sm">Filters & Sort</SheetTitle></SheetHeader>
+                <SheetHeader><SheetTitle className="text-sm">Filters, views, and sort</SheetTitle></SheetHeader>
                 <div className="grid grid-cols-2 gap-3 mt-4">
                   <FilterSelects
                     hitlFilter={hitlFilter} setHitlFilter={setHitlFilter}
@@ -599,6 +623,18 @@ export function FindingsTable({ findings: initialFindings, docId, onFindingUpdat
                               <div className="p-2.5 rounded bg-blue-50 dark:bg-blue-900/10 border-l-2 border-blue-400 max-h-36 overflow-y-auto">
                                 <p className="text-xs font-medium text-foreground mb-0.5">Reasoning</p>
                                 <p className="text-xs text-muted-foreground">{finding.reasoning}</p>
+                              </div>
+                            )}
+                            {finding.applicability_trace && finding.applicability_trace.length > 0 && (
+                              <div className="p-2.5 rounded bg-emerald-50 dark:bg-emerald-900/10 border-l-2 border-emerald-400">
+                                <p className="text-xs font-medium text-foreground mb-1">Why this rule applied</p>
+                                <ul className="list-disc pl-4 space-y-0.5">
+                                  {finding.applicability_trace.map((step, idx) => (
+                                    <li key={`${finding.finding_id}-trace-${idx}`} className="text-xs text-muted-foreground">
+                                      {step}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                             )}
                             {finding.description && (

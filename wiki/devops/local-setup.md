@@ -92,8 +92,8 @@ Create a `.env.local` file in the `frontend/` directory:
 
 ```bash
 # frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_WS_URL=ws://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8100
+NEXT_PUBLIC_WS_URL=ws://localhost:8100
 ```
 
 ## 7. Start the Backend
@@ -102,7 +102,7 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8000
 make backend
 ```
 
-The API server starts at `http://localhost:8000` with auto-reload enabled.
+The API server starts at `http://localhost:8100` with auto-reload enabled.
 
 Verify the backend is running:
 
@@ -117,13 +117,13 @@ make install-frontend
 make frontend
 ```
 
-The Next.js development server starts at `http://localhost:3000`.
+The Next.js development server starts at `http://localhost:3100`.
 
 > **Tip:** To run backend and frontend together in one command, use `make dev`.
 
 ## 9. Verify the Setup
 
-1. Open `http://localhost:3000` in your browser
+1. Open `http://localhost:3100` in your browser
 2. You should see the upload page with a drag-and-drop zone
 3. Upload a PDF file
 4. Watch the processing dashboard update in real-time via WebSocket
@@ -137,11 +137,11 @@ The Next.js development server starts at `http://localhost:3000`.
 | `AT_ENV` | `dev` | Environment name — loads `config/settings.{env}.yaml` |
 | `AT_DEBUG` | `true` | Enable debug mode |
 | `AT_HOST` | `0.0.0.0` | Server bind address |
-| `AT_PORT` | `8000` | Server bind port |
+| `AT_PORT` | `8100` | Server bind port |
 | `AT_PIPELINE__MODE` | `azure_di` | Pipeline mode (`azure_di` or `marker_docling`) |
 | `AT_MARKER__OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama URL for Marker |
 | `AT_MARKER__OLLAMA_MODEL` | `gemma2:9b` | Ollama model for Marker |
-| `AT_AZURE_DI__ENDPOINT` | (placeholder) | Azure Document Intelligence endpoint |
+| `AT_AZURE_DI__ENDPOINT` | `https://<resource>.cognitiveservices.azure.com` | Azure Document Intelligence endpoint (or disconnected container URL) |
 | `AT_AZURE_DI__API_KEY` | (empty) | Azure Document Intelligence API key |
 | `AT_LLM__PROVIDER` | `ollama` | LLM provider (`ollama` or `azure_openai`) |
 | `AT_LLM__BASE_URL` | `http://localhost:11434` | LLM provider base URL |
@@ -158,8 +158,8 @@ The Next.js development server starts at `http://localhost:3000`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | REST API base URL |
-| `NEXT_PUBLIC_WS_URL` | `ws://localhost:8000` | WebSocket server URL |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8100` | REST API base URL |
+| `NEXT_PUBLIC_WS_URL` | `ws://localhost:8100` | WebSocket server URL |
 
 ## Docker Compose Services
 

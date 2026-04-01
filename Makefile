@@ -251,7 +251,10 @@ typecheck: ## Run pyright type checker on backend
 lint-frontend: ## Run ESLint on frontend
 	cd $(FRONTEND_DIR) && npm run lint
 
-check-all: lint format-check typecheck lint-frontend test-unit ## Run ALL quality checks (lint + format + types + frontend lint + tests)
+validate-compliance-config: ## Validate compliance rule/profile config references
+	PYTHONPATH=$(BACKEND_DIR) $(PYTHON) -c "from app.compliance.rules.registry import get_registry; from app.compliance.rules.profiles import validate_compliance_configs; validate_compliance_configs(get_registry()); print('✓ Compliance config validation passed')"
+
+check-all: lint format-check typecheck lint-frontend validate-compliance-config test-unit ## Run ALL quality checks (lint + format + types + frontend lint + config + tests)
 	@echo ""
 	@echo "✓ All checks passed"
 

@@ -187,7 +187,7 @@ export default function Home() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Upload, process, and review documents with AI-powered extraction
+          Turn PDFs into review-ready, compliance-ready records with confidence.
         </p>
       </div>
 
@@ -203,14 +203,14 @@ export default function Home() {
                 <Sparkles className="size-5 text-primary" />
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className="text-sm font-semibold text-foreground mb-1">Welcome to AutoTranscript</h3>
+                <h3 className="text-sm font-semibold text-foreground mb-1">Welcome to AutoTranscript Workspace</h3>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Upload a PDF to get started. Your document goes through AI-powered extraction:
-                  Upload → OCR Processing → Quality Scoring → Human Review → Compliance Check.
+                  Upload a PDF to begin. The platform extracts, validates, and routes each page with full traceability:
+                  Upload → Text Intelligence → Confidence Analysis → Human Validation → Compliance Review.
                 </p>
                 <div className="flex items-center gap-2 mt-3">
                   <Button size="sm" asChild>
-                    <Link href="#upload">Get Started</Link>
+                    <Link href="#upload">Start Upload</Link>
                   </Button>
                   <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setWelcomeDismissed(true)}>
                     Dismiss

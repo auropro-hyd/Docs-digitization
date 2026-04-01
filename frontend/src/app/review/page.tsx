@@ -19,11 +19,26 @@ interface ComponentDecision {
   reason?: string;
 }
 
+interface BoundingRegion {
+  page_num: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface PageDimensions {
+  width?: number;
+  height?: number;
+  unit?: string;
+}
+
 interface SignatureInfo {
   status: string;
   confidence: number;
   label: string;
   component_id?: string;
+  bounding_region?: BoundingRegion | null;
   decision?: ComponentDecision | null;
 }
 
@@ -32,6 +47,7 @@ interface KVPair {
   value: string;
   confidence: number;
   component_id?: string;
+  bounding_region?: BoundingRegion | null;
   decision?: ComponentDecision | null;
 }
 
@@ -46,6 +62,7 @@ interface ReviewPageData {
   signatures?: SignatureInfo[];
   keyValuePairs?: KVPair[];
   handwrittenCount?: number;
+  pageDimensions?: PageDimensions;
 }
 
 function ReviewContent() {
@@ -87,6 +104,7 @@ function ReviewContent() {
             confidence: s.confidence ?? 0,
             label: s.label ?? "",
             component_id: s.component_id ?? undefined,
+            bounding_region: s.bounding_region ?? null,
             decision: s.decision ?? null,
           })),
           keyValuePairs: (p.key_value_pairs ?? []).map((kv: any) => ({
@@ -94,9 +112,15 @@ function ReviewContent() {
             value: kv.value ?? "",
             confidence: kv.confidence ?? 0,
             component_id: kv.component_id ?? undefined,
+            bounding_region: kv.bounding_region ?? null,
             decision: kv.decision ?? null,
           })),
           handwrittenCount: p.handwritten_count ?? 0,
+          pageDimensions: {
+            width: p.page_width ?? undefined,
+            height: p.page_height ?? undefined,
+            unit: p.page_unit ?? undefined,
+          },
         }));
         /* eslint-enable @typescript-eslint/no-explicit-any */
         setPages(formatted);

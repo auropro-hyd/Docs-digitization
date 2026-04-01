@@ -93,6 +93,9 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
 
             azure_results[page.page_num] = {
                 "markdown": page.markdown,
+                "page_width": page.page_width,
+                "page_height": page.page_height,
+                "page_unit": page.page_unit,
                 "word_count": len(page.words),
                 "avg_confidence": sum(word_confidences) / len(word_confidences) if word_confidences else 0.0,
                 "min_confidence": min(word_confidences) if word_confidences else 0.0,
@@ -118,7 +121,7 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
         }
     except Exception as e:
         logger.exception("Azure DI OCR failed")
-        return {"status": "error", "error": f"Azure DI failed: {e}"}
+        return {"status": "error", "error": f"OCR extraction failed: {e}"}
 
 
 async def merge_azure_di_results(state: DocumentState) -> dict:
@@ -173,6 +176,9 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         extraction = {
             "page_num": page_num,
             "markdown": azure_page.get("markdown", ""),
+            "page_width": azure_page.get("page_width"),
+            "page_height": azure_page.get("page_height"),
+            "page_unit": azure_page.get("page_unit"),
             "handwritten_count": azure_page.get("handwritten_count", 0),
             "barcodes": azure_page.get("barcodes", []),
             "selection_marks": azure_page.get("selection_marks", []),
@@ -241,7 +247,7 @@ async def run_marker_ocr(state: DocumentState) -> dict:
         }
     except Exception as e:
         logger.exception("Marker OCR failed")
-        return {"status": "error", "error": f"Marker OCR failed: {e}"}
+        return {"status": "error", "error": f"OCR extraction failed: {e}"}
 
 
 async def run_quality_scoring(state: DocumentState) -> dict:

@@ -7,7 +7,7 @@
                 <mxCell id="title1" value="&lt;b&gt;Auto Transcription — System Architecture&lt;/b&gt;" style="text;html=1;fontSize=20;fontColor=#1A237E;align=center;" parent="1" vertex="1">
                     <mxGeometry x="400" y="20" width="800" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="fe-group" value="&lt;b&gt;FRONTEND&lt;/b&gt;  (Next.js 16 / React 19 / Tailwind v4 / Shadcn UI)" style="swimlane;startSize=30;fillColor=#E8EAF6;strokeColor=#7986CB;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#283593;" parent="1" vertex="1">
+                <mxCell id="fe-group" value="&lt;b&gt;FRONTEND&lt;/b&gt;  (Next.js 15 / React 19 / Tailwind v4 / Shadcn UI)" style="swimlane;startSize=30;fillColor=#E8EAF6;strokeColor=#7986CB;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#283593;" parent="1" vertex="1">
                     <mxGeometry x="40" y="80" width="1520" height="200" as="geometry"/>
                 </mxCell>
                 <mxCell id="page-dash" value="&lt;b&gt;Dashboard&lt;/b&gt;&#10;/ (Upload &amp; Status)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C5CAE9;strokeColor=#5C6BC0;fontSize=10;fontColor=#1A237E;" parent="fe-group" vertex="1">
@@ -76,19 +76,19 @@
                 <mxCell id="node-route1" value="route_after_ingest" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="proc-group" vertex="1">
                     <mxGeometry x="200" y="35" width="120" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="node-azocr" value="run_azure_di_ocr&#10;(Layout model)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;fontColor=#1565C0;" parent="proc-group" vertex="1">
+                <mxCell id="node-azocr" value="run_primary_ocr&#10;(Layout model)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;fontColor=#1565C0;" parent="proc-group" vertex="1">
                     <mxGeometry x="360" y="35" width="130" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="node-marker" value="run_marker_ocr&#10;(offline)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                <mxCell id="node-marker" value="run_alternate_ocr&#10;(offline)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
                     <mxGeometry x="360" y="85" width="130" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="node-quality" value="run_quality_scoring&#10;(Docling)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                <mxCell id="node-quality" value="run_quality_scoring&#10;(Quality engine)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
                     <mxGeometry x="360" y="130" width="130" height="35" as="geometry"/>
                 </mxCell>
-                <mxCell id="node-merge-az" value="merge_azure_di&#10;_results&#10;(HTML tables,&#10;signatures, KV pairs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=8;fontColor=#E65100;" parent="proc-group" vertex="1">
+                <mxCell id="node-merge-az" value="merge_primary&#10;_results&#10;(HTML tables,&#10;signatures, KV pairs)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=8;fontColor=#E65100;" parent="proc-group" vertex="1">
                     <mxGeometry x="530" y="30" width="140" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="node-merge-mk" value="merge_marker&#10;_results" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
+                <mxCell id="node-merge-mk" value="merge_alternate&#10;_results" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="proc-group" vertex="1">
                     <mxGeometry x="530" y="95" width="140" height="35" as="geometry"/>
                 </mxCell>
                 <mxCell id="node-conf" value="route_by&#10;_confidence" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="proc-group" vertex="1">
@@ -109,7 +109,7 @@
                 <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="proc-group" source="node-ingest" target="node-route1" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="e2" value="azure_di" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="proc-group" source="node-route1" target="node-azocr" edge="1">
+                <mxCell id="e2" value="primary" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="proc-group" source="node-route1" target="node-azocr" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="e3" value="marker" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="proc-group" source="node-route1" target="node-marker" edge="1">
@@ -249,10 +249,10 @@
                 <mxCell id="ports-group" value="&lt;b&gt;PORTS &amp; ADAPTERS&lt;/b&gt;  (Hexagonal Architecture)" style="swimlane;startSize=25;fillColor=#F3E5F5;strokeColor=#CE93D8;rounded=1;arcSize=8;fontSize=11;fontStyle=1;fontColor=#6A1B9A;" parent="1" vertex="1">
                     <mxGeometry x="40" y="830" width="1520" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="port-ocr" value="&lt;b&gt;OCREngine&lt;/b&gt; (port)&#10;→ AzureDIOCRAdapter&#10;→ MarkerOCRAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                <mxCell id="port-ocr" value="&lt;b&gt;OCREngine&lt;/b&gt; (port)&#10;→ PrimaryOCRAdapter&#10;→ AlternateOCRAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
                     <mxGeometry x="30" y="35" width="170" height="50" as="geometry"/>
                 </mxCell>
-                <mxCell id="port-llm" value="&lt;b&gt;LLMProvider&lt;/b&gt; (port)&#10;→ AzureOpenAILLMAdapter&#10;→ OllamaLLMAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                <mxCell id="port-llm" value="&lt;b&gt;LLMProvider&lt;/b&gt; (port)&#10;→ CloudLLMAdapter&#10;→ LocalLLMAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
                     <mxGeometry x="230" y="35" width="180" height="50" as="geometry"/>
                 </mxCell>
                 <mxCell id="port-storage" value="&lt;b&gt;DocumentStore&lt;/b&gt; (port)&#10;→ FileSystemAdapter&#10;→ AzureBlobAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
@@ -261,7 +261,7 @@
                 <mxCell id="port-notify" value="&lt;b&gt;NotificationPort&lt;/b&gt; (port)&#10;→ WebSocketNotifyAdapter&#10;→ PgNotifyAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
                     <mxGeometry x="640" y="35" width="180" height="50" as="geometry"/>
                 </mxCell>
-                <mxCell id="port-quality" value="&lt;b&gt;QualityScorer&lt;/b&gt; (port)&#10;→ DoclingQualityAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
+                <mxCell id="port-quality" value="&lt;b&gt;QualityScorer&lt;/b&gt; (port)&#10;→ QualityScoringAdapter" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#AB47BC;fontSize=8;fontColor=#6A1B9A;" parent="ports-group" vertex="1">
                     <mxGeometry x="850" y="35" width="170" height="50" as="geometry"/>
                 </mxCell>
                 <mxCell id="ext-group" value="&lt;b&gt;EXTERNAL SERVICES &amp; STORAGE&lt;/b&gt;" style="swimlane;startSize=25;fillColor=#EDE7F6;strokeColor=#9575CD;rounded=1;arcSize=8;fontSize=12;fontStyle=1;fontColor=#4527A0;" parent="1" vertex="1">
@@ -273,7 +273,7 @@
                 <mxCell id="ext-azoai" value="&lt;b&gt;Azure OpenAI&lt;/b&gt;&#10;GPT-4.1-mini (evaluator)&#10;GPT-4.1-mini (orchestrator)&#10;gpt-4o (fallback)&#10;RPM limiting + retry" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;fontColor=#BF360C;" parent="ext-group" vertex="1">
                     <mxGeometry x="230" y="30" width="220" height="85" as="geometry"/>
                 </mxCell>
-                <mxCell id="ext-ollama" value="&lt;b&gt;Ollama (optional)&lt;/b&gt;&#10;gemma2:9b&#10;Local LLM" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="ext-group" vertex="1">
+                <mxCell id="ext-ollama" value="&lt;b&gt;Local LLM (optional)&lt;/b&gt;&#10;runtime model&#10;on-prem inference" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;fontColor=#6A1B9A;" parent="ext-group" vertex="1">
                     <mxGeometry x="465" y="30" width="150" height="85" as="geometry"/>
                 </mxCell>
                 <mxCell id="ext-pg" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&#10;asyncpg&#10;LISTEN/NOTIFY" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#4DB6AC;fontSize=9;fontColor=#00695C;" parent="ext-group" vertex="1">
@@ -326,22 +326,22 @@
                 <mxCell id="n1" value="&lt;b&gt;ingest_document&lt;/b&gt;&#10;Read PDF bytes&#10;Get filename, metadata" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#FFA726;fontSize=9;fontColor=#E65100;" parent="1" vertex="1">
                     <mxGeometry x="60" y="320" width="170" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="n2" value="&lt;b&gt;route_after_ingest&lt;/b&gt;&#10;Check pipeline.mode&#10;(azure_di | marker_docling)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
+                <mxCell id="n2" value="&lt;b&gt;route_after_ingest&lt;/b&gt;&#10;Check pipeline.mode&#10;(primary | alternate_offline)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
                     <mxGeometry x="280" y="310" width="190" height="70" as="geometry"/>
                 </mxCell>
-                <mxCell id="n3a" value="&lt;b&gt;run_azure_di_ocr&lt;/b&gt;&#10;Azure DI Layout model&#10;ocrHighRes, tables, signatures&#10;keyValuePairs, formulas&#10;&#10;Real-time % via LRO polling&#10;WS: ocr_progress" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;align=left;spacingLeft=8;fontColor=#1565C0;" parent="1" vertex="1">
+                <mxCell id="n3a" value="&lt;b&gt;run_primary_ocr&lt;/b&gt;&#10;Layout model&#10;high-res OCR, tables, signatures&#10;key-value pairs, formulas&#10;&#10;Real-time % via LRO polling&#10;WS: ocr_progress" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#64B5F6;fontSize=9;align=left;spacingLeft=8;fontColor=#1565C0;" parent="1" vertex="1">
                     <mxGeometry x="540" y="290" width="210" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="n3b" value="&lt;b&gt;run_marker_ocr&lt;/b&gt;&#10;Marker PDF→MD&#10;(offline mode)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                <mxCell id="n3b" value="&lt;b&gt;run_alternate_ocr&lt;/b&gt;&#10;PDF→MD conversion&#10;(offline mode)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
                     <mxGeometry x="540" y="410" width="210" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="n3c" value="&lt;b&gt;run_quality_scoring&lt;/b&gt;&#10;DoclingQualityAdapter&#10;Page-level quality scoring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                <mxCell id="n3c" value="&lt;b&gt;run_quality_scoring&lt;/b&gt;&#10;QualityScoringAdapter&#10;Page-level quality scoring" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
                     <mxGeometry x="540" y="480" width="210" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="n4a" value="&lt;b&gt;merge_azure_di_results&lt;/b&gt;&#10;- Build HTML tables (rowspan/colspan)&#10;- Repeat headers for cross-page tables&#10;- Extract signatures, key-value pairs&#10;- Per-page markdown with structure&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
+                <mxCell id="n4a" value="&lt;b&gt;merge_primary_results&lt;/b&gt;&#10;- Build HTML tables (rowspan/colspan)&#10;- Repeat headers for cross-page tables&#10;- Extract signatures, key-value pairs&#10;- Per-page markdown with structure&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#FF8A65;fontSize=9;align=left;spacingLeft=8;fontColor=#BF360C;" parent="1" vertex="1">
                     <mxGeometry x="810" y="290" width="250" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="n4b" value="&lt;b&gt;merge_marker_results&lt;/b&gt;&#10;- Combine Marker + Docling output&#10;- Build per-page markdown&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
+                <mxCell id="n4b" value="&lt;b&gt;merge_alternate_results&lt;/b&gt;&#10;- Combine OCR + quality output&#10;- Build per-page markdown&#10;- Compute per-page confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#AB47BC;fontSize=9;align=left;spacingLeft=8;fontColor=#6A1B9A;" parent="1" vertex="1">
                     <mxGeometry x="810" y="430" width="250" height="70" as="geometry"/>
                 </mxCell>
                 <mxCell id="n5" value="&lt;b&gt;route_by_confidence&lt;/b&gt;&#10;min(page_scores) vs thresholds&#10;review_threshold=0.6&#10;auto_approve_threshold=0.8" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFDE7;strokeColor=#FFD54F;fontSize=9;fontColor=#F57F17;" parent="1" vertex="1">
@@ -392,10 +392,10 @@
                 <mxCell id="de5" style="edgeStyle=orthogonalEdgeStyle;strokeColor=#78909C;" parent="1" source="n1" target="n2" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="de6" value="azure_di" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3a" edge="1">
+                <mxCell id="de6" value="primary" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3a" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="de7" value="marker_docling" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;dashed=1;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3b" edge="1">
+                <mxCell id="de7" value="alternate_offline" style="edgeStyle=orthogonalEdgeStyle;fontSize=8;dashed=1;fontColor=#546E7A;strokeColor=#78909C;" parent="1" source="n2" target="n3b" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
                 <mxCell id="de7b" style="edgeStyle=orthogonalEdgeStyle;dashed=1;strokeColor=#78909C;" parent="1" source="n3b" target="n3c" edge="1">

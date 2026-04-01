@@ -7,8 +7,11 @@ defaults:
   scope: page
   severity: major
   evaluation_mode: llm
+  applicable_document_types: [batch_record, logbook]
+  excluded_document_types: []
   applicable_page_types: [form]
   applicable_section_types: []
+  cross_section_requirements: []
   keywords: []
   pass_criteria: ""
   skip_conditions: []
@@ -21,7 +24,7 @@ categories:
   # ── Equipment Identification (rules 1-5) ──────────────────
   equipment_identification:
     severity: major
-    applicable_section_types: [manufacturing_operations]
+    applicable_section_types: [manufacturing_operations, equipment_usage_log]
     rules:
       1:
         pass_criteria: >
@@ -60,7 +63,7 @@ categories:
   # ── SOP References (rules 6-9) ────────────────────────────
   sop_references:
     severity: major
-    applicable_section_types: [manufacturing_operations]
+    applicable_section_types: [manufacturing_operations, in_process_report]
     rules:
       6:
         pass_criteria: >
@@ -86,6 +89,7 @@ categories:
   # ── Environmental Conditions (rules 10-13) ─────────────────
   environmental_conditions:
     severity: major
+    applicable_section_types: [manufacturing_operations, environmental_monitoring, clean_room]
     rules:
       10:
         applicable_section_types: [manufacturing_operations, environmental_monitoring]

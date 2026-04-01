@@ -31,6 +31,7 @@
 | [Document Processing](backend/workflow/document-processing.md) | LangGraph state-graph, mode-based conditional routing |
 | [Compliance Review](backend/workflow/compliance-review.md) | ALCOA++, GMP, SOP verification agents |
 | [HITL Flow](backend/workflow/hitl-flow.md) | Interrupt/resume, review queue, audit trail |
+| [Rule Authoring Playbook](rule_authoring_playbook.md) | Operator guide for config-first rule updates and QA checks |
 
 ### Backend — Confidence & Config
 

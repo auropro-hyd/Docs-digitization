@@ -46,15 +46,24 @@ components/
 ├── upload/
 │   ├── document-upload.tsx       # Drag-and-drop upload widget
 │   └── processing-dashboard.tsx  # Real-time processing status display
-├── viewer/                       # PDF viewer (placeholder, to be connected)
 ├── review/
 │   └── review-interface.tsx      # Split-pane HITL review
 ├── compliance/
 │   └── compliance-dashboard.tsx  # Compliance score, findings, categories
 └── common/
+    ├── pdf-viewer.tsx            # PDF viewer wrapper with responsive behavior
+    ├── pdf-viewer-inner.tsx      # Page rendering internals
     ├── confidence-badge.tsx       # Color-coded confidence score badge
     └── status-indicator.tsx       # Processing status pill/indicator
 ```
+
+## User-Facing Terminology Policy
+
+The UI presents a product-level experience and avoids exposing underlying vendor engines.
+
+- Use neutral labels such as **OCR Extraction**, **Quality Scoring**, and **Processing Complete**.
+- Keep provider-specific names in internal config, logs, and developer documentation only.
+- Sanitize runtime progress text before rendering in UI surfaces (status badges, progress bars, and notifications).
 
 ## State Management
 
@@ -111,7 +120,7 @@ The `useDocumentWebSocket` hook (`frontend/src/hooks/useWebSocket.ts`) wires the
 | `getComplianceReport(docId)` | GET | `/api/compliance/{docId}/report` | Get compliance report |
 | `runComplianceReview(docId)` | POST | `/api/compliance/{docId}/run` | Trigger compliance analysis |
 
-Base URL is configured via `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:8000`).
+Base URL is configured via `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:8100`).
 
 ## Utility Functions
 
