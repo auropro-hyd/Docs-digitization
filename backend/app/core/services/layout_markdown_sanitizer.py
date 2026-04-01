@@ -10,6 +10,19 @@ _ORPHAN_TABLE_WRAPPER_RE = re.compile(r"</table>\s*</td>\s*</tr>\s*</table>", re
 _REPEATED_TABLE_OPEN_RE = re.compile(r"<{2,}\s*table>", re.IGNORECASE)
 _BROKEN_TABLE_JOIN_RE = re.compile(r"</t\s*<table>", re.IGNORECASE)
 
+_SEVERE_REPAIRS = {
+    "fixed_fragment_t_table",
+    "fixed_fragment_abl_table",
+    "removed_orphan_table_wrapper",
+    "fixed_broken_table_join",
+}
+
+_MEDIUM_REPAIRS = {
+    "removed_table_td_suffix",
+    "fixed_repeated_table_open",
+    "removed_truncated_comment_tail",
+}
+
 
 def sanitize_layout_markdown(md: str) -> tuple[str, list[str]]:
     """Normalize recurrent malformed HTML/markdown fragments from OCR output.
@@ -60,3 +73,23 @@ def sanitize_layout_markdown(md: str) -> tuple[str, list[str]]:
         out = new
 
     return out, repairs
+
+
+def classify_parser_repair_severity(repairs: list[str]) -> tuple[str, int]:
+    """Return deterministic parser corruption severity and score.
+
+    Score range: 0 (none) to 100 (high corruption risk).
+    """
+    if not repairs:
+        return "none", 0
+
+    severe_count = sum(1 for r in repairs if r in _SEVERE_REPAIRS)
+    medium_count = sum(1 for r in repairs if r in _MEDIUM_REPAIRS)
+    low_count = max(0, len(repairs) - severe_count - medium_count)
+    score = min(100, severe_count * 40 + medium_count * 18 + low_count * 8)
+
+    if severe_count > 0 or score >= 55:
+        return "high", score
+    if medium_count > 0 or score >= 25:
+        return "medium", score
+    return "low", score

@@ -193,6 +193,8 @@ async def get_review_pages(doc_id: str):
             "page_unit": ext.get("page_unit"),
             "parser_repairs": ext.get("parser_repairs", []),
             "parser_repair_count": ext.get("parser_repair_count", 0),
+            "parser_repair_severity": ext.get("parser_repair_severity", "none"),
+            "parser_repair_severity_score": ext.get("parser_repair_severity_score", 0),
             "content_component_id": content_cid,
             "content_decision": content_decision,
             "handwritten_count": ext.get("handwritten_count", 0),

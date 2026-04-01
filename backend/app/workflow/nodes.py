@@ -80,6 +80,7 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
             pass
 
     try:
+        from app.core.services.layout_markdown_sanitizer import classify_parser_repair_severity
         from app.core.services.selection_semantics import summarize_selection_semantics
 
         result = await container.ocr_engine.extract(
@@ -92,6 +93,7 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
         for page in result.pages:
             word_confidences = [w.confidence for w in page.words]
             handwritten_words = [w for w in page.words if w.is_handwritten]
+            parser_severity, parser_severity_score = classify_parser_repair_severity(page.parser_repairs)
 
             azure_results[page.page_num] = {
                 "markdown": page.markdown,
@@ -100,6 +102,8 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
                 "page_unit": page.page_unit,
                 "parser_repairs": page.parser_repairs,
                 "parser_repair_count": len(page.parser_repairs),
+                "parser_repair_severity": parser_severity,
+                "parser_repair_severity_score": parser_severity_score,
                 "word_count": len(page.words),
                 "avg_confidence": sum(word_confidences) / len(word_confidences) if word_confidences else 0.0,
                 "min_confidence": min(word_confidences) if word_confidences else 0.0,
@@ -189,6 +193,8 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
             "page_unit": azure_page.get("page_unit"),
             "parser_repairs": azure_page.get("parser_repairs", []),
             "parser_repair_count": azure_page.get("parser_repair_count", 0),
+            "parser_repair_severity": azure_page.get("parser_repair_severity", "none"),
+            "parser_repair_severity_score": azure_page.get("parser_repair_severity_score", 0),
             "handwritten_count": azure_page.get("handwritten_count", 0),
             "barcodes": azure_page.get("barcodes", []),
             "selection_marks": azure_page.get("selection_marks", []),

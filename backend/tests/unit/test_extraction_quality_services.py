@@ -1,4 +1,4 @@
-from app.core.services.layout_markdown_sanitizer import sanitize_layout_markdown
+from app.core.services.layout_markdown_sanitizer import classify_parser_repair_severity, sanitize_layout_markdown
 from app.core.services.selection_semantics import summarize_selection_semantics
 
 
@@ -41,3 +41,11 @@ def test_selection_semantics_detects_tri_state_headers():
     summary = summarize_selection_semantics(markdown, marks)
     assert summary["checklist_headers"]["tri_state"] is True
     assert summary["unknown_count"] == 0
+
+
+def test_parser_repair_severity_scoring():
+    sev, score = classify_parser_repair_severity(
+        ["fixed_fragment_t_table", "removed_table_td_suffix", "normalized_pagebreak_markers"]
+    )
+    assert sev in {"medium", "high"}
+    assert score > 0
