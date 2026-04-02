@@ -30,7 +30,6 @@ import time
 from html import escape as html_escape
 
 from app.config.settings import AzureDIConfig
-from app.core.services.layout_markdown_sanitizer import sanitize_layout_markdown
 from app.core.ports.ocr import (
     BarcodeResult,
     BoundingRegion,
@@ -45,8 +44,21 @@ from app.core.ports.ocr import (
     SignatureRegion,
     StyleSpan,
 )
+from app.core.services.layout_markdown_sanitizer import sanitize_layout_markdown
 
 logger = logging.getLogger(__name__)
+
+_TABLE_CORRUPTION_REPAIR_TAGS = {
+    "fixed_fragment_t_table",
+    "fixed_fragment_abl_table",
+    "fixed_broken_table_join",
+    "fixed_broken_table_open",
+    "fixed_missing_angle_table_tag",
+    "fixed_missing_angle_close_table_tag",
+    "fixed_stranded_table_close_token",
+    "removed_broken_pagenumber_comment",
+    "fixed_broken_table_join_no_angle_close",
+}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -114,7 +126,6 @@ def _cell_pages(cell) -> set[int]:
 def _span_page(span, pages) -> int:
     """Determine which page a span belongs to based on offset overlap."""
     offset = getattr(span, "offset", 0)
-    length = getattr(span, "length", 0)
     for pg in pages or []:
         for ps in getattr(pg, "spans", None) or []:
             pg_start = getattr(ps, "offset", 0)
@@ -141,7 +152,13 @@ def _build_table_html(table, page_num: int | None = None) -> str:
     if not cells:
         return ""
 
-    col_count = getattr(table, "column_count", 0)
+    col_count = int(getattr(table, "column_count", 0) or 0)
+    if col_count <= 0:
+        # Fallback when SDK omits/inflates metadata: infer from cells.
+        col_count = max(
+            (int(getattr(c, "column_index", 0) or 0) + int(getattr(c, "column_span", 1) or 1))
+            for c in cells
+        )
 
     header_cells = [c for c in cells if getattr(c, "kind", "") in _HEADER_KINDS]
     data_cells = [c for c in cells if getattr(c, "kind", "") not in _HEADER_KINDS]
@@ -163,8 +180,16 @@ def _build_table_html(table, page_num: int | None = None) -> str:
     for cell in header_cells + data_cells:
         ri = getattr(cell, "row_index", 0)
         ci = getattr(cell, "column_index", 0)
-        rs = getattr(cell, "row_span", 1) or 1
-        cs = getattr(cell, "column_span", 1) or 1
+        rs = max(1, int(getattr(cell, "row_span", 1) or 1))
+        cs = max(1, int(getattr(cell, "column_span", 1) or 1))
+        if ci >= col_count:
+            # Ignore invalid cells that start past declared table width.
+            continue
+        if ci + cs > col_count:
+            # Keep table geometry stable: clamp noisy spans that overflow width.
+            cs = col_count - ci
+            if cs <= 0:
+                continue
         content = getattr(cell, "content", "")
         kind = getattr(cell, "kind", "content")
 
@@ -247,11 +272,11 @@ def _build_table_html(table, page_num: int | None = None) -> str:
     return "\n".join(parts)
 
 
-def _build_page_tables(result) -> dict[int, list[str]]:
-    """Build reconstructed HTML tables grouped by page number."""
-    page_tables: dict[int, list[str]] = {}
+def _build_page_tables(result) -> dict[int, dict[int, str]]:
+    """Build reconstructed HTML tables grouped by page and source table index."""
+    page_tables: dict[int, dict[int, str]] = {}
 
-    for table in getattr(result, "tables", None) or []:
+    for table_idx, table in enumerate(getattr(result, "tables", None) or []):
         cells = getattr(table, "cells", None) or []
         if not cells:
             continue
@@ -264,7 +289,7 @@ def _build_page_tables(result) -> dict[int, list[str]]:
         for pg in sorted(all_pages):
             html = _build_table_html(table, page_num=pg)
             if html:
-                page_tables.setdefault(pg, []).append(html)
+                page_tables.setdefault(pg, {})[table_idx] = html
 
     return page_tables
 
@@ -391,7 +416,7 @@ def _cleanup_markdown(md: str) -> str:
 def _extract_page_markdown(
     content: str,
     az_page,
-    page_tables: list[str] | None = None,
+    page_tables: dict[int, str] | None = None,
     table_ranges: list[tuple[int, int, int]] | None = None,
 ) -> str | None:
     """Slice the full markdown content for a single page using Azure DI span offsets."""
@@ -424,16 +449,8 @@ def _extract_page_markdown(
 
             if overlapping:
                 overlapping.sort(key=lambda x: x[0], reverse=True)
-
-                replacement_map: dict[int, str] = {}
-                pt_idx = 0
-                for _, _, tbl_idx in sorted(overlapping, key=lambda x: x[0]):
-                    if tbl_idx not in replacement_map and pt_idx < len(page_tables):
-                        replacement_map[tbl_idx] = page_tables[pt_idx]
-                        pt_idx += 1
-
                 for overlap_start, overlap_end, tbl_idx in overlapping:
-                    replacement = replacement_map.get(tbl_idx, "")
+                    replacement = page_tables.get(tbl_idx, "")
                     page_md = page_md[:overlap_start] + replacement + page_md[overlap_end:]
 
         return page_md.strip()
@@ -538,6 +555,13 @@ def _detect_signatures(result, styles: list[StyleSpan], pages) -> list[Signature
     signatures: list[SignatureRegion] = []
     sig_keywords = {"signature", "signed by", "authorized by", "sign", "approved by", "verified by"}
 
+    # Precompute handwriting presence per page once (instead of scanning all styles per KV row).
+    handwritten_pages: set[int] = set()
+    for style in styles:
+        if not (style.is_handwritten and style.confidence > 0.5):
+            continue
+        handwritten_pages.update(_style_pages(style, pages))
+
     for kvp in getattr(result, "key_value_pairs", None) or []:
         key_elem = getattr(kvp, "key", None)
         val_elem = getattr(kvp, "value", None)
@@ -562,11 +586,7 @@ def _detect_signatures(result, styles: list[StyleSpan], pages) -> list[Signature
         has_value_text = bool(value_norm) and value_norm not in _PLACEHOLDER_VALUES
         confidence = float(getattr(kvp, "confidence", 0.0) or 0.0)
 
-        hw_near = any(
-            s.is_handwritten and s.confidence > 0.5
-            for s in styles
-            if _spans_overlap_page(s, page_num, pages)
-        )
+        hw_near = page_num in handwritten_pages
         score = 0.0
         reason_codes: list[str] = []
         if any(kw in key_text for kw in sig_keywords):
@@ -650,6 +670,19 @@ def _spans_overlap_page(style: StyleSpan, page_num: int, pages) -> bool:
     return False
 
 
+def _style_pages(style: StyleSpan, pages) -> set[int]:
+    """Return all pages that overlap with a style span."""
+    hits: set[int] = set()
+    for pg in pages or []:
+        for ps in getattr(pg, "spans", None) or []:
+            pg_start = getattr(ps, "offset", 0)
+            pg_len = getattr(ps, "length", 0)
+            if pg_start <= style.offset < pg_start + pg_len:
+                hits.add(pg.page_number)
+                break
+    return hits
+
+
 # ═══════════════════════════════════════════════════════════════
 #  Main adapter class
 # ═══════════════════════════════════════════════════════════════
@@ -681,6 +714,11 @@ class AzureDIOCRAdapter:
     ) -> OCRResult:
         client = self._get_client()
         loop = asyncio.get_event_loop()
+        timeout_seconds = max(60, int(getattr(self._config, "analyze_timeout_seconds", 900) or 900))
+        poll_interval = max(1, int(getattr(self._config, "progress_poll_interval_seconds", 2) or 2))
+        heartbeat_seconds = max(5, int(getattr(self._config, "progress_heartbeat_seconds", 30) or 30))
+        extract_started = time.monotonic()
+        logger.info("Azure DI extract started for %s", pdf_path)
 
         def _analyze_with_progress():
             from azure.ai.documentintelligence.models import (
@@ -703,12 +741,18 @@ class AzureDIOCRAdapter:
 
             progress_callback(0, "Submitted for OCR analysis")
             last_pct = -1
+            started = time.monotonic()
+            last_heartbeat = started
 
             pm = poller.polling_method()
-            # Poll more frequently so UI progress feels more real-time during long OCR jobs.
-            poll_interval = 2
 
             while not poller.done():
+                elapsed = int(time.monotonic() - started)
+                if elapsed >= timeout_seconds:
+                    raise TimeoutError(
+                        f"OCR analysis exceeded timeout of {timeout_seconds}s; "
+                        "please retry with a smaller file or increase timeout."
+                    )
                 time.sleep(poll_interval)
 
                 try:
@@ -726,10 +770,19 @@ class AzureDIOCRAdapter:
                     label = "Analyzing..." if status_str == "running" else f"Status: {status_str}"
                     progress_callback(5, label)
 
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_seconds:
+                    last_heartbeat = now
+                    fallback_pct = max(5, last_pct if last_pct >= 0 else 5)
+                    logger.info("Azure DI polling heartbeat: status=%s elapsed=%ss pct=%s", status_str, elapsed, pct)
+                    progress_callback(fallback_pct, f"Still analyzing ({elapsed}s elapsed)")
+
             progress_callback(100, "Analysis complete")
             return poller.result()
 
         result = await loop.run_in_executor(None, _analyze_with_progress)
+        analyze_elapsed = int(time.monotonic() - extract_started)
+        logger.info("Azure DI analyze call completed in %ss for %s", analyze_elapsed, pdf_path)
 
         ocr_pages: list[OCRPageResult] = []
         content = result.content or ""
@@ -783,13 +836,30 @@ class AzureDIOCRAdapter:
                     )
                 )
 
-            page_markdown = _extract_page_markdown(
-                content, az_page, page_tables.get(page_num), table_ranges,
-            )
+            page_markdown = _extract_page_markdown(content, az_page)
             if page_markdown is None:
                 page_markdown = " ".join(w.text for w in words)
                 logger.info(f"Page {page_num}: fell back to word concatenation (no spans)")
             page_markdown, page_repairs = sanitize_layout_markdown(page_markdown)
+
+            # If markdown appears table-corrupted, retry with reconstructed table HTML
+            # to preserve grid semantics while keeping the default path lightweight.
+            if any(tag in _TABLE_CORRUPTION_REPAIR_TAGS for tag in page_repairs):
+                rebuilt_page_md = _extract_page_markdown(
+                    content,
+                    az_page,
+                    page_tables.get(page_num),
+                    table_ranges,
+                )
+                if rebuilt_page_md:
+                    rebuilt_page_md, rebuilt_repairs = sanitize_layout_markdown(rebuilt_page_md)
+                    prefer_rebuilt = (
+                        rebuilt_page_md.count("<table") >= page_markdown.count("<table")
+                        and len(rebuilt_repairs) <= len(page_repairs)
+                    )
+                    if prefer_rebuilt:
+                        page_markdown = rebuilt_page_md
+                        page_repairs = rebuilt_repairs
 
             ocr_pages.append(
                 OCRPageResult(
@@ -806,7 +876,7 @@ class AzureDIOCRAdapter:
                 )
             )
 
-        processed_full = _reconstruct_full_markdown(content, result)
+        processed_full = content
         processed_full = _strip_paragraph_ranges(processed_full, para_strip_ranges)
         processed_full = _cleanup_markdown(processed_full)
 
@@ -819,6 +889,8 @@ class AzureDIOCRAdapter:
             f"{len(all_signatures)} signatures, {len(all_languages)} language spans, "
             f"{sum(len(v) for v in all_formulas.values())} formulas"
         )
+        total_elapsed = int(time.monotonic() - extract_started)
+        logger.info("Azure DI full extraction pipeline completed in %ss for %s", total_elapsed, pdf_path)
 
         return OCRResult(
             pages=ocr_pages,

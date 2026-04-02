@@ -63,8 +63,14 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
 
     loop = asyncio.get_event_loop()
 
+    last_logged_percent = -1
+
     def _on_ocr_progress(percent: int, label: str) -> None:
         """Thread-safe bridge: schedule the async WS broadcast from the executor thread."""
+        nonlocal last_logged_percent
+        if percent >= last_logged_percent + 5 or percent in (0, 100):
+            last_logged_percent = percent
+            logger.info("[%s] OCR progress %s%% - %s", doc_id, percent, label)
         try:
             future = asyncio.run_coroutine_threadsafe(
                 container.notification.send_update(doc_id, {
@@ -75,7 +81,13 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
                 }),
                 loop,
             )
-            future.result(timeout=2)
+            # Do not block OCR polling thread on WS broadcast completion.
+            def _swallow_done(fut):
+                try:
+                    fut.exception()
+                except Exception:
+                    pass
+            future.add_done_callback(_swallow_done)
         except Exception:
             pass
 

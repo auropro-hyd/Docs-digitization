@@ -92,6 +92,9 @@ class AzureDIConfig(BaseModel):
     rollback_max_cost_usd_delta: float = 0.02
     custom_model_enabled: bool = False
     custom_model_shadow_enabled: bool = True
+    analyze_timeout_seconds: int = 900
+    progress_poll_interval_seconds: int = 2
+    progress_heartbeat_seconds: int = 30
 
     def features_for_profile(self, profile: str | None) -> list[str]:
         key = (profile or "default").strip().lower()

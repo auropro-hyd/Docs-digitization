@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
-import { rehypeTableFix } from "@/lib/rehype-table-fix";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -18,11 +17,8 @@ import {
   GripVertical,
   FileText,
   Eye,
-  Copy,
   PenTool,
   KeyRound,
-  PanelTopClose,
-  PanelTopOpen,
   CheckCheck,
   Download,
   FileDown,
@@ -114,7 +110,6 @@ interface ReviewInterfaceProps {
   onFlag: (pageNum: number, reason?: string) => Promise<void>;
 }
 
-type RightPaneMode = "continuous" | "parity";
 type NormalizedRect = { x: number; y: number; width: number; height: number };
 type FocusTarget = {
   pageNum: number;
@@ -149,67 +144,122 @@ function toNormalizedRect(
   };
 }
 
-const VALID_TABLE_SECTIONS = ["thead", "tbody", "tfoot", "colgroup", "caption"];
-
-const UNSAFE_TABLE_PROPS = new Set([
-  "node",
-  "dataSourcepos",
-  "sourcePosition",
-  "dataSourcePosition",
-  "position",
-  "index",
-  "parent",
-]);
-
-function TableWrapper({ children, ...props }: React.ComponentPropsWithoutRef<"table">) {
-  const safeProps = Object.fromEntries(
-    Object.entries(props).filter(([k]) => !UNSAFE_TABLE_PROPS.has(k))
-  );
-  const childArray = React.Children.toArray(children);
-  const processed: React.ReactNode[] = [];
-  let orphanContent: React.ReactNode[] = [];
-
-  const flushOrphans = () => {
-    if (orphanContent.length > 0) {
-      processed.push(
-        <tbody key={`orphan-${processed.length}`}>
-          <tr>
-            <td colSpan={100}>{orphanContent}</td>
-          </tr>
-        </tbody>
-      );
-      orphanContent = [];
-    }
-  };
-
-  for (let i = 0; i < childArray.length; i++) {
-    const child = childArray[i];
-    const isElement = typeof child === "object" && child !== null && "type" in child;
-    const tagName = isElement && typeof (child as React.ReactElement).type === "string"
-      ? ((child as React.ReactElement).type as string)
-      : null;
-
-    if (isElement && tagName && VALID_TABLE_SECTIONS.includes(tagName)) {
-      flushOrphans();
-      processed.push(child);
-    } else if (isElement && tagName === "tr") {
-      flushOrphans();
-      processed.push(<tbody key={`tr-${i}`}>{child}</tbody>);
-    } else {
-      orphanContent.push(child);
-    }
-  }
-  flushOrphans();
-
-  return (
-    <div className="table-wrapper">
-      <table {...safeProps}>{processed}</table>
-    </div>
-  );
+function normalizeMarkdownForRender(markdown: string): string {
+  if (!markdown) return "";
+  let text = markdown;
+  // Generic OCR corruption repairs for malformed HTML fragments.
+  text = text.replace(/<\/<\s*table\s*>/gi, "<table>");
+  text = text.replace(/<\/</g, "</");
+  text = text.replace(/\/ta<table>/g, "</table><table>");
+  text = text.replace(/table>le>/g, "table>");
+  text = text.replace(/<\/table>le>/g, "</table>");
+  text = text.replace(/(?:^|\n)\s*(?:[a-z]*break|eak|reak|agebreak)\s*-->\s*/gi, "\n");
+  text = text.replace(/<!--\s*PageNumber="[^"\n]*<table>/gi, "<table>");
+  text = text.replace(/(^|\n)(\s*)(tr|td|th|thead|tbody|tfoot|table)>\s*/gi, "$1$2<$3>");
+  text = text.replace(/(^|\n)(\s*)\/(tr|td|th|thead|tbody|tfoot|table)>\s*/gi, "$1$2</$3>");
+  text = text.replace(/(^|\n)(\s*)\/(tr|td|th|thead|tbody|tfoot|table)\s*$/gim, "$1$2</$3>");
+  text = text.replace(/\/(tr|td|th|thead|tbody|tfoot)\s*<table>/gi, "</$1>\n<table>");
+  text = text.replace(/^\s*>\s*$/gm, "");
+  return text;
 }
 
-const mdComponents = {
-  table: TableWrapper,
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function buildHeaderTableHtml(page: ReviewPage): string | null {
+  const kvPairs = page.keyValuePairs || [];
+  const candidates = kvPairs
+    .filter((kv) => {
+      const br = kv.bounding_region;
+      if (!br) return false;
+      if (!kv.key?.trim() || !kv.value?.trim()) return false;
+      return br.y <= 2.1;
+    })
+    .sort((a, b) => {
+      const ay = a.bounding_region?.y ?? 0;
+      const by = b.bounding_region?.y ?? 0;
+      if (Math.abs(ay - by) > 0.08) return ay - by;
+      return (a.bounding_region?.x ?? 0) - (b.bounding_region?.x ?? 0);
+    });
+
+  if (candidates.length < 6) return null;
+
+  const rows: KVPair[][] = [];
+  for (const item of candidates) {
+    const y = item.bounding_region?.y ?? 0;
+    const last = rows[rows.length - 1];
+    if (!last) {
+      rows.push([item]);
+      continue;
+    }
+    const lastY = last[0].bounding_region?.y ?? 0;
+    if (Math.abs(lastY - y) <= 0.14) {
+      last.push(item);
+    } else {
+      rows.push([item]);
+    }
+  }
+
+  const normalizedRows = rows
+    .map((row) =>
+      row
+        .sort((a, b) => (a.bounding_region?.x ?? 0) - (b.bounding_region?.x ?? 0))
+        .slice(0, 2),
+    )
+    .filter((row) => row.length >= 2);
+
+  if (normalizedRows.length < 3) return null;
+
+  const body = normalizedRows
+    .map(([left, right]) => {
+      return `<tr><td>${escapeHtml(left.key)}</td><td>${escapeHtml(left.value)}</td><td>${escapeHtml(right.key)}</td><td>${escapeHtml(right.value)}</td></tr>`;
+    })
+    .join("\n");
+
+  return `<table>\n<tbody>\n${body}\n</tbody>\n</table>`;
+}
+
+function applyPageMarkdownRecovery(page: ReviewPage, markdown: string): string {
+  let text = normalizeMarkdownForRender(markdown);
+  const headerTable = buildHeaderTableHtml(page);
+  if (!headerTable) return text;
+
+  const firstTableStart = text.indexOf("<table");
+  const firstTableEnd = text.indexOf("</table>");
+  if (firstTableStart >= 0 && firstTableEnd > firstTableStart) {
+    const firstTableBlock = text.slice(firstTableStart, firstTableEnd + "</table>".length);
+    const headerSignals = ["Product Name", "Market Code", "BPCR Number", "Batch No."];
+    const looksLikeHeader = headerSignals.some((s) => firstTableBlock.includes(s));
+    if (looksLikeHeader) {
+      text = `${text.slice(0, firstTableStart)}${headerTable}${text.slice(firstTableEnd + "</table>".length)}`;
+      return text;
+    }
+  }
+
+  return `${headerTable}\n\n${text}`;
+}
+
+const markdownComponents = {
+  table: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
+    <div className="overflow-x-auto my-2">
+      <table {...props} className={cn("w-full border-collapse text-[12px]", props.className)} />
+    </div>
+  ),
+  th: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
+    <th {...props} className={cn("border border-border bg-muted/40 px-2 py-1 text-left align-top font-semibold", props.className)} />
+  ),
+  td: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
+    <td {...props} className={cn("border border-border px-2 py-1 align-top", props.className)} />
+  ),
+  p: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"p"> & { node?: unknown }) => (
+    <p {...props} className={cn("mb-2 leading-5", props.className)} />
+  ),
 };
 
 function CollapsibleKVList({
@@ -323,12 +373,9 @@ export function ReviewInterface({
   const [flagReason, setFlagReason] = useState("");
   const [flagPageNum, setFlagPageNum] = useState<number | null>(null);
   const [mobileTab, setMobileTab] = useState<string>("digitized");
-  const [showStructuredFields, setShowStructuredFields] = useState(true);
-  const [rightPaneMode, setRightPaneMode] = useState<RightPaneMode>("parity");
-  const [strictSync, setStrictSync] = useState(false);
+  const [showStructuredFields, setShowStructuredFields] = useState(false);
   const [focusedTarget, setFocusedTarget] = useState<FocusTarget | null>(null);
   const isMobile = useIsMobile();
-
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const isScrollingProgrammatically = useRef(false);
@@ -341,50 +388,37 @@ export function ReviewInterface({
   const pdfUrl = getDocumentPdfUrl(docId);
 
   const pageSections = useMemo(() => splitByPageBreaks(fullMarkdown || ""), [fullMarkdown]);
-  const hasFullDoc = pageSections.length > 0;
 
-  // ── Scroll-sync: IntersectionObserver watches page sections ──
   useEffect(() => {
-    if (rightPaneMode !== "continuous") return;
     const container = scrollContainerRef.current;
     if (!container || pages.length === 0) return;
 
     const visibility = new Map<number, number>();
-
     const observer = new IntersectionObserver(
       (entries) => {
         if (isScrollingProgrammatically.current) return;
-
         for (const entry of entries) {
           const pageNum = Number(entry.target.getAttribute("data-page"));
-          if (isNaN(pageNum)) continue;
+          if (Number.isNaN(pageNum)) continue;
           if (entry.isIntersecting && entry.intersectionRatio > 0) {
             visibility.set(pageNum, entry.intersectionRatio);
           } else {
             visibility.delete(pageNum);
           }
         }
-
-        if (visibility.size > 0) {
-          let topPage = -1;
-          let maxRatio = -1;
-          for (const [p, ratio] of visibility.entries()) {
-            if (ratio > maxRatio) {
-              maxRatio = ratio;
-              topPage = p;
-            } else if (ratio === maxRatio && p < topPage) {
-              topPage = p;
-            }
+        if (visibility.size === 0) return;
+        let topPage = -1;
+        let maxRatio = -1;
+        for (const [p, ratio] of visibility.entries()) {
+          if (ratio > maxRatio || (ratio === maxRatio && p < topPage)) {
+            maxRatio = ratio;
+            topPage = p;
           }
-          const idx = pages.findIndex((p) => p.pageNum === topPage);
-          if (idx >= 0) setCurrentIndex(idx);
         }
+        const idx = pages.findIndex((p) => p.pageNum === topPage);
+        if (idx >= 0) setCurrentIndex(idx);
       },
-      {
-        root: container,
-        rootMargin: "-10% 0px -45% 0px",
-        threshold: [0.1, 0.25, 0.5, 0.75],
-      },
+      { root: container, rootMargin: "-10% 0px -45% 0px", threshold: [0.1, 0.25, 0.5, 0.75] },
     );
 
     pageRefs.current.forEach((el) => observer.observe(el));
@@ -392,23 +426,20 @@ export function ReviewInterface({
       observer.disconnect();
       visibility.clear();
     };
-  }, [pages, rightPaneMode]);
+  }, [pages]);
 
   const goToPage = useCallback(
     (idx: number) => {
-      isScrollingProgrammatically.current = true;
       setCurrentIndex(idx);
       const pageNum = pages[idx]?.pageNum;
-      if (rightPaneMode === "continuous" && pageNum && pageRefs.current.has(pageNum)) {
-        pageRefs.current.get(pageNum)?.scrollIntoView({ behavior: "smooth", block: "start" });
-        setTimeout(() => {
-          isScrollingProgrammatically.current = false;
-        }, 600);
-      } else {
+      if (!pageNum || !pageRefs.current.has(pageNum)) return;
+      isScrollingProgrammatically.current = true;
+      pageRefs.current.get(pageNum)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => {
         isScrollingProgrammatically.current = false;
-      }
+      }, 600);
     },
-    [pages, rightPaneMode],
+    [pages],
   );
 
   const goNext = useCallback(() => {
@@ -511,12 +542,6 @@ export function ReviewInterface({
     [docId, onApprove],
   );
 
-  const copyFullMarkdown = useCallback(() => {
-    const text = fullMarkdown || pages.map((p) => p.markdown).join("\n\n---\n\n");
-    navigator.clipboard.writeText(text);
-    toast.success("Copied full document to clipboard");
-  }, [fullMarkdown, pages]);
-
   const handleDownload = useCallback(
     async (format: "md" | "html" | "pdf") => {
       try {
@@ -549,40 +574,35 @@ export function ReviewInterface({
     return () => window.removeEventListener("keydown", handleKey);
   }, [goNext, goPrev, handleApprove, currentPage]);
 
-  // Scroll to initial page on mount
-  useEffect(() => {
-    if (rightPaneMode !== "continuous") return;
-    if (startIndex > 0) {
-      const pageNum = pages[startIndex]?.pageNum;
-      if (pageNum) {
-        requestAnimationFrame(() => {
-          isScrollingProgrammatically.current = true;
-          pageRefs.current.get(pageNum)?.scrollIntoView({ behavior: "auto", block: "start" });
-          setTimeout(() => {
-            isScrollingProgrammatically.current = false;
-          }, 300);
-        });
-      }
-    }
-  }, []);
-
-  // Optional strict sync for full-document mode:
-  // keep the active right-pane page aligned whenever page index changes.
-  useEffect(() => {
-    if (rightPaneMode !== "continuous" || !strictSync) return;
-    const pageNum = pages[currentIndex]?.pageNum;
-    if (!pageNum) return;
-    const target = pageRefs.current.get(pageNum);
-    if (!target) return;
-    isScrollingProgrammatically.current = true;
-    target.scrollIntoView({ behavior: "smooth", block: "start" });
-    const timer = setTimeout(() => {
-      isScrollingProgrammatically.current = false;
-    }, 450);
-    return () => clearTimeout(timer);
-  }, [currentIndex, pages, rightPaneMode, strictSync]);
-
   if (!currentPage) return null;
+
+  const focusFirstField = (page: ReviewPage) => {
+    const willShow = !showStructuredFields;
+    setShowStructuredFields(willShow);
+    if (!willShow) return;
+    const first = page.keyValuePairs?.[0];
+    if (!first) return;
+    focusTarget({
+      pageNum: page.pageNum,
+      componentId: first.component_id,
+      label: first.key || "Key-value field",
+      highlightRect: toNormalizedRect(first.bounding_region, page.pageDimensions),
+    });
+  };
+
+  const focusFirstSignature = (page: ReviewPage) => {
+    const willShow = !showStructuredFields;
+    setShowStructuredFields(willShow);
+    if (!willShow) return;
+    const first = page.signatures?.find((s) => s.status === "signed");
+    if (!first) return;
+    focusTarget({
+      pageNum: page.pageNum,
+      componentId: first.component_id,
+      label: first.label || "Signature",
+      highlightRect: toNormalizedRect(first.bounding_region, page.pageDimensions),
+    });
+  };
 
   const pageStatusBadge = (page: ReviewPage) => (
     <Badge
@@ -676,9 +696,13 @@ export function ReviewInterface({
           onEdit={handleComponentEdit}
           onFlag={handleComponentFlag}
         >
-          <div className="prose prose-sm prose-slate dark:prose-invert max-w-none text-[13px]">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeTableFix]} components={mdComponents}>
-              {markdownContent}
+          <div className="max-w-none text-[13px] leading-5 break-words">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw, rehypeSanitize]}
+              components={markdownComponents}
+            >
+              {applyPageMarkdownRecovery(page, markdownContent)}
             </ReactMarkdown>
           </div>
         </ReviewableComponent>
@@ -686,110 +710,42 @@ export function ReviewInterface({
     </div>
   );
 
-  const renderSections = hasFullDoc
-    ? pageSections.map((section, idx) => {
-        const pageNum = idx + 1;
-        const page = pages.find((p) => p.pageNum === pageNum);
-        return (
-          <div
-            key={pageNum}
-            data-page={pageNum}
-            ref={(el) => {
-              if (el) pageRefs.current.set(pageNum, el);
-            }}
-            className="mb-2 scroll-mt-20"
-          >
-            <PageDivider
-              pageNum={pageNum}
-              page={page}
-              isFirst={idx === 0}
-              actionLoading={actionLoading}
-              onApproveAll={handleApproveAllComponents}
-              onFlag={openFlagDialog}
-              statusBadge={pageStatusBadge}
-            />
-            {page ? renderPageComponents(page, section) : (
-              <div className="prose prose-sm prose-slate dark:prose-invert max-w-none text-[13px]">
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeTableFix]} components={mdComponents}>
-                  {section}
-                </ReactMarkdown>
-              </div>
-            )}
-          </div>
-        );
-      })
-    : pages.map((page) => (
-        <div
-          key={page.pageNum}
-          data-page={page.pageNum}
-          ref={(el) => {
-            if (el) pageRefs.current.set(page.pageNum, el);
-          }}
-          className="mb-2 scroll-mt-20"
-        >
-          <PageDivider
-            pageNum={page.pageNum}
-            page={page}
-            isFirst={page.pageNum === 1}
-            actionLoading={actionLoading}
-            onApproveAll={handleApproveAllComponents}
-            onFlag={openFlagDialog}
-            statusBadge={pageStatusBadge}
-          />
-          {page.markdown ? renderPageComponents(page, page.markdown) : (
-            <p className="text-sm text-muted-foreground">No extraction data for this page.</p>
-          )}
-        </div>
-      ));
+  const renderSections = pages.map((page) => {
+    const sectionMarkdown = page.markdown || pageSections[page.pageNum - 1] || "";
+    return (
+      <div
+        key={page.pageNum}
+        data-page={page.pageNum}
+        ref={(el) => {
+          if (el) pageRefs.current.set(page.pageNum, el);
+        }}
+        className="mb-2 scroll-mt-20"
+      >
+        <PageDivider
+          pageNum={page.pageNum}
+          page={page}
+          isFirst={page.pageNum === 1}
+          actionLoading={actionLoading}
+          onApproveAll={handleApproveAllComponents}
+          onFlag={openFlagDialog}
+          statusBadge={pageStatusBadge}
+          onFocusFields={focusFirstField}
+          onFocusSignatures={focusFirstSignature}
+        />
+        {sectionMarkdown ? renderPageComponents(page, sectionMarkdown) : (
+          <p className="text-sm text-muted-foreground">No extraction data for this page.</p>
+        )}
+      </div>
+    );
+  });
 
   const continuousDocContent = (
     <div ref={scrollContainerRef} className="h-full overflow-y-auto">
       <div className="p-4 lg:p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-foreground">Digitized Content</h3>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-7" onClick={copyFullMarkdown}>
-                <Copy className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Copy full document</TooltipContent>
-          </Tooltip>
         </div>
         {renderSections}
-      </div>
-    </div>
-  );
-
-  const currentPageMarkdown = hasFullDoc
-    ? (pageSections[currentPage.pageNum - 1] ?? currentPage.markdown)
-    : currentPage.markdown;
-
-  const parityDocContent = (
-    <div className="h-full overflow-y-auto">
-      <div className="p-4 lg:p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-foreground">Digitized Content</h3>
-          <Badge variant="outline" className="text-[10px]">
-            Parallel page view
-          </Badge>
-        </div>
-        <div className="mb-2">
-          <PageDivider
-            pageNum={currentPage.pageNum}
-            page={currentPage}
-            isFirst
-            actionLoading={actionLoading}
-            onApproveAll={handleApproveAllComponents}
-            onFlag={openFlagDialog}
-            statusBadge={pageStatusBadge}
-          />
-          {currentPageMarkdown ? (
-            renderPageComponents(currentPage, currentPageMarkdown)
-          ) : (
-            <p className="text-sm text-muted-foreground">No extraction data for this page.</p>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -840,71 +796,6 @@ export function ReviewInterface({
         </div>
 
         <div className="flex items-center gap-1.5">
-          {!isMobile && (
-            <>
-              <Button
-                variant={rightPaneMode === "parity" ? "default" : "outline"}
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setRightPaneMode("parity")}
-              >
-                Parallel
-              </Button>
-              <Button
-                variant={rightPaneMode === "continuous" ? "default" : "outline"}
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setRightPaneMode("continuous")}
-              >
-                Full flow
-              </Button>
-              {rightPaneMode === "continuous" && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 text-xs"
-                      onClick={() => setStrictSync((v) => !v)}
-                    >
-                      {strictSync ? "Strict sync on" : "Strict sync off"}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    Keeps the active page pinned in the right pane while navigating
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </>
-          )}
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() => setShowStructuredFields((v) => !v)}
-              >
-                {showStructuredFields ? (
-                  <>
-                    <PanelTopClose className="size-3.5 mr-1" />
-                    <span className="hidden sm:inline">Hide fields</span>
-                  </>
-                ) : (
-                  <>
-                    <PanelTopOpen className="size-3.5 mr-1" />
-                    <span className="hidden sm:inline">Show fields</span>
-                  </>
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {showStructuredFields
-                ? "Collapse field/signature blocks for tighter page alignment"
-                : "Show field/signature blocks for focused metadata review"}
-            </TooltipContent>
-          </Tooltip>
 
           <DropdownMenu>
             <Tooltip>
@@ -993,7 +884,7 @@ export function ReviewInterface({
                 highlightRect={focusedTarget?.pageNum === currentPage.pageNum ? focusedTarget.highlightRect : null}
               />
             ) : (
-              rightPaneMode === "parity" ? parityDocContent : continuousDocContent
+              continuousDocContent
             )}
           </div>
         ) : (
@@ -1012,7 +903,7 @@ export function ReviewInterface({
               <GripVertical className="size-3 text-muted-foreground" />
             </PanelResizeHandle>
             <Panel defaultSize={50} minSize={25}>
-              {rightPaneMode === "parity" ? parityDocContent : continuousDocContent}
+              {continuousDocContent}
             </Panel>
           </PanelGroup>
         )}
@@ -1095,6 +986,8 @@ function PageDivider({
   onApproveAll,
   onFlag,
   statusBadge,
+  onFocusFields,
+  onFocusSignatures,
 }: {
   pageNum: number;
   page?: ReviewPage;
@@ -1103,6 +996,8 @@ function PageDivider({
   onApproveAll: (page: ReviewPage) => Promise<void>;
   onFlag: (pageNum: number) => void;
   statusBadge: (page: ReviewPage) => React.ReactNode;
+  onFocusFields: (page: ReviewPage) => void;
+  onFocusSignatures: (page: ReviewPage) => void;
 }) {
   const pageSigs = page?.signatures?.filter((s) => s.status === "signed") ?? [];
   const pageKvCount = page?.keyValuePairs?.length ?? 0;
@@ -1124,17 +1019,32 @@ function PageDivider({
         {page && statusBadge(page)}
 
         {pageSigs.length > 0 && (
-          <Badge variant="outline" className="text-[9px] gap-0.5 border-info/30 text-info">
-            <PenTool className="size-2.5" />
-            {pageSigs.length} sig
-          </Badge>
+          <button
+            type="button"
+            onClick={() => page && onFocusSignatures(page)}
+            className="inline-flex items-center rounded-md"
+          >
+            <Badge variant="outline" className="text-[9px] gap-0.5 border-info/30 text-info hover:bg-info/10 cursor-pointer">
+              <PenTool className="size-2.5" />
+              {pageSigs.length} sig
+            </Badge>
+          </button>
         )}
 
         {pageKvCount > 0 && (
-          <Badge variant="outline" className="text-[9px] gap-0.5 border-primary/30 text-primary">
-            <KeyRound className="size-2.5" />
-            {pageKvCount} fields
-          </Badge>
+          <button
+            type="button"
+            onClick={() => page && onFocusFields(page)}
+            className="inline-flex items-center rounded-md"
+          >
+            <Badge
+              variant="outline"
+              className="text-[9px] gap-0.5 border-primary/30 text-primary hover:bg-primary/10 cursor-pointer"
+            >
+              <KeyRound className="size-2.5" />
+              {pageKvCount} fields
+            </Badge>
+          </button>
         )}
 
         <div className="ml-auto flex items-center gap-1">

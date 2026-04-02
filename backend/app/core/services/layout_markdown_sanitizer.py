@@ -9,18 +9,35 @@ _TRUNCATED_COMMENT_RE = re.compile(r"(?:<!\s*|<!--\s*)$")
 _ORPHAN_TABLE_WRAPPER_RE = re.compile(r"</table>\s*</td>\s*</tr>\s*</table>", re.IGNORECASE)
 _REPEATED_TABLE_OPEN_RE = re.compile(r"<{2,}\s*table>", re.IGNORECASE)
 _BROKEN_TABLE_JOIN_RE = re.compile(r"</t\s*<table>", re.IGNORECASE)
+_BROKEN_TABLE_OPEN_RE = re.compile(r"</<\s*table\s*>", re.IGNORECASE)
+_BROKEN_PAGEBREAK_TAIL_RE = re.compile(
+    r"(?:^|\n)\s*(?:[a-z]*break|eak|reak|agebreak)\s*-->\s*",
+    re.IGNORECASE,
+)
+_BROKEN_TABLE_ROW_OPEN_RE = re.compile(r"(?m)^(?P<indent>\s*)(tr|td|th|thead|tbody|tfoot|table)>\s*")
+_BROKEN_TABLE_ROW_CLOSE_RE = re.compile(r"(?m)^(?P<indent>\s*)/(tr|td|th|thead|tbody|tfoot|table)>\s*")
+_BROKEN_TABLE_ROW_CLOSE_NO_BRACKET_RE = re.compile(r"(?m)^(?P<indent>\s*)/(tr|td|th|thead|tbody|tfoot|table)\s*$")
+_BROKEN_PAGENUM_WITH_TABLE_RE = re.compile(r'<!--\s*PageNumber="[^"\n]*<table>', re.IGNORECASE)
+_BROKEN_TABLE_JOIN_NO_ANGLE_CLOSE_RE = re.compile(r"(?i)/(tr|td|th|thead|tbody|tfoot)\s*<table>")
 
 _SEVERE_REPAIRS = {
     "fixed_fragment_t_table",
     "fixed_fragment_abl_table",
     "removed_orphan_table_wrapper",
     "fixed_broken_table_join",
+    "fixed_broken_table_open",
 }
 
 _MEDIUM_REPAIRS = {
     "removed_table_td_suffix",
     "fixed_repeated_table_open",
     "removed_truncated_comment_tail",
+    "removed_broken_pagebreak_tail",
+    "fixed_missing_angle_table_tag",
+    "fixed_missing_angle_close_table_tag",
+    "fixed_stranded_table_close_token",
+    "removed_broken_pagenumber_comment",
+    "fixed_broken_table_join_no_angle_close",
 }
 
 
@@ -51,6 +68,12 @@ def sanitize_layout_markdown(md: str) -> tuple[str, list[str]]:
         repairs.append("fixed_broken_table_join")
         out = new
 
+    # OCR occasionally corrupts "<table>" into "</<table>".
+    new = _BROKEN_TABLE_OPEN_RE.sub("<table>", out)
+    if new != out:
+        repairs.append("fixed_broken_table_open")
+        out = new
+
     new = _ORPHAN_TABLE_WRAPPER_RE.sub("</table>", out)
     if new != out:
         repairs.append("removed_orphan_table_wrapper")
@@ -70,6 +93,41 @@ def sanitize_layout_markdown(md: str) -> tuple[str, list[str]]:
     new = _TRUNCATED_COMMENT_RE.sub("", out)
     if new != out:
         repairs.append("removed_truncated_comment_tail")
+        out = new
+
+    new = _BROKEN_PAGEBREAK_TAIL_RE.sub("\n", out)
+    if new != out:
+        repairs.append("removed_broken_pagebreak_tail")
+        out = new
+
+    # Repair malformed inline page-number comments like:
+    # <!-- PageNumber="Page 19 <table>
+    new = _BROKEN_PAGENUM_WITH_TABLE_RE.sub("<table>", out)
+    if new != out:
+        repairs.append("removed_broken_pagenumber_comment")
+        out = new
+
+    # Repair bare table tags missing opening `<` at line start (e.g. `tr>`).
+    new = _BROKEN_TABLE_ROW_OPEN_RE.sub(lambda m: f"{m.group('indent')}<{m.group(2)}>", out)
+    if new != out:
+        repairs.append("fixed_missing_angle_table_tag")
+        out = new
+
+    # Repair stranded close tags missing opening `<` (e.g. `/tr>`, `/td`).
+    new = _BROKEN_TABLE_ROW_CLOSE_RE.sub(lambda m: f"{m.group('indent')}</{m.group(2)}>", out)
+    if new != out:
+        repairs.append("fixed_missing_angle_close_table_tag")
+        out = new
+
+    new = _BROKEN_TABLE_ROW_CLOSE_NO_BRACKET_RE.sub(lambda m: f"{m.group('indent')}</{m.group(2)}>", out)
+    if new != out:
+        repairs.append("fixed_stranded_table_close_token")
+        out = new
+
+    # Repair broken joins like "/tr<table>" by closing then opening table.
+    new = _BROKEN_TABLE_JOIN_NO_ANGLE_CLOSE_RE.sub(lambda m: f"</{m.group(1)}>\n<table>", out)
+    if new != out:
+        repairs.append("fixed_broken_table_join_no_angle_close")
         out = new
 
     return out, repairs
