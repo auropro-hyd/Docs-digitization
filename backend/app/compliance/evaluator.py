@@ -25,6 +25,7 @@ from app.compliance.models import (
 from app.config.settings import get_settings
 from app.compliance.rules.registry import AuditRule, RuleBatch
 from app.core.ports.llm import LLMProvider
+from app.core.ports.vlm import VLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -174,9 +175,18 @@ def _build_batch_prompt(
         f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
         f"  confidence (float 0.0-1.0),\n"
         f"  severity (only if non_compliant: \"critical\"|\"major\"|\"minor\"|\"observation\"),\n"
-        f"  reasoning (REQUIRED for ALL statuses: 1-3 sentence explanation of WHY, "
-        f"referencing specific elements from the page content or metadata),\n"
-        f"  evidence (REQUIRED for ALL statuses: verbatim quote or metadata reference),\n"
+        f"  reasoning (REQUIRED for ALL statuses: 1-3 sentences explaining WHY this "
+        f"status was chosen. MUST reference at least ONE specific data point from the "
+        f"page — a field name, value, signature label, table cell, or section heading. "
+        f"Do NOT use vague statements like 'data appears compliant'. "
+        f"For compliant: cite what you found that satisfies the rule, e.g. "
+        f"'Done By field contains signature \"S. Patel\" with date 15/03/2025'. "
+        f"For non_compliant: cite what is missing or incorrect, e.g. "
+        f"'Checked By field is blank — no countersignature present'),\n"
+        f"  evidence (REQUIRED for ALL statuses: a VERBATIM excerpt (exact text or "
+        f"metadata value) from the page that supports your assessment. For compliant "
+        f"rules, quote the specific field or text that proves compliance. "
+        f"Example: 'Done by: S. Patel | Date: 15/03/2025 | Checked by: R. Kumar'),\n"
         f"  description (what the issue is — empty only if compliant),\n"
         f"  recommendation (remediation guidance — empty only if compliant).\n\n"
         f"IMPORTANT: If a rule is about signatures/initials/dates but the page has no "
@@ -198,7 +208,7 @@ def _build_batch_prompt(
 class RuleBatchEvaluator:
     """Evaluates a batch of rules against one page with retry on failure."""
 
-    _MAX_RETRIES = 1
+    _MAX_RETRIES = 3
 
     async def evaluate_batch(
         self,
@@ -271,6 +281,8 @@ async def run_agent_evaluation(
     prescreen_callback=None,
     section_map: dict[int, dict] | None = None,
     global_kv_pairs: list[dict] | None = None,
+    vlm: VLMProvider | None = None,
+    doc_id: str | None = None,
 ) -> list[tuple[str, int, RuleBatchResult]]:
     """Fan-out all (batch x page) combos for one agent, with concurrency limit.
 
@@ -385,6 +397,20 @@ async def run_agent_evaluation(
                     "status": "complete",
                 })
 
+    # ── Vision evaluation setup ─────────────────────────────────
+    compliance_settings = settings.compliance
+    vlm_available = (
+        vlm is not None
+        and compliance_settings.vlm_evaluation_enabled
+        and settings.vlm.enabled
+    )
+
+    vision_evaluator = None
+    if vlm_available:
+        from app.compliance.vision_evaluator import VisionBatchEvaluator
+        vision_evaluator = VisionBatchEvaluator()
+        logger.info("VLM enabled for agent %s — vision rules will be evaluated", agent)
+
     # ── Per-batch evaluation ─────────────────────────────────────
 
     async def _run(batch: RuleBatch, ext: dict) -> tuple[str, int, RuleBatchResult]:
@@ -421,29 +447,149 @@ async def run_agent_evaluation(
                 await progress_callback(completed, total_tasks, batch, result)
             return result
 
+        # Split rules by evaluation strategy
+        text_rules: list[AuditRule] = []
+        vision_only_rules: list[AuditRule] = []
+        text_and_vision_rules: list[AuditRule] = []
+
+        for rule in applicable_rules:
+            strategy = rule.evaluation_strategy
+            if strategy == "vision" and vlm_available:
+                vision_only_rules.append(rule)
+            elif strategy == "text_and_vision" and vlm_available:
+                text_and_vision_rules.append(rule)
+                text_rules.append(rule)
+            elif strategy == "vision" and not vlm_available:
+                if compliance_settings.vlm_fallback_to_text:
+                    text_rules.append(rule)
+                else:
+                    gate_evals.append(RuleEvaluation(
+                        rule_id=rule.id,
+                        status="not_applicable",
+                        confidence=1.0,
+                        reasoning="VLM unavailable — vision-only rule skipped",
+                        applicability_trace=["vlm_unavailable"],
+                    ))
+            else:
+                text_rules.append(rule)
+
+        all_vision_rules = vision_only_rules + text_and_vision_rules
+
         enriched = build_enriched_context(ext, page_num, global_kv_pairs=global_kv_pairs)
 
-        sub_batch = RuleBatch(
-            batch_id=batch.batch_id,
-            category=batch.category,
-            agent=batch.agent,
-            rules=applicable_rules,
-        )
+        # Run text and vision evaluations in parallel
+        text_coro = None
+        vision_coro = None
 
-        async with semaphore:
-            res_id, res_page, llm_result = await evaluator.evaluate_batch(
-                sub_batch, enriched, page_num, llm,
+        if text_rules:
+            text_batch = RuleBatch(
+                batch_id=batch.batch_id,
+                category=batch.category,
+                agent=batch.agent,
+                rules=text_rules,
+            )
+            text_coro = evaluator.evaluate_batch(
+                text_batch, enriched, page_num, llm,
                 section_info=sec_info,
             )
-            for ev in llm_result.evaluations:
-                ev.applicability_trace = gate_trace_map.get(ev.rule_id, [])
-            merged_evals = list(llm_result.evaluations) + gate_evals
+
+        if all_vision_rules and vision_evaluator and vlm:
+            page_image = await _load_page_image(doc_id, page_num)
+            if page_image:
+                vision_batch = RuleBatch(
+                    batch_id=f"{batch.batch_id}-vision",
+                    category=batch.category,
+                    agent=batch.agent,
+                    rules=all_vision_rules,
+                )
+                raw_vision_coro = vision_evaluator.evaluate_batch(
+                    vision_batch, page_image, page_num, vlm,
+                )
+                vision_coro = asyncio.wait_for(
+                    raw_vision_coro, timeout=compliance_settings.vlm_timeout,
+                )
+            else:
+                for rule in vision_only_rules:
+                    gate_evals.append(RuleEvaluation(
+                        rule_id=rule.id,
+                        status="not_applicable",
+                        reasoning="Page image unavailable for visual inspection",
+                        applicability_trace=["image_unavailable"],
+                    ))
+
+        async with semaphore:
+            coros = [c for c in (text_coro, vision_coro) if c is not None]
+            if not coros:
+                completed += 1
+                result = (batch.batch_id, page_num, RuleBatchResult(evaluations=gate_evals))
+                if progress_callback:
+                    await progress_callback(completed, total_tasks, batch, result)
+                return result
+
+            gathered = await asyncio.gather(*coros, return_exceptions=True)
+
+            all_evals: list[RuleEvaluation] = list(gate_evals)
+            all_cross_refs = []
+            text_eval_map: dict[str, RuleEvaluation] = {}
+            vision_eval_map: dict[str, RuleEvaluation] = {}
+
+            idx = 0
+            if text_coro is not None:
+                text_result = gathered[idx]
+                idx += 1
+                if isinstance(text_result, Exception):
+                    logger.error("Text batch %s page %d failed: %s", batch.batch_id, page_num, text_result)
+                    for r in text_rules:
+                        all_evals.append(RuleEvaluation(
+                            rule_id=r.id, status="error",
+                            description=f"Text evaluation failed: {text_result}",
+                        ))
+                else:
+                    _, _, llm_result = text_result
+                    for ev in llm_result.evaluations:
+                        ev.applicability_trace = gate_trace_map.get(ev.rule_id, [])
+                        text_eval_map[ev.rule_id] = ev
+                    all_cross_refs.extend(llm_result.cross_references)
+
+            if vision_coro is not None:
+                vision_result = gathered[idx]
+                if isinstance(vision_result, Exception):
+                    logger.error("Vision batch %s page %d failed: %s", batch.batch_id, page_num, vision_result)
+                    for r in vision_only_rules:
+                        all_evals.append(RuleEvaluation(
+                            rule_id=r.id, status="error",
+                            description=f"Vision evaluation failed: {vision_result}",
+                        ))
+                else:
+                    _, _, vlm_result = vision_result
+                    for ev in vlm_result.evaluations:
+                        vision_eval_map[ev.rule_id] = ev
+
+            # Merge results: vision-only, text-only, and text_and_vision
+            merged_rule_ids: set[str] = set()
+
+            for rule in vision_only_rules:
+                ev = vision_eval_map.get(rule.id)
+                if ev:
+                    merged_rule_ids.add(rule.id)
+                    all_evals.append(ev)
+
+            for rule in text_and_vision_rules:
+                merged_rule_ids.add(rule.id)
+                text_ev = text_eval_map.get(rule.id)
+                vision_ev = vision_eval_map.get(rule.id)
+                all_evals.append(_merge_text_vision(rule, text_ev, vision_ev))
+
+            for rule_id, ev in text_eval_map.items():
+                if rule_id not in merged_rule_ids:
+                    all_evals.append(ev)
+
             merged_result = RuleBatchResult(
-                evaluations=merged_evals,
-                cross_references=llm_result.cross_references,
+                evaluations=all_evals,
+                cross_references=all_cross_refs,
             )
             completed += 1
-            res = (res_id, res_page, merged_result)
+            res = (batch.batch_id, page_num, merged_result)
             if progress_callback:
                 await progress_callback(completed, total_tasks, batch, res)
             return res
@@ -459,6 +605,67 @@ async def run_agent_evaluation(
             valid.append(r)
 
     return valid
+
+
+async def _load_page_image(doc_id: str | None, page_num: int) -> bytes | None:
+    """Load a page image for VLM evaluation, returning None on failure."""
+    if not doc_id:
+        return None
+    try:
+        from app.compliance.page_image_loader import load_page_image
+        return await load_page_image(doc_id, page_num)
+    except Exception:
+        logger.warning("Failed to load page image for doc %s page %d", doc_id, page_num, exc_info=True)
+        return None
+
+
+def _merge_text_vision(
+    rule: AuditRule,
+    text_ev: RuleEvaluation | None,
+    vision_ev: RuleEvaluation | None,
+) -> RuleEvaluation:
+    """Merge text and vision evaluations for a text_and_vision rule.
+
+    Vision takes precedence for visual aspects (strikethrough, ink color, etc.)
+    while text evaluation provides context from OCR content.
+    """
+    if text_ev is None and vision_ev is None:
+        return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
+    if text_ev is None:
+        return vision_ev  # type: ignore[return-value]
+    if vision_ev is None:
+        return text_ev
+
+    # For visual aspects, vision result takes precedence
+    text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
+    vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
+
+    if vision_sev >= text_sev:
+        merged = RuleEvaluation(
+            rule_id=rule.id,
+            status=vision_ev.status,
+            severity=vision_ev.severity or text_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
+            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
+            description=vision_ev.description or text_ev.description,
+            recommendation=vision_ev.recommendation or text_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+    else:
+        merged = RuleEvaluation(
+            rule_id=rule.id,
+            status=text_ev.status,
+            severity=text_ev.severity or vision_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Text] {text_ev.reasoning} [Vision] {vision_ev.reasoning}",
+            evidence=f"[Text] {text_ev.evidence} [Vision] {vision_ev.evidence}",
+            description=text_ev.description or vision_ev.description,
+            recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+
+    return merged
 
 
 def _build_document_scope_prompt(
@@ -637,6 +844,24 @@ def assemble_agent_report(
             if status in ("non_compliant", "uncertain"):
                 finding_counter += 1
                 hitl_status = _compute_hitl_status(confidence)
+
+                # Determine evaluation channels and visual evidence from reasoning tags
+                eval_channels: list[str] = []
+                visual_evidence_text = ""
+                strategy = rule.evaluation_strategy if rule else "text"
+                if strategy == "vision":
+                    eval_channels = ["vision"]
+                elif strategy == "text_and_vision":
+                    eval_channels = ["text", "vision"]
+                else:
+                    eval_channels = ["text"]
+
+                reasoning = ev.reasoning or ""
+                if "[Vision]" in reasoning:
+                    parts = reasoning.split("[Vision]")
+                    if len(parts) > 1:
+                        visual_evidence_text = parts[-1].strip().rstrip("]").strip()
+
                 finding = ComplianceFinding(
                     finding_id=f"{agent}-{finding_counter}",
                     rule_id=ev.rule_id,
@@ -654,6 +879,8 @@ def assemble_agent_report(
                     recommendation=ev.recommendation,
                     applicability_trace=list(ev.applicability_trace),
                     hitl_status=hitl_status,
+                    evaluation_channels=eval_channels,
+                    visual_evidence=visual_evidence_text,
                 )
                 all_findings.append(finding)
 

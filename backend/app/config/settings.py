@@ -95,6 +95,9 @@ class AzureDIConfig(BaseModel):
     analyze_timeout_seconds: int = 900
     progress_poll_interval_seconds: int = 2
     progress_heartbeat_seconds: int = 30
+    submit_max_retries: int = 3
+    submit_retry_base_delay: float = 5.0
+    chunk_pages: int = 50
 
     def features_for_profile(self, profile: str | None) -> list[str]:
         key = (profile or "default").strip().lower()
@@ -156,6 +159,43 @@ class ComplianceLLMConfig(BaseModel):
     api_key: str = ""
 
 
+class VLMConfig(BaseModel):
+    """Vision Language Model provider settings.
+
+    Enables visual compliance checks (strikethroughs, ink color, correction
+    fluid, wet signatures, stamps, watermarks, etc.) that OCR text cannot assess.
+
+    Providers:
+      gemini: Google Generative Language API (cloud, no GPU needed)
+      vllm:   Self-hosted container via vLLM (Qwen3-VL, InternVL3, etc.)
+    """
+
+    enabled: bool = False
+    provider: str = "gemini"  # "gemini" | "vllm"
+
+    # Gemini
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_project: str = ""
+
+    # vLLM / OpenAI-compatible
+    vllm_base_url: str = "http://localhost:8200/v1"
+    vllm_model: str = "Qwen/Qwen3-VL-8B-Instruct"
+    vllm_api_key: str = ""
+
+    # Image processing
+    max_image_width: int = 2048
+    max_image_height: int = 2048
+    image_format: str = "png"  # "png" | "jpeg"
+    jpeg_quality: int = 95
+    render_scale: float = 2.0
+    store_page_images: bool = True
+
+    # Rate limiting
+    max_rpm: int = 60
+    max_concurrent: int = 5
+
+
 class ComplianceConfig(BaseModel):
     """Compliance audit agent settings.
 
@@ -189,6 +229,12 @@ class ComplianceConfig(BaseModel):
     auto_discover_checks: bool = True
     max_section_chars: int = 15000
 
+    # Vision evaluation
+    vlm_evaluation_enabled: bool = True
+    vlm_batch_size: int = 5
+    vlm_timeout: int = 180
+    vlm_fallback_to_text: bool = True
+
 
 class AppSettings(BaseSettings):
     """Application settings with layered configuration.
@@ -211,6 +257,7 @@ class AppSettings(BaseSettings):
     marker: MarkerConfig = Field(default_factory=MarkerConfig)
     azure_di: AzureDIConfig = Field(default_factory=AzureDIConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    vlm: VLMConfig = Field(default_factory=VLMConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     hitl: HITLConfig = Field(default_factory=HITLConfig)

@@ -706,85 +706,147 @@ class AzureDIOCRAdapter:
         )
         return self._client
 
-    async def extract(
+    # ── helpers for chunked extraction ──────────────────────────
+
+    @staticmethod
+    def _count_pdf_pages(pdf_path: str) -> int:
+        try:
+            import pypdfium2 as pdfium
+            doc = pdfium.PdfDocument(pdf_path)
+            n = len(doc)
+            doc.close()
+            return n
+        except Exception:
+            return 0
+
+    def _submit_with_retry(
         self,
-        pdf_path: str,
-        pages: list[int] | None = None,
-        progress_callback: ProgressCallback | None = None,
-    ) -> OCRResult:
-        client = self._get_client()
-        loop = asyncio.get_event_loop()
-        timeout_seconds = max(60, int(getattr(self._config, "analyze_timeout_seconds", 900) or 900))
-        poll_interval = max(1, int(getattr(self._config, "progress_poll_interval_seconds", 2) or 2))
-        heartbeat_seconds = max(5, int(getattr(self._config, "progress_heartbeat_seconds", 30) or 30))
-        extract_started = time.monotonic()
-        logger.info("Azure DI extract started for %s", pdf_path)
+        client,
+        pdf_bytes: bytes,
+        page_range: str | None,
+        progress_callback: ProgressCallback | None,
+    ):
+        """Submit to Azure DI with exponential-backoff retry on transient errors."""
+        from azure.ai.documentintelligence.models import (
+            AnalyzeDocumentRequest,
+            DocumentContentFormat,
+        )
 
-        def _analyze_with_progress():
-            from azure.ai.documentintelligence.models import (
-                AnalyzeDocumentRequest,
-                DocumentContentFormat,
-            )
+        max_retries = max(1, self._config.submit_max_retries)
+        base_delay = max(1.0, self._config.submit_retry_base_delay)
 
-            with open(pdf_path, "rb") as f:
-                pdf_bytes = f.read()
-
-            poller = client.begin_analyze_document(
-                "prebuilt-layout",
-                body=AnalyzeDocumentRequest(bytes_source=pdf_bytes),
-                features=self._config.features,
-                output_content_format=DocumentContentFormat.MARKDOWN,
-            )
-
-            if progress_callback is None:
-                return poller.result()
-
-            progress_callback(0, "Submitted for OCR analysis")
-            last_pct = -1
-            started = time.monotonic()
-            last_heartbeat = started
-
-            pm = poller.polling_method()
-
-            while not poller.done():
-                elapsed = int(time.monotonic() - started)
-                if elapsed >= timeout_seconds:
-                    raise TimeoutError(
-                        f"OCR analysis exceeded timeout of {timeout_seconds}s; "
-                        "please retry with a smaller file or increase timeout."
+        last_exc = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                poller = client.begin_analyze_document(
+                    "prebuilt-layout",
+                    body=AnalyzeDocumentRequest(bytes_source=pdf_bytes),
+                    pages=page_range,
+                    features=self._config.features,
+                    output_content_format=DocumentContentFormat.MARKDOWN,
+                )
+                return poller
+            except Exception as exc:
+                last_exc = exc
+                if attempt >= max_retries:
+                    break
+                delay = base_delay * (2 ** (attempt - 1))
+                range_label = page_range or "all"
+                logger.warning(
+                    "Azure DI submit attempt %d/%d failed for pages=%s: %s  "
+                    "Retrying in %.1fs …",
+                    attempt, max_retries, range_label, exc, delay,
+                )
+                if progress_callback:
+                    progress_callback(
+                        0, f"Retrying submission ({attempt}/{max_retries})…",
                     )
-                time.sleep(poll_interval)
+                time.sleep(delay)
 
-                try:
-                    pm.update_status()
-                except Exception:
-                    logger.debug("Progress poll failed, will retry", exc_info=True)
+        raise last_exc  # type: ignore[misc]
 
-                pct = _read_percent_completed(poller)
-                status_str = poller.status()
+    def _analyze_chunk(
+        self,
+        client,
+        pdf_bytes: bytes,
+        page_range: str | None,
+        timeout_seconds: int,
+        poll_interval: int,
+        heartbeat_seconds: int,
+        progress_callback: ProgressCallback | None,
+    ):
+        """Submit one page range, poll until complete, return raw Azure result."""
+        poller = self._submit_with_retry(
+            client, pdf_bytes, page_range, progress_callback,
+        )
 
-                if pct is not None and pct != last_pct:
-                    last_pct = pct
-                    progress_callback(pct, f"Analyzing ({pct}%)")
-                elif last_pct < 0:
-                    label = "Analyzing..." if status_str == "running" else f"Status: {status_str}"
-                    progress_callback(5, label)
-
-                now = time.monotonic()
-                if now - last_heartbeat >= heartbeat_seconds:
-                    last_heartbeat = now
-                    fallback_pct = max(5, last_pct if last_pct >= 0 else 5)
-                    logger.info("Azure DI polling heartbeat: status=%s elapsed=%ss pct=%s", status_str, elapsed, pct)
-                    progress_callback(fallback_pct, f"Still analyzing ({elapsed}s elapsed)")
-
-            progress_callback(100, "Analysis complete")
+        if progress_callback is None:
             return poller.result()
 
-        result = await loop.run_in_executor(None, _analyze_with_progress)
-        analyze_elapsed = int(time.monotonic() - extract_started)
-        logger.info("Azure DI analyze call completed in %ss for %s", analyze_elapsed, pdf_path)
+        range_label = page_range or "all"
+        progress_callback(0, f"Pages {range_label}: submitted")
+        last_pct = -1
+        started = time.monotonic()
+        last_heartbeat = started
+        pm = poller.polling_method()
 
-        ocr_pages: list[OCRPageResult] = []
+        while not poller.done():
+            elapsed = int(time.monotonic() - started)
+            if elapsed >= timeout_seconds:
+                raise TimeoutError(
+                    f"OCR analysis exceeded timeout of {timeout_seconds}s "
+                    f"for pages={range_label}; retry or increase timeout."
+                )
+            time.sleep(poll_interval)
+
+            try:
+                pm.update_status()
+            except Exception:
+                logger.debug("Progress poll failed, will retry", exc_info=True)
+
+            pct = _read_percent_completed(poller)
+            status_str = poller.status()
+
+            if pct is not None and pct != last_pct:
+                last_pct = pct
+                progress_callback(pct, f"Pages {range_label}: analyzing ({pct}%)")
+            elif last_pct < 0:
+                label = (
+                    f"Pages {range_label}: analyzing…"
+                    if status_str == "running"
+                    else f"Pages {range_label}: {status_str}"
+                )
+                progress_callback(5, label)
+
+            now = time.monotonic()
+            if now - last_heartbeat >= heartbeat_seconds:
+                last_heartbeat = now
+                fallback_pct = max(5, last_pct if last_pct >= 0 else 5)
+                logger.info(
+                    "Azure DI heartbeat: pages=%s status=%s elapsed=%ss pct=%s",
+                    range_label, status_str, elapsed, pct,
+                )
+                progress_callback(
+                    fallback_pct, f"Pages {range_label}: still analyzing ({elapsed}s)",
+                )
+
+        progress_callback(100, f"Pages {range_label}: complete")
+        return poller.result()
+
+    def _process_result(
+        self,
+        result,
+        page_filter: list[int] | None,
+    ) -> tuple[
+        list[OCRPageResult],
+        str,
+        list[dict],
+        list[KeyValuePair],
+        list[StyleSpan],
+        list[SignatureRegion],
+        list[LanguageSpan],
+    ]:
+        """Extract structured data from a single Azure DI result object."""
         content = result.content or ""
 
         table_meta = self._extract_table_metadata(result)
@@ -796,12 +858,12 @@ class AzureDIOCRAdapter:
         all_languages = _extract_languages(result)
         all_formulas = _extract_formulas(result)
         all_signatures = _detect_signatures(result, all_styles, result.pages)
-
         para_strip_ranges = _build_paragraph_strip_ranges(result)
 
+        ocr_pages: list[OCRPageResult] = []
         for az_page in result.pages or []:
             page_num = az_page.page_number
-            if pages and page_num not in pages:
+            if page_filter and page_num not in page_filter:
                 continue
 
             words: list[OCRWord] = []
@@ -842,8 +904,6 @@ class AzureDIOCRAdapter:
                 logger.info(f"Page {page_num}: fell back to word concatenation (no spans)")
             page_markdown, page_repairs = sanitize_layout_markdown(page_markdown)
 
-            # If markdown appears table-corrupted, retry with reconstructed table HTML
-            # to preserve grid semantics while keeping the default path lightweight.
             if any(tag in _TABLE_CORRUPTION_REPAIR_TAGS for tag in page_repairs):
                 rebuilt_page_md = _extract_page_markdown(
                     content,
@@ -883,23 +943,125 @@ class AzureDIOCRAdapter:
         for page in ocr_pages:
             page.markdown = _cleanup_markdown(page.markdown)
 
-        logger.info(
-            f"Extraction complete: {len(ocr_pages)} pages, "
-            f"{len(all_kv_pairs)} KV pairs, {len(all_styles)} style spans, "
-            f"{len(all_signatures)} signatures, {len(all_languages)} language spans, "
-            f"{sum(len(v) for v in all_formulas.values())} formulas"
+        return (
+            ocr_pages,
+            processed_full,
+            table_meta,
+            all_kv_pairs,
+            all_styles,
+            all_signatures,
+            all_languages,
         )
+
+    # ── main entry point ─────────────────────────────────────────
+
+    async def extract(
+        self,
+        pdf_path: str,
+        pages: list[int] | None = None,
+        progress_callback: ProgressCallback | None = None,
+    ) -> OCRResult:
+        client = self._get_client()
+        loop = asyncio.get_event_loop()
+        timeout_seconds = max(60, int(getattr(self._config, "analyze_timeout_seconds", 900) or 900))
+        poll_interval = max(1, int(getattr(self._config, "progress_poll_interval_seconds", 2) or 2))
+        heartbeat_seconds = max(5, int(getattr(self._config, "progress_heartbeat_seconds", 30) or 30))
+        chunk_size = max(10, self._config.chunk_pages)
+        extract_started = time.monotonic()
+
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+        total_pages = self._count_pdf_pages(pdf_path) if pages is None else len(pages)
+        logger.info(
+            "Azure DI extract started for %s (%d pages, %.1f MB)",
+            pdf_path, total_pages, len(pdf_bytes) / (1024 * 1024),
+        )
+
+        # Build page ranges: use caller's list, or chunk by chunk_pages
+        if pages is not None:
+            page_ranges = [
+                ",".join(str(p) for p in pages[i : i + chunk_size])
+                for i in range(0, len(pages), chunk_size)
+            ]
+        elif total_pages > chunk_size:
+            page_ranges = [
+                f"{start}-{min(start + chunk_size - 1, total_pages)}"
+                for start in range(1, total_pages + 1, chunk_size)
+            ]
+        else:
+            page_ranges = [None]  # single call, no page filter
+
+        num_chunks = len(page_ranges)
+        if num_chunks > 1:
+            logger.info(
+                "Splitting %d pages into %d chunks of ≤%d pages",
+                total_pages, num_chunks, chunk_size,
+            )
+
+        merged_pages: list[OCRPageResult] = []
+        merged_full_parts: list[str] = []
+        merged_table_meta: list[dict] = []
+        merged_kv: list[KeyValuePair] = []
+        merged_styles: list[StyleSpan] = []
+        merged_signatures: list[SignatureRegion] = []
+        merged_languages: list[LanguageSpan] = []
+
+        for chunk_idx, page_range in enumerate(page_ranges, 1):
+            chunk_label = page_range or "all"
+            if num_chunks > 1 and progress_callback:
+                pct = int((chunk_idx - 1) / num_chunks * 100)
+                progress_callback(
+                    pct, f"Chunk {chunk_idx}/{num_chunks} (pages {chunk_label})",
+                )
+
+            logger.info(
+                "Azure DI chunk %d/%d: pages=%s", chunk_idx, num_chunks, chunk_label,
+            )
+            result = await loop.run_in_executor(
+                None,
+                lambda pr=page_range: self._analyze_chunk(
+                    client, pdf_bytes, pr,
+                    timeout_seconds, poll_interval, heartbeat_seconds,
+                    progress_callback if num_chunks == 1 else None,
+                ),
+            )
+
+            (
+                chunk_pages, chunk_full, chunk_table_meta,
+                chunk_kv, chunk_styles, chunk_sigs, chunk_langs,
+            ) = self._process_result(result, None)
+
+            merged_pages.extend(chunk_pages)
+            merged_full_parts.append(chunk_full)
+            merged_table_meta.extend(chunk_table_meta)
+            merged_kv.extend(chunk_kv)
+            merged_styles.extend(chunk_styles)
+            merged_signatures.extend(chunk_sigs)
+            merged_languages.extend(chunk_langs)
+
+        merged_pages.sort(key=lambda p: p.page_num)
+
         total_elapsed = int(time.monotonic() - extract_started)
-        logger.info("Azure DI full extraction pipeline completed in %ss for %s", total_elapsed, pdf_path)
+        logger.info(
+            "Extraction complete: %d pages, %d KV pairs, %d style spans, "
+            "%d signatures, %d language spans (%d chunks in %ss for %s)",
+            len(merged_pages), len(merged_kv), len(merged_styles),
+            len(merged_signatures), len(merged_languages),
+            num_chunks, total_elapsed, pdf_path,
+        )
+
+        if progress_callback:
+            progress_callback(100, "Analysis complete")
 
         return OCRResult(
-            pages=ocr_pages,
-            full_markdown=processed_full,
-            table_metadata=table_meta,
-            key_value_pairs=all_kv_pairs,
-            styles=all_styles,
-            signatures=all_signatures,
-            languages=all_languages,
+            pages=merged_pages,
+            full_markdown="\n\n".join(merged_full_parts),
+            table_metadata=merged_table_meta,
+            key_value_pairs=merged_kv,
+            styles=merged_styles,
+            signatures=merged_signatures,
+            languages=merged_languages,
         )
 
     @staticmethod

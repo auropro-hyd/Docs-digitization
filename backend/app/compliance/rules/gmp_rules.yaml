@@ -123,22 +123,24 @@ categories:
     applicable_page_types: [form, content]
     rules:
       14:
+        evaluation_strategy: vision
+        visual_checks: [VC-STRIKE]
         pass_criteria: >
           Corrections must use single-line strikethrough. The original entry
           must remain readable beneath. Erasure, whiteout, or complete
-          obliteration is non-compliant.
-          NOTE: OCR cannot reliably detect strikethroughs in scanned
-          documents — strikethrough text may render as normal text or
-          garbled characters. Do NOT assume non-compliance from garbled
-          OCR text near corrections.
+          obliteration is non-compliant. Vision model will detect
+          strikethrough type and verify original text readability.
         keywords: [correction, strikethrough, amended, corrected]
         skip_conditions:
           - "Page has no visible corrections -> not_applicable"
 
       15:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-STRIKE]
         pass_criteria: >
           Every correction must be accompanied by initials (or name) and the
-          date of correction.
+          date of correction. Vision: verify initials and date appear next
+          to each struck-through entry.
         keywords: [correction, initial, date, corrected by]
         skip_conditions:
           - "Page has no visible corrections -> not_applicable"
@@ -149,18 +151,16 @@ categories:
           - "Page has no corrections requiring documented reasons -> not_applicable"
 
       17:
+        evaluation_strategy: vision
+        visual_checks: [VC-CORRECTION]
         pass_criteria: >
-          Look for signs of correction fluid, erasure marks, or characters
-          written over previous entries. Any of these is non-compliant.
-          IMPORTANT: This rule requires VISUAL inspection. OCR text alone
-          cannot determine if correction fluid or erasure was used.
-          Garbled OCR text is NOT evidence of overwriting — it is caused
-          by OCR struggling with handwriting. Default to compliant unless
-          there is explicit textual evidence (e.g., '[WHITEOUT]', '[ERASED]').
+          No correction fluid, erasure marks, or overwritten entries allowed.
+          Vision model must inspect for white patches (correction fluid),
+          smeared areas (erasure), or double-layered text (overwriting).
+          Any detection is non-compliant.
         keywords: [correction fluid, whiteout, erased, overwritten]
         skip_conditions:
           - "Page has no visible corrections or overwriting -> not_applicable"
-        notes: "VLM required for reliable visual detection. LLM should default to compliant."
 
       18:
         applicable_section_types: [electronic_records]
@@ -217,12 +217,15 @@ categories:
           - "Page has no yield deviation records -> not_applicable"
 
       26:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         keywords: [yield, verified, checked by, countersigned, second person]
         pass_criteria: >
           Yield calculations must have a verification signature (Checked by
           or Verified by) from a second person. ANY text in the Checked by
           or Verified by column counts as valid — including garbled OCR of
           handwritten signatures.
+          Vision: verify the signature is a genuine handwritten mark.
 
   # ── In-Process Controls (rules 27-31) ──────────────────────
   in_process_controls:

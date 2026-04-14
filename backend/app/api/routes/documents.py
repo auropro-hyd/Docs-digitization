@@ -160,6 +160,27 @@ async def get_document_pdf(doc_id: str):
     )
 
 
+@router.get("/{doc_id}/pages/{page_num}/image")
+async def get_page_image(doc_id: str, page_num: int):
+    """Serve a rendered page image (PNG).
+
+    Returns a cached image if available, otherwise renders on-demand from
+    the original PDF.
+    """
+    from app.compliance.page_image_loader import load_page_image
+
+    image_bytes = await load_page_image(doc_id, page_num)
+    if image_bytes is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not render page {page_num} for doc {doc_id}",
+        )
+
+    from fastapi.responses import Response
+
+    return Response(content=image_bytes, media_type="image/png")
+
+
 @router.delete("/{doc_id}")
 async def delete_document(doc_id: str):
     """Delete a document and all its associated data."""

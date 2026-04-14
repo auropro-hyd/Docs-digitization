@@ -94,6 +94,8 @@ class AuditRule:
     skip_conditions: list[str] = field(default_factory=list)
     pass_criteria: str = ""
     evaluation_mode: str = "llm"  # "llm" | "cannot_evaluate"
+    evaluation_strategy: str = "text"  # "text" | "vision" | "text_and_vision"
+    visual_checks: list[str] = field(default_factory=list)
     cannot_evaluate_reason: str = ""
     requires_external_data: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
@@ -113,11 +115,11 @@ class RuleBatch:
 _YAML_LIST_FIELDS = frozenset({
     "applicable_page_types", "applicable_section_types", "skip_conditions",
     "keywords", "requires_external_data", "applicable_document_types",
-    "excluded_document_types", "cross_section_requirements",
+    "excluded_document_types", "cross_section_requirements", "visual_checks",
 })
 _YAML_STR_FIELDS = frozenset({
-    "scope", "severity", "evaluation_mode", "cannot_evaluate_reason",
-    "pass_criteria", "notes",
+    "scope", "severity", "evaluation_mode", "evaluation_strategy",
+    "cannot_evaluate_reason", "pass_criteria", "notes",
 })
 
 
@@ -225,6 +227,8 @@ def _finalise_rule(
         skip_conditions=_as_str_list(ov.get("skip_conditions", [])),
         pass_criteria=str(ov.get("pass_criteria", "") or "").strip(),
         evaluation_mode=ov.get("evaluation_mode", "llm"),
+        evaluation_strategy=ov.get("evaluation_strategy", "text"),
+        visual_checks=_as_str_list(ov.get("visual_checks", [])),
         cannot_evaluate_reason=str(ov.get("cannot_evaluate_reason", "") or "").strip(),
         requires_external_data=_as_str_list(ov.get("requires_external_data", [])),
         keywords=_as_str_list(ov.get("keywords", [])),

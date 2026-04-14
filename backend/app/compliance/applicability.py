@@ -29,7 +29,7 @@ from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
 
-_PRESCREEN_MAX_CONTENT_CHARS = 1200
+_PRESCREEN_MAX_CONTENT_CHARS = 3000
 
 _PRESCREEN_SYSTEM = (
     "You are a pharmaceutical compliance triage specialist. "
@@ -56,7 +56,7 @@ def _build_prescreen_prompt(
     """Build a compact prompt for the applicability pre-screen."""
     rule_lines = []
     for r in rules:
-        summary = r.text[:100]
+        summary = r.text[:200]
         rule_lines.append(f"  {r.id}: {summary}")
     rules_block = "\n".join(rule_lines)
 
@@ -238,7 +238,17 @@ class ApplicabilityGate:
 
         if include_keyword_gate and rule.keywords:
             md_lower = extraction.get("markdown", "").lower()
-            if not any(kw.lower() in md_lower for kw in rule.keywords):
+            # Also search KV keys/values and signature labels so keywords
+            # match structured metadata, not just raw markdown.
+            kv_text = " ".join(
+                f"{kv.get('key', '')} {kv.get('value', '')}"
+                for kv in extraction.get("key_value_pairs", [])
+            ).lower()
+            sig_text = " ".join(
+                s.get("label", "") for s in extraction.get("signatures", [])
+            ).lower()
+            searchable = f"{md_lower} {kv_text} {sig_text}"
+            if not any(kw.lower() in searchable for kw in rule.keywords):
                 reason = (
                     f"None of the required keywords {rule.keywords[:5]} "
                     f"found on this page"

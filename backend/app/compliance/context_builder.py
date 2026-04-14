@@ -146,6 +146,10 @@ def classify_page_type(extraction: dict) -> str:
     """Classify a page based on its metadata for rule applicability filtering.
 
     Returns one of: "form", "printed", "cover", "index", "content".
+
+    BMR/BPCR pages are almost always forms — the classifier errs toward
+    "form" when any structural indicator is present (tables, KV pairs,
+    signatures, selection marks, handwriting, or form-related keywords).
     """
     hw_count = extraction.get("handwritten_count", 0)
     kv_pairs = extraction.get("key_value_pairs", [])
@@ -159,14 +163,20 @@ def classify_page_type(extraction: dict) -> str:
         if any(kw in md_lower for kw in ["batch", "product", "manufacturing", "record"]):
             return "cover"
 
-    if hw_count > 0 or len(kv_pairs) > 2 or len(sigs) > 0 or len(sel_marks) > 2:
+    if hw_count > 0 or len(kv_pairs) > 0 or len(sigs) > 0 or len(sel_marks) > 0:
         return "form"
 
-    md_lower = markdown[:300].lower()
+    md_lower = markdown[:500].lower()
     if any(kw in md_lower for kw in ["table of contents", "index", "list of"]):
         return "index"
 
-    if hw_count == 0 and len(kv_pairs) == 0 and len(sigs) == 0:
-        return "printed"
+    # Tables, column headers, and form-like keywords strongly suggest a form
+    _FORM_INDICATORS = [
+        "<table", "done by", "checked by", "verified by", "date", "sign",
+        "batch", "lot", "qty", "quantity", "result", "remarks",
+        "yes", "no", "n/a", "na", "n.a.", "approved", "rejected",
+    ]
+    if any(kw in md_lower for kw in _FORM_INDICATORS):
+        return "form"
 
     return "content"
