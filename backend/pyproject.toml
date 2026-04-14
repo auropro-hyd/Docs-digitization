@@ -23,6 +23,9 @@ dependencies = [
     "httpx",
     "pypdfium2>=4.0",
     "markdown",
+    "google-genai",
+    "openai",
+    "pillow",
 ]
 
 [project.optional-dependencies]

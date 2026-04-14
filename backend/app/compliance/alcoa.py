@@ -17,6 +17,7 @@ from app.compliance.models import AgentReport
 from app.compliance.rules.registry import RuleRegistry
 from app.config.settings import ComplianceConfig
 from app.core.ports.llm import LLMProvider
+from app.core.ports.vlm import VLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +25,17 @@ AGENT_NAME = "alcoa"
 
 
 class ALCOAAgent:
-    def __init__(self, llm: LLMProvider, registry: RuleRegistry, config: ComplianceConfig):
+    def __init__(
+        self,
+        llm: LLMProvider,
+        registry: RuleRegistry,
+        config: ComplianceConfig,
+        vlm: VLMProvider | None = None,
+    ):
         self._llm = llm
         self._registry = registry
         self._config = config
+        self._vlm = vlm
 
     async def review_document(
         self,
@@ -37,6 +45,7 @@ class ALCOAAgent:
         prescreen_callback=None,
         section_map: dict[int, dict] | None = None,
         global_kv_pairs: list[dict] | None = None,
+        doc_id: str | None = None,
     ) -> AgentReport:
         page_batches = self._registry.get_batches(
             AGENT_NAME,
@@ -64,6 +73,8 @@ class ALCOAAgent:
             prescreen_callback=prescreen_callback,
             section_map=section_map,
             global_kv_pairs=global_kv_pairs,
+            vlm=self._vlm,
+            doc_id=doc_id,
         )
 
         doc_results = await run_document_scope_evaluation(

@@ -92,7 +92,7 @@ def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
 
     for f in findings:
         status = str(f.get("hitl_status", "auto_approved"))
-        if status == "user_rejected":
+        if status == "user_rejected" or f.get("resolved", False):
             continue
         sev = str(f.get("severity", "observation")).lower()
         penalty = int(weights.get(sev, 1))
@@ -241,6 +241,30 @@ async def _run_compliance_pipeline(doc_id: str, doc_dir: Path, selected_agents: 
                 page_num = int(page_key) if str(page_key).isdigit() else 0
                 extractions.append({"page_num": page_num, "markdown": md})
 
+        # Apply HITL corrections: overlay user-edited content from
+        # component_decisions into extractions so compliance evaluates
+        # the corrected text, not the original OCR output.
+        comp_decisions: dict = data.get("component_decisions", {})
+        if comp_decisions:
+            raw_md_overlay: dict = data.get("raw_markdown", {})
+            for ext in extractions:
+                pn = ext.get("page_num", 0)
+                content_key = f"p{pn}-content"
+                decision = comp_decisions.get(content_key, {})
+                if decision.get("action") == "edit" and decision.get("value"):
+                    ext["markdown"] = decision["value"]
+                elif str(pn) in raw_md_overlay:
+                    # Also pick up any raw_markdown overrides from the
+                    # page-level edit endpoint (POST .../pages/{n}/edit)
+                    ext["markdown"] = raw_md_overlay[str(pn)]
+
+                # Overlay edited KV field values
+                for kv in ext.get("key_value_pairs", []):
+                    kv_key = kv.get("component_id", "")
+                    kv_decision = comp_decisions.get(kv_key, {})
+                    if kv_decision.get("action") == "edit" and kv_decision.get("value"):
+                        kv["value"] = kv_decision["value"]
+
         from app.workflow.compliance_graph import run_compliance_pipeline
 
         await run_compliance_pipeline(
@@ -363,9 +387,14 @@ async def resolve_finding(doc_id: str, finding_id: str):
                 finding["resolved"] = new_resolved
                 break
 
+    _recompute_review_adjusted_scores(report_data)
     result_path.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
 
-    return {"finding_id": finding_id, "resolved": new_resolved}
+    return {
+        "finding_id": finding_id,
+        "resolved": new_resolved,
+        "review_adjusted_score": report_data.get("review_adjusted_score"),
+    }
 
 
 # ── POST /findings/{finding_id}/review (HITL) ─────────────────

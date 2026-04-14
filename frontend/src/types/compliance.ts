@@ -37,6 +37,14 @@ export interface AgentRulesResponse {
   total_rules: number;
 }
 
+export interface VisualRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+}
+
 export interface ComplianceFinding {
   finding_id: string;
   rule_id: string;
@@ -56,4 +64,7 @@ export interface ComplianceFinding {
   resolved: boolean;
   applicability_trace?: string[];
   user_comment?: string;
+  evaluation_channels?: string[];
+  visual_evidence?: string;
+  visual_regions?: VisualRegion[];
 }

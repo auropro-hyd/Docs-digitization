@@ -29,6 +29,8 @@ categories:
     applicable_page_types: [form]
     rules:
       1:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         applicable_section_types: [manufacturing_operations, cleaning_log, qc_report]
         pass_criteria: >
           Any text in a "Done by" or "Checked by" column counts as valid
@@ -38,6 +40,8 @@ categories:
           so ANY non-empty text in these columns should be accepted as a
           valid handwritten entry. A date (even with OCR errors like '2015'
           instead of '2025') accompanying it counts as present.
+          Vision: verify signature columns contain actual handwritten marks
+          (wet signatures) rather than typed placeholder text.
         skip_conditions:
           - "Row contains only dashes (-/---/—) in all cells -> not_applicable"
           - "Page has no tabular data with signature/identity columns -> not_applicable"
@@ -66,6 +70,8 @@ categories:
         requires_external_data: [signature_log]
 
       5:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         applicable_section_types: [manufacturing_operations]
         pass_criteria: >
           Both "Done by" and "Checked by" columns must contain text for
@@ -74,24 +80,23 @@ categories:
           A step is critical if it involves weighing, charging, sampling,
           or quality-impacting actions. Rows where ALL cells contain only
           dashes (-/—) indicate the step was not performed and are compliant.
+          Vision: verify wet ink signatures are present in both columns.
         skip_conditions:
           - "Page has no Done by / Checked by columns -> not_applicable"
           - "Row contains only dashes (-/---/—) in all cells -> not_applicable"
         keywords: [done by, checked by]
 
       6:
+        evaluation_strategy: vision
+        visual_checks: [VC-STRIKE]
         applicable_page_types: [form, content]
         applicable_section_types: []
         pass_criteria: >
-          Corrections must show a single-line strikethrough of the original
-          entry (original still readable), accompanied by the corrected value,
-          initials of the corrector, and the date of correction.
-          NOTE: OCR cannot reliably detect strikethroughs in scanned
-          documents. Strikethrough text may appear as normal text, or as
-          garbled characters. Do NOT assume non-compliance just because
-          OCR text looks unusual near a correction. Only flag if there is
-          clear evidence of an uncorrected overwrite (e.g., two different
-          values in the same field with no correction annotation).
+          Single-line strikethrough used for corrections. Original text must
+          remain readable beneath the strikethrough. Corrections must include
+          initials and date next to the struck-through text. Multiple
+          strikethrough lines, scribbling out, or rendering original text
+          illegible is non-compliant.
         skip_conditions:
           - "Page contains no visible corrections, strikethroughs, or amendments -> not_applicable"
         keywords: [correction, strikethrough, amended, corrected, overwritten]
@@ -145,12 +150,15 @@ categories:
         keywords: [automated, system, process initiated, auto, PLC]
 
       12:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         applicable_section_types: [deviation, oos_investigation, oot_investigation]
         pass_criteria: >
           Deviation/OOS/OOT records should include completion evidence:
           completion date and required role sign-offs (manufacturing, QC, QA
           as applicable by template). If the section exists but required
           completion/signature fields are empty, mark non-compliant.
+          Vision: verify sign-off fields contain actual handwritten signatures.
         skip_conditions:
           - "Page contains no deviation or OOS/OOT investigation content -> not_applicable"
         keywords: [deviation, OOS, OOT, investigation, root cause, CAPA]
@@ -171,6 +179,8 @@ categories:
     applicable_page_types: [form, content]
     rules:
       15:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CORRECTION]
         pass_criteria: >
           Evaluate whether the page structure and printed text are clear.
           IMPORTANT: Garbled or unusual text in handwritten fields (Done by,
@@ -179,37 +189,37 @@ categories:
           flag OCR artifacts as overwritten or unclear entries. Only flag
           non-compliant if printed/typed text is genuinely jumbled or if
           entire sections of the page are missing/unreadable.
+          Vision: detect overwriting, erasure marks, or correction fluid
+          that impairs legibility of original entries.
         skip_conditions:
           - "If the only 'unclear' text is in handwritten signature/date columns, this is OCR noise -> compliant"
 
       16:
+        evaluation_strategy: vision
+        visual_checks: [VC-DOC-QUALITY]
         pass_criteria: >
-          This rule requires VISUAL inspection of the physical document.
-          OCR text alone CANNOT determine whether smudges, fading, or pencil
-          marks exist. Garbled OCR text (e.g., '30/09/20#', '3cleader') is
-          an OCR artifact from reading handwriting, NOT evidence of smudges
-          or document damage. Mark compliant unless the page appears to be
-          mostly blank or structurally damaged (e.g., entire columns missing).
-        notes: >
-          Visual defects require VLM (Vision-Language Model) for reliable
-          detection. LLM evaluating OCR text cannot assess physical quality.
+          Page must be free of smudges, fading, water damage, tears, or
+          pencil marks that impair readability of any GMP-critical data.
+          Minor cosmetic marks that do not affect legibility are acceptable.
 
       17:
+        evaluation_strategy: vision
+        visual_checks: [VC-STICKY-NOTE]
         pass_criteria: >
-          This rule requires VISUAL inspection. OCR cannot detect sticky
-          notes, pencil marks, or ink colors. Garbled handwritten text
-          (e.g., 'staten', 'Noga') is NOT evidence of unapproved inks —
-          it is OCR's attempt at reading normal handwriting. Mark compliant
-          unless there is explicit textual evidence of temporary annotations
-          (e.g., '[DRAFT]', '[PENCIL NOTE]', '[POST-IT]').
-        notes: "VLM recommended. LLM should default to compliant for this rule."
+          Page must not contain any temporary annotations such as sticky
+          notes, Post-it notes, pencil annotations, or unauthorized
+          markings. Any temporary annotation found is non-compliant.
 
       18:
+        evaluation_strategy: vision
+        visual_checks: [VC-ATTACHMENT]
         skip_conditions:
           - "Page has no attachments, labels, or affixed items -> not_applicable"
         keywords: [attachment, label, sticker, affixed, pasted]
 
       19:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-PAGINATION]
         applicable_page_types: [form, content, printed, cover, index]
         pass_criteria: >
           Page numbering must be present. Look for "Page X of Y", "Page: X",
@@ -218,28 +228,32 @@ categories:
           OCR reads like "Page 6 of 97" or "Page : 6" count as valid
           page numbering. Do NOT flag missing page numbers if the header
           or footer contains any recognizable page reference.
+          Vision: verify page number is visible and legible in header/footer.
         keywords: [page, of]
 
       20:
+        evaluation_strategy: vision
+        visual_checks: [VC-BARCODE]
         skip_conditions:
           - "Page has no barcodes or labels -> not_applicable"
         keywords: [barcode, label, QR, scan]
 
       21:
+        evaluation_strategy: vision
+        visual_checks: [VC-DOC-QUALITY]
         applicable_page_types: [printed]
         skip_conditions:
           - "Page is not a printed copy or printout -> not_applicable"
 
       22:
+        evaluation_strategy: vision
+        visual_checks: [VC-INK-COLOR]
         pass_criteria: >
-          This rule requires VISUAL inspection — OCR text alone cannot
-          determine ink color or whether entries are in pencil vs pen.
-          Garbled text from handwritten fields does NOT indicate pencil use.
-          Mark compliant unless there is explicit textual evidence such as
-          '[PENCIL]' or metadata indicating non-permanent ink.
+          All handwritten entries must be in permanent ink (blue or black).
+          Pencil, red ink, or other non-permanent marking methods are
+          non-compliant. Classify each handwritten region by ink type.
         skip_conditions:
           - "Page has no handwritten content (handwritten_count = 0) -> not_applicable"
-          - "OCR cannot determine ink type — default to compliant"
 
       23:
         applicable_page_types: []
@@ -248,6 +262,8 @@ categories:
           - "Page is from a paper/scanned document, not an electronic record -> not_applicable"
 
       24:
+        evaluation_strategy: vision
+        visual_checks: [VC-CHART]
         skip_conditions:
           - "Page contains no charts, graphs, or figures -> not_applicable"
         keywords: [chart, graph, figure, plot, diagram, scale]
@@ -342,10 +358,13 @@ categories:
     applicable_page_types: []
     rules:
       34:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-STAMP-SEAL]
         pass_criteria: >
           The document must appear to be the original record, not a
           transcribed copy. Look for "ORIGINAL" stamps or controlled
           copy markings.
+          Vision: detect presence of official stamps, seals, or watermarks.
 
       35:
         skip_conditions:
@@ -353,6 +372,8 @@ categories:
         keywords: [draft, convenience copy, for information only, uncontrolled]
 
       36:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-STAMP-SEAL]
         keywords: [controlled copy, document control, revision, copy number]
 
       37:
@@ -379,9 +400,13 @@ categories:
           - "No electronic signature or audit trail references on page -> not_applicable"
 
       40:
-        notes: "Difficult to assess from OCR alone; look for 'copy' watermarks or duplicate indicators."
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-STAMP-SEAL]
+        notes: "Vision: detect 'COPY' watermarks, duplicate stamps, or other indicators."
 
       41:
+        evaluation_strategy: vision
+        visual_checks: [VC-CHROMATOGRAM]
         scope: page
         applicable_section_types: [chromatogram, raw_data, qc_report]
         skip_conditions:
@@ -394,10 +419,13 @@ categories:
     applicable_page_types: [form]
     rules:
       42:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         pass_criteria: >
           Calculations on the page must have a "Checked by" or "Verified by"
           countersignature. The calculated values should be arithmetically
           plausible given the input values shown.
+          Vision: verify countersignature is a genuine handwritten mark.
         keywords: [calculation, yield, weight, total, result, formula]
         applicable_section_types: [manufacturing_operations, qc_report, yield_calculation]
 
@@ -471,6 +499,8 @@ categories:
     severity: major
     rules:
       52:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-BLANK-FIELD]
         applicable_page_types: [form]
         pass_criteria: >
           Every field on the form page must be filled in. The following
@@ -483,10 +513,13 @@ categories:
           no dash, no annotation whatsoever. Dashes in form fields mean
           "not applicable" or "step not performed" — they are legitimate
           GMP annotations and must NOT be treated as blank.
+          Vision: visually confirm blank vs filled fields that OCR may miss.
         skip_conditions:
           - "Page has no form fields or tabular data -> not_applicable"
 
       53:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         applicable_page_types: [form]
         pass_criteria: >
           All signature lines (Done by, Checked by, Approved by, Verified by)
@@ -499,6 +532,7 @@ categories:
           Dashes (-/—/---) in signature or date columns mean the step was
           not performed and are valid annotations, NOT blank fields.
           Equipment ID fields must not be blank (but may contain OCR noise).
+          Vision: verify signature marks are genuine handwritten entries.
         keywords: [signature, date, equipment, done by, checked by, approved by]
 
       54:
@@ -515,10 +549,13 @@ categories:
         applicable_section_types: [manufacturing_operations, qc_report]
 
       57:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-PAGINATION]
         scope: document
         pass_criteria: >
           Page numbering should be sequential with no gaps. "Page X of Y"
           format should have Y matching the total page count.
+          Vision: verify page number layout in header/footer area.
         keywords: [page, of]
 
       58:
@@ -589,13 +626,18 @@ categories:
     applicable_page_types: []
     rules:
       69:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-DOC-QUALITY]
         pass_criteria: >
           Look for evidence of proper storage: controlled document stamps,
           archive references, or binding. Damaged or loose pages indicate
           non-compliance.
+          Vision: assess physical condition — tears, stains, fading, foxing.
 
       70:
-        notes: "Ink type verification is best done visually (VLM)."
+        evaluation_strategy: vision
+        visual_checks: [VC-INK-COLOR]
+        notes: "Ink permanence assessment requires visual inspection."
 
       71:
         applicable_section_types: [electronic_records]
@@ -603,9 +645,12 @@ categories:
           - "Document is purely paper-based with no electronic components -> not_applicable"
 
       72:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-PAGINATION]
         pass_criteria: >
           Document should show evidence of binding (page numbers in sequence,
           no loose pages noted, binding marks visible).
+          Vision: check for binding marks, sequential page layout.
 
       73:
         evaluation_mode: cannot_evaluate

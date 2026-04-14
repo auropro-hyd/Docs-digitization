@@ -16,6 +16,7 @@ from app.core.ports.notification import NotificationPort
 from app.core.ports.ocr import OCREngine
 from app.core.ports.quality import QualityScorer
 from app.core.ports.storage import DocumentStore
+from app.core.ports.vlm import VLMProvider
 
 
 def create_llm_provider(settings: AppSettings | None = None) -> LLMProvider:
@@ -51,6 +52,8 @@ def _resolve_compliance_llm_config(
         azure_deployment=override.azure_deployment or default_deployment or fallback.azure_deployment,
         model=override.model or default_model or fallback.model,
         base_url=fallback.base_url,
+        azure_max_rpm=fallback.azure_max_rpm,
+        azure_max_concurrent=fallback.azure_max_concurrent,
     )
 
 
@@ -111,6 +114,26 @@ def create_document_store(settings: AppSettings | None = None) -> DocumentStore:
             raise ValueError(f"Unknown storage backend: {settings.storage.backend}")
 
 
+def create_vlm_provider(settings: AppSettings | None = None) -> VLMProvider:
+    """Create a VLM provider based on configuration.
+
+    Returns the concrete adapter for the configured provider.
+    Caller must check ``settings.vlm.enabled`` before calling.
+    """
+    settings = settings or get_settings()
+    match settings.vlm.provider:
+        case "gemini":
+            from app.adapters.vlm.gemini import GeminiVLMAdapter
+
+            return GeminiVLMAdapter(settings.vlm)
+        case "vllm":
+            from app.adapters.vlm.vllm_openai import VLLMOpenAIVLMAdapter
+
+            return VLLMOpenAIVLMAdapter(settings.vlm)
+        case _:
+            raise ValueError(f"Unknown VLM provider: {settings.vlm.provider}")
+
+
 def create_notification_port() -> NotificationPort:
     from app.adapters.notification.websocket import WebSocketNotifyAdapter
 
@@ -130,6 +153,8 @@ class Container:
         self._ocr_engine: OCREngine | None = None
         self._quality_scorer: QualityScorer | None = None
         self._llm_provider: LLMProvider | None = None
+        self._vlm_provider: VLMProvider | None = None
+        self._vlm_checked: bool = False
         self._document_store: DocumentStore | None = None
         self._notification: NotificationPort | None = None
         self._compliance_evaluator_llm: LLMProvider | None = None
@@ -171,6 +196,15 @@ class Container:
         if self._llm_provider is None:
             self._llm_provider = create_llm_provider(self._settings)
         return self._llm_provider
+
+    @property
+    def vlm(self) -> VLMProvider | None:
+        """VLM provider, or ``None`` when VLM is disabled."""
+        if not self._vlm_checked:
+            self._vlm_checked = True
+            if self._settings.vlm.enabled:
+                self._vlm_provider = create_vlm_provider(self._settings)
+        return self._vlm_provider
 
     @property
     def document_store(self) -> DocumentStore:

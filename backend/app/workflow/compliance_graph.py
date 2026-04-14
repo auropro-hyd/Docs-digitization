@@ -167,6 +167,7 @@ async def run_compliance_pipeline(
 
     # ── Phase 2: Per-page agent evaluation ────────────────────
     eval_llm = container.compliance_evaluator_llm
+    vlm_provider = container.vlm
     agent_reports: list[AgentReport] = []
     agents_executed: list[str] = []
     all_cross_refs: list[dict] = []
@@ -174,7 +175,7 @@ async def run_compliance_pipeline(
     async def _run_agent(agent_name: str) -> AgentReport:
         nonlocal llm_call_count
         cls = _AGENT_CLASSES[agent_name]
-        agent = cls(eval_llm, registry, config)
+        agent = cls(eval_llm, registry, config, vlm=vlm_provider)
 
         all_rules = registry.get_rules(agent_name)
         batches = registry.get_batches(
@@ -299,6 +300,7 @@ async def run_compliance_pipeline(
             prescreen_callback=_prescreen_progress,
             section_map=section_map if section_map else None,
             global_kv_pairs=key_value_pairs,
+            doc_id=doc_id,
         )
 
         await _ws_progress(doc_id, {

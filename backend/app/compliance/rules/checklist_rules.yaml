@@ -27,26 +27,36 @@ categories:
     applicable_section_types: [manufacturing_operations, line_clearance, cleaning_log, equipment_usage_log]
     rules:
       1:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         pass_criteria: >
           Every checkbox or checklist item on the page must be either checked
           (selected) or explicitly marked N/A. Use selection_marks metadata
           to verify: all marks should be in "selected" state unless N/A is noted.
+          Vision: verify tick marks, check marks, or X marks are visible.
         skip_conditions:
           - "Page has no checkboxes or checklist items -> not_applicable"
 
       2:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         pass_criteria: >
           If any checklist item is blank (unchecked and not marked N/A),
           there must be a documented justification nearby.
+          Vision: confirm which checkboxes are truly unchecked vs filled.
         skip_conditions:
           - "Page has no checklist items -> not_applicable"
 
       3:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [pre-operation, before, prior to, pre-use, pre-start]
         skip_conditions:
           - "Page has no pre-operation checklist -> not_applicable"
 
       4:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [post-operation, after, completion, post-use]
         skip_conditions:
           - "Page has no post-operation checklist -> not_applicable"
@@ -57,6 +67,8 @@ categories:
     applicable_section_types: [manufacturing_operations, qc_report, line_clearance, cleaning_log]
     rules:
       5:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         pass_criteria: >
           Every "Done by" field must contain text (initials, name, or code).
           Any non-empty text counts as a valid signature — including garbled
@@ -64,27 +76,37 @@ categories:
           'staten'). OCR reads handwriting imperfectly; presence of any
           text means someone signed. Dashes (-/—) mean the step was not
           performed and are valid annotations, NOT missing signatures.
+          Vision: verify actual handwritten signature marks are present.
         keywords: [done by, performed by, executed by]
 
       6:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         pass_criteria: >
           Every "Checked by" or "Verified by" field must contain text.
           Any non-empty text counts as a valid signature — including garbled
           OCR of handwritten text. Dashes (-/—) are valid annotations
           meaning the step was not applicable. Only flag truly empty fields.
+          Vision: confirm handwritten verification signatures are present.
         keywords: [checked by, verified by]
 
       7:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         keywords: [approved by, approval, authorized by]
         skip_conditions:
           - "Page has no approval signature fields -> not_applicable"
 
       8:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         keywords: [supervisor, QA, quality assurance, reviewed by]
         skip_conditions:
           - "Page has no supervisor/QA review section -> not_applicable"
 
       9:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-SIGNATURE]
         pass_criteria: >
           Each signature should be accompanied by a date. In pharmaceutical
           BPCRs, operators often write initials/name + date together in one
@@ -92,6 +114,7 @@ categories:
           garble the name portion — ANY text + a date-like pattern nearby
           counts as a valid signature with date. Initials alone without a
           date anywhere in the same row are insufficient.
+          Vision: verify signature + date pairing visually.
         keywords: [name, date, signature]
 
   # ── Date Completeness (rules 10-13) ───────────────────────
@@ -139,22 +162,30 @@ categories:
     applicable_section_types: [manufacturing_operations, qc_report, in_process_report, material_dispensing]
     rules:
       14:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-BLANK-FIELD]
         pass_criteria: >
           Critical data fields (results, quantities, equipment IDs,
           temperatures, pressures) must not be blank. Use key-value pair
           metadata to detect empty fields. Fields containing dashes (-/—/---),
           "N/A", "N.A.", "NA", or any garbled OCR text are NOT blank — they
           are valid entries.
+          Vision: visually confirm whether fields are blank or filled.
 
       15:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-BLANK-FIELD]
         pass_criteria: >
           Fields left intentionally blank must have "N/A", "NA", "N.A.",
           or a dash (-/—/---) annotation. All of these are acceptable
           indicators that the field was intentionally left empty.
           Initials and date with N/A are best practice but dashes alone
           are still compliant.
+          Vision: verify N/A or dash annotations are actually written in blank fields.
 
       16:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-BLANK-FIELD]
         keywords: [calculation, calculated, formula, result, total, yield]
         skip_conditions:
           - "Page has no calculated or formula-based fields -> not_applicable"
@@ -165,21 +196,28 @@ categories:
     applicable_page_types: [form, content, printed]
     rules:
       17:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-ATTACHMENT]
         scope: document
         keywords: [attachment, annexure, appendix, enclosed, refer]
 
       18:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-ATTACHMENT]
         keywords: [attachment, label, reference, cross-reference]
         skip_conditions:
           - "Page has no attachments -> not_applicable"
 
       19:
+        evaluation_strategy: vision
+        visual_checks: [VC-ATTACHMENT]
         keywords: [chromatogram, printout, label, affixed, pasted, attached]
         skip_conditions:
           - "Page has no physical attachments -> not_applicable"
-        notes: "VLM recommended for verifying physical attachment integrity."
 
       20:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-ATTACHMENT]
         keywords: [attachment, label, loose, unlabeled]
         skip_conditions:
           - "Page has no attachments -> not_applicable"
@@ -190,16 +228,22 @@ categories:
     applicable_section_types: [line_clearance, cleaning_log, manufacturing_operations]
     rules:
       21:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [line clearance, clearance, batch start, before batch]
         skip_conditions:
           - "Page is not a line clearance checklist -> not_applicable"
 
       22:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [cross-contamination, equipment, cleaning, dedicated]
         skip_conditions:
           - "Page has no cross-contamination check records -> not_applicable"
 
       23:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [area clearance, previous product, removal, clean area]
         skip_conditions:
           - "Page has no area clearance verification -> not_applicable"
@@ -210,17 +254,23 @@ categories:
     applicable_section_types: [manufacturing_operations, equipment_usage_log]
     rules:
       24:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [pre-use, equipment check, inspection, before use]
         skip_conditions:
           - "Page has no pre-use equipment checks -> not_applicable"
 
       25:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [parameter, setting, RPM, temperature, pressure, speed]
         pass_criteria: >
           Equipment parameter settings must be recorded and match the
           values specified in the BMR instruction.
 
       26:
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-CHECKBOX]
         keywords: [post-use, cleaning, after use, post-operation]
         skip_conditions:
           - "Page has no post-use cleaning checklists -> not_applicable"

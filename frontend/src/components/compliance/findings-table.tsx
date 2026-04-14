@@ -587,6 +587,11 @@ export function FindingsTable({
                               Resolved
                             </Badge>
                           )}
+                          {finding.evaluation_channels?.includes("vision") && (
+                            <Badge variant="outline" className="text-[10px] border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/10">
+                              <Eye className="size-2.5 mr-0.5" /> VLM
+                            </Badge>
+                          )}
                           <p className="text-xs text-muted-foreground truncate flex-1 ml-1">
                             {finding.description}
                           </p>
@@ -647,6 +652,46 @@ export function FindingsTable({
                               <div className="p-2.5 rounded bg-muted border-l-2 border-warning max-h-48 overflow-y-auto">
                                 <p className="text-xs font-medium text-foreground mb-0.5">Evidence</p>
                                 <p className="text-xs text-muted-foreground whitespace-pre-wrap italic">&ldquo;{finding.evidence}&rdquo;</p>
+                              </div>
+                            )}
+                            {finding.evaluation_channels && finding.evaluation_channels.includes("vision") && (
+                              <div className="p-2.5 rounded bg-violet-50 dark:bg-violet-900/10 border-l-2 border-violet-400 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Eye className="size-3.5 text-violet-600 dark:text-violet-400" />
+                                  <p className="text-xs font-medium text-violet-700 dark:text-violet-300">Visual Analysis</p>
+                                  <div className="flex gap-1">
+                                    {finding.evaluation_channels.map((ch) => (
+                                      <Badge
+                                        key={ch}
+                                        variant="outline"
+                                        className={cn(
+                                          "text-[9px] px-1.5 py-0",
+                                          ch === "vision"
+                                            ? "border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400"
+                                            : "border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                                        )}
+                                      >
+                                        {ch}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                </div>
+                                {finding.visual_evidence && (
+                                  <p className="text-xs text-muted-foreground">{finding.visual_evidence}</p>
+                                )}
+                                {finding.page_numbers.length > 0 && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-6 text-[10px] border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400"
+                                    onClick={() => {
+                                      const imgUrl = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100"}/api/documents/${docId}/pages/${finding.page_numbers[0]}/image`;
+                                      window.open(imgUrl, "_blank");
+                                    }}
+                                  >
+                                    <Eye className="size-3 mr-1" /> View page image
+                                  </Button>
+                                )}
                               </div>
                             )}
                             {finding.section_refs && finding.section_refs.length > 0 && (
@@ -710,13 +755,11 @@ export function FindingsTable({
                               </Button>
                             </div>
 
-                            {(isNeedsReview || ["user_approved", "user_rejected", "user_modified"].includes(finding.hitl_status)) && (
-                              <HITLReviewActions
-                                finding={finding}
-                                docId={docId}
-                                onUpdate={(updates) => handleFindingUpdate(finding.finding_id, updates)}
-                              />
-                            )}
+                            <HITLReviewActions
+                              finding={finding}
+                              docId={docId}
+                              onUpdate={(updates) => handleFindingUpdate(finding.finding_id, updates)}
+                            />
                           </div>
                         </motion.div>
                       )}

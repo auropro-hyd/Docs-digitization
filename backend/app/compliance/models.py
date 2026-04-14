@@ -66,6 +66,40 @@ class DocumentType(str, Enum):
 
 
 # ═══════════════════════════════════════════════════════════════
+#  Vision Models (VLM structured output)
+# ═══════════════════════════════════════════════════════════════
+
+
+class VisualRegion(BaseModel):
+    """Bounding region for a visual finding (normalized 0-1 coordinates)."""
+
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    label: str = ""
+
+
+class VisualCheckResult(BaseModel):
+    """Result of a single visual check on a page image."""
+
+    check_id: str = ""
+    detected: bool = False
+    classification: str = ""
+    confidence: float = 0.0
+    description: str = ""
+    regions: list[VisualRegion] = Field(default_factory=list)
+
+
+class VisionBatchResult(BaseModel):
+    """VLM output: visual check results for a batch of rules on one page."""
+
+    page_num: int = 0
+    checks: list[VisualCheckResult] = Field(default_factory=list)
+    rule_evaluations: list["RuleEvaluation"] = Field(default_factory=list)
+
+
+# ═══════════════════════════════════════════════════════════════
 #  Layer 1: LLM Output Schemas
 # ═══════════════════════════════════════════════════════════════
 
@@ -227,6 +261,10 @@ class ComplianceFinding(BaseModel):
     hitl_reviewed_at: str | None = None
     source: str = "predefined"
     section_refs: list[SectionRef] = Field(default_factory=list)
+    # Vision evaluation extensions
+    evaluation_channels: list[str] = Field(default_factory=list)
+    visual_evidence: str = ""
+    visual_regions: list[VisualRegion] = Field(default_factory=list)
 
 
 class CategoryScore(BaseModel):
