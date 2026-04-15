@@ -1,6 +1,6 @@
 # Ports & Adapters Reference
 
-This document covers all five ports in the system, their Protocol definitions, adapter implementations, and how to extend them.
+This document covers all six ports in the system, their Protocol definitions, adapter implementations, and how to extend them.
 
 All ports live in `backend/app/core/ports/` and use Python's `typing.Protocol` for structural subtyping -- adapters don't need to inherit from anything, they just need to implement the right methods.
 
@@ -91,6 +91,29 @@ Key behaviors:
 - **Configurable features** -- `features` list in config controls which capabilities are enabled (e.g., `["barcodes", "keyValuePairs"]`)
 - **Full bounding regions** -- extracts polygon coordinates for every word, barcode, and selection mark
 - **Lazy client creation** -- `DocumentIntelligenceClient` instantiated on first use
+
+#### DatalabOCRAdapter (`app/adapters/ocr/datalab.py`)
+
+Uses Data Lab (Chandra) OCR via the `datalab-python-sdk`.
+
+| Capability | Supported |
+|-----------|-----------|
+| Handwriting | Yes (block-level via `new_block_types`, superior to Azure DI) |
+| Barcodes | No |
+| Selection Marks | Yes (parsed from `☐`/`☑`/`✓` patterns in markdown) |
+| Per-word confidence | No (falls back to 0.5 baseline) |
+| Cross-page tables | Yes (native with merged cells, nested tables) |
+| Signatures | Yes (block-level detection) |
+| Formulas | Yes (LaTeX in markdown) |
+| Parallel chunking | Yes (configurable chunk size + concurrency) |
+
+Key behaviors:
+- **Parallel chunk processing** -- large PDFs are split into chunks and submitted concurrently via `asyncio.Semaphore` + `asyncio.gather`
+- **Structured extraction** -- optional Extract API call with JSON schema from `extraction_schemas.yaml`
+- **JSON bbox enrichment** -- optional second `convert` call with `output_format="json"` for per-block bounding polygons
+- **Retry with backoff** -- `tenacity` for exponential backoff on submit failures
+- **Checkpoint reuse** -- saves converted results for extraction API reuse
+- **829 lines** of production-grade adapter code
 
 ### How to Add a New OCR Engine
 
@@ -222,7 +245,70 @@ llm:
 
 ---
 
-## 3. QualityScorer Port
+## 3. VLMProvider Port
+
+**Location:** `app/core/ports/vlm.py`
+
+### Protocol Definition
+
+```python
+class VLMProvider(Protocol):
+    """Port for Vision-Language Model inference."""
+
+    async def analyze_image(
+        self, image: bytes, prompt: str, *,
+        system: str | None = None, mime_type: str = "image/png",
+    ) -> str: ...
+
+    async def analyze_image_structured(
+        self, image: bytes, prompt: str, schema: type[BaseModel], *,
+        system: str | None = None, mime_type: str = "image/png",
+    ) -> BaseModel: ...
+
+    async def analyze_multi_image(
+        self, images: list[tuple[bytes, str]], prompt: str,
+        schema: type[BaseModel], *, system: str | None = None,
+    ) -> BaseModel: ...
+
+    def supports_structured_output(self) -> bool: ...
+    def max_image_resolution(self) -> tuple[int, int]: ...
+```
+
+### Contract
+
+- `analyze_image` -- free-text visual analysis of a single page image
+- `analyze_image_structured` -- structured VLM response conforming to a Pydantic schema (e.g., `VisionBatchResult`)
+- `analyze_multi_image` -- cross-page visual checks with multiple images
+- Methods are async and handle rate limiting/retries internally
+
+### Adapters
+
+#### GeminiVLMAdapter (`app/adapters/vlm/gemini.py`)
+
+The **cloud adapter** using Google's Generative Language API.
+
+- Uses `google-generativeai` SDK with API key auth
+- Native structured output via `response_mime_type="application/json"` + `response_schema`
+- Configurable model (`gemini-2.5-flash` default, `gemini-2.5-pro` fallback)
+- Image preprocessing: resize to max resolution, convert to PNG
+- Rate limiting via `VLMConfig.max_rpm` / `max_concurrent`
+
+#### VLLMOpenAIAdapter (`app/adapters/vlm/vllm_openai.py`)
+
+The **container adapter** for self-hosted VLMs via vLLM's OpenAI-compatible server.
+
+- Uses `openai` SDK (`AsyncOpenAI`) pointing at vLLM endpoint
+- Sends images as base64-encoded `image_url` in chat messages
+- Works with any vLLM-hosted VLM: Qwen3-VL, InternVL3, Gemma 3, etc.
+- Structured output via `response_format={"type": "json_schema", ...}`
+
+### When Active
+
+VLM is active when `settings.vlm.enabled = True`. It runs alongside text-based compliance evaluation for rules tagged with `evaluation_strategy: vision` or `text_and_vision`. See [VLM Spec](../../specs/vlm-visual-compliance-spec.md).
+
+---
+
+## 4. QualityScorer Port
 
 **Location:** `app/core/ports/quality.py`
 
@@ -283,7 +369,7 @@ Docling is used **only for quality assessment**, not for extraction content. The
 
 ---
 
-## 4. DocumentStore Port
+## 5. DocumentStore Port
 
 **Location:** `app/core/ports/storage.py`
 
@@ -356,7 +442,7 @@ storage:
 
 ---
 
-## 5. NotificationPort
+## 6. NotificationPort
 
 **Location:** `app/core/ports/notification.py`
 
@@ -411,9 +497,10 @@ Shows which workflow nodes and services consume each port:
 
 | Port | Consumed By |
 |------|-------------|
-| `OCREngine` | `run_marker_ocr` node (marker_docling mode) or `run_azure_di_ocr` node (azure_di mode) — resolved via `container.ocr_engine` |
-| `QualityScorer` | `run_quality_scoring` node (both modes) |
-| `LLMProvider` | ALCOA, GMP, Checklist, SOP compliance agents |
+| `OCREngine` | `run_marker_ocr` node (marker_docling) or `run_azure_di_ocr` node (azure_di / datalab) — resolved via `container.ocr_engine` |
+| `LLMProvider` | ALCOA, GMP, Checklist, SOP compliance agents (text-based evaluation) |
+| `VLMProvider` | Vision evaluator — visual compliance checks for rules with `evaluation_strategy: vision/text_and_vision` |
+| `QualityScorer` | `run_quality_scoring` node (all modes) |
 | `DocumentStore` | `store_results` node, API routes |
 | `NotificationPort` | Every workflow node (status updates), HITL review |
 

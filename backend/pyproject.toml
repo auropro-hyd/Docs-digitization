@@ -26,6 +26,7 @@ dependencies = [
     "google-genai",
     "openai",
     "pillow",
+    "datalab-python-sdk",
 ]
 
 [project.optional-dependencies]

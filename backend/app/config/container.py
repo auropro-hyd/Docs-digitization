@@ -178,6 +178,10 @@ class Container:
                     from app.adapters.ocr.marker import MarkerOCRAdapter
 
                     self._ocr_engine = MarkerOCRAdapter(self._settings.marker)
+                case "datalab":
+                    from app.adapters.ocr.datalab import DatalabOCRAdapter
+
+                    self._ocr_engine = DatalabOCRAdapter(self._settings.datalab)
                 case _:
                     raise ValueError(f"Unknown pipeline mode: {self._settings.pipeline.mode}")
         return self._ocr_engine

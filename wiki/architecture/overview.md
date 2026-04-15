@@ -28,8 +28,8 @@ Hexagonal Architecture isolates the **core domain** (models, business rules, con
 Zero external dependencies. Contains:
 
 - **Models** (`app/core/models/`) -- `DigitalDocument`, `DocumentSection`, `DocumentElement`, `QualityReport`, `PageQualityScore`, and all element types (tables, signatures, checkboxes, key-value pairs)
-- **Ports** (`app/core/ports/`) -- Protocol interfaces for `OCREngine`, `LLMProvider`, `QualityScorer`, `DocumentStore`, `NotificationPort`
-- **Services** (`app/core/services/`) -- Pure business logic: composite confidence scoring, HITL routing, page classification, section building, validation rules
+- **Ports** (`app/core/ports/`) -- Protocol interfaces for `OCREngine`, `LLMProvider`, `VLMProvider`, `QualityScorer`, `DocumentStore`, `NotificationPort`
+- **Services** (`app/core/services/`) -- Pure business logic: composite confidence scoring, HITL routing, page classification, section building, validation rules, OCR post-correction
 
 The core depends on nothing outside `pydantic` and the Python standard library. It defines *what* the system does, not *how*.
 
@@ -41,12 +41,13 @@ Python `Protocol` interfaces that define the contract between the core domain an
 - Input/output types (using core domain models, not vendor types)
 - Behavioral expectations (documented in docstrings)
 
-There are five ports:
+There are six ports:
 
 | Port | Purpose |
 |------|---------|
 | `OCREngine` | Extract text, handwriting, barcodes from PDFs |
 | `LLMProvider` | Text generation and structured output |
+| `VLMProvider` | Vision-language model inference for visual compliance |
 | `QualityScorer` | Per-page quality assessment |
 | `DocumentStore` | Document and file persistence |
 | `NotificationPort` | Real-time event delivery to frontend |
@@ -68,8 +69,11 @@ Current adapter matrix:
 |------|---------|-----------|
 | `OCREngine` | `MarkerOCRAdapter` | `pipeline.mode = "marker_docling"` |
 | `OCREngine` | `AzureDIOCRAdapter` | `pipeline.mode = "azure_di"` |
+| `OCREngine` | `DatalabOCRAdapter` | `pipeline.mode = "datalab"` |
 | `LLMProvider` | `OllamaLLMAdapter` | Production (on-prem) |
 | `LLMProvider` | `AzureOpenAILLMAdapter` | Dev/staging fallback |
+| `VLMProvider` | `GeminiVLMAdapter` | `vlm.provider = "gemini"` (cloud) |
+| `VLMProvider` | `VLLMOpenAIAdapter` | `vlm.provider = "vllm"` (container) |
 | `QualityScorer` | `DoclingQualityAdapter` | All environments (both modes) |
 | `DocumentStore` | `FileSystemAdapter` | Dev and on-prem production |
 | `DocumentStore` | `AzureBlobAdapter` | Azure staging |
@@ -84,13 +88,18 @@ The **DI container** (`app/config/container.py`) resolves adapters at runtime ba
 
 ```python
 # Pseudocode of the resolution flow
-settings.pipeline.mode = "azure_di"      # from YAML (or "marker_docling")
+settings.pipeline.mode = "azure_di"      # from YAML (or "marker_docling" or "datalab")
 container.ocr_engine  →  AzureDIOCRAdapter(settings.azure_di)
 # -- or, if mode is "marker_docling" --
 container.ocr_engine  →  MarkerOCRAdapter(settings.marker)
+# -- or, if mode is "datalab" --
+container.ocr_engine  →  DatalabOCRAdapter(settings.datalab)
 
 settings.llm.provider = "ollama"         # from YAML
 container.llm  →  OllamaLLMAdapter(settings.llm)
+
+settings.vlm.provider = "gemini"         # from YAML
+container.vlm  →  GeminiVLMAdapter(settings.vlm)
 ```
 
 Switching the OCR pipeline is a one-line config change (`pipeline.mode`) -- no code modifications needed.
@@ -115,9 +124,17 @@ FastAPI handles HTTP/WebSocket concerns only:
 - Receives file uploads, assigns `doc_id`, saves to storage
 - Triggers the LangGraph workflow
 - Serves WebSocket connections for real-time progress updates
-- Exposes review and compliance endpoints
+- Exposes review, compliance, and corrections endpoints
+- Serves page images for VLM visual evidence display
 
 It does not contain business logic -- all processing happens in the workflow and core services.
+
+API route modules:
+- `api/routes/documents.py` — upload, list, metadata, page images
+- `api/routes/review.py` — HITL review actions (approve, edit, flag)
+- `api/routes/compliance.py` — compliance report, run analysis
+- `api/routes/rules.py` — compliance rule inventory
+- `api/routes/corrections.py` — OCR correction rule management (list, toggle, rebuild, stats, confusion matrix)
 
 ## System Architecture Diagram
 

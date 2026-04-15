@@ -1,0 +1,591 @@
+version: 1
+
+# Per-family JSON schemas for Data Lab Extract API (page_schema).
+#
+# Key naming convention:
+#   Schema property names are chosen so that _slug(name) matches the
+#   critical_fields in extraction_profiles.yaml AND the field_id tokens
+#   used by field_normalization.py for date/identifier/unit normalisation.
+#
+#   Examples:
+#     "Product Name"   → field_id "product_name"   → critical_field match
+#     "Batch No"       → field_id "batch_no"        → normalizer trigger "batch","no"
+#     "Effective Date"  → field_id "effective_date" → normalizer trigger "date","effective_date"
+#
+# Nested arrays are flattened by _map_extraction_to_kv_pairs into dotted-
+# index paths like "Manufacturing Steps[0].Step No" which the downstream
+# normalize / calibrate / context_builder pipeline handles transparently.
+#
+# Schemas are selected by template_family.  If a family has no schema here
+# the adapter skips the Extract API call and KV pairs stay empty.
+
+families:
+
+  bpr_core:
+    description: >
+      Batch Production and Control Record — header fields plus per-step
+      manufacturing detail (steps, timings, per-step attestations, weighing,
+      temperature, vacuum, yield, deviations).
+    schema:
+      type: object
+      properties:
+        Product Name:
+          type: string
+          description: Drug product or item name
+        Batch No:
+          type: string
+          description: Manufacturing batch or lot number (e.g. BN-2025-001)
+        BPCR Number:
+          type: string
+          description: Batch Production and Control Record number
+        MPCR Number:
+          type: string
+          description: Master Production and Control Record number
+        Batch Size:
+          type: string
+          description: Batch size with units (e.g. 150 kg, 500 L)
+        Effective Date:
+          type: string
+          description: Date the record became effective (DD/MM/YYYY)
+        Manufacturing Date:
+          type: string
+          description: Date manufacturing was performed (DD/MM/YYYY)
+        Expiry Date:
+          type: string
+          description: Product expiry date (DD/MM/YYYY)
+        Stage:
+          type: string
+          description: Manufacturing stage or step name
+        Done By:
+          type: string
+          description: Name or initials of person who performed the step
+        Checked By:
+          type: string
+          description: Name or initials of person who verified/checked
+        Verified By:
+          type: string
+          description: Name or initials of person who provided secondary verification
+        Date:
+          type: string
+          description: Date of activity or signature (DD/MM/YYYY)
+        Remarks:
+          type: string
+          description: Comments, observations, or remarks
+
+        Manufacturing Steps:
+          type: array
+          description: Individual manufacturing instruction steps on this page
+          items:
+            type: object
+            properties:
+              Step No:
+                type: string
+                description: Step number (e.g. 1, 2, 3a)
+              Sub Step No:
+                type: string
+                description: Sub-step number if present (e.g. 2.1, 3a-i)
+              Operation:
+                type: string
+                description: Operation description from the instruction
+              Equipment Used:
+                type: string
+                description: Equipment name or ID used in this step
+              Start Time:
+                type: string
+                description: Start time in HH:MM format
+              End Time:
+                type: string
+                description: End time in HH:MM format
+              Duration:
+                type: string
+                description: Duration of the operation
+              Done By:
+                type: string
+                description: Operator name/initials for this step
+              Checked By:
+                type: string
+                description: Reviewer name/initials for this step
+              Remarks:
+                type: string
+                description: Step-level remarks or observations
+              Notes:
+                type: string
+                description: Additional notes for this step
+
+        Temperature Records:
+          type: array
+          description: Temperature monitoring readings (e.g. drying, distillation)
+          items:
+            type: object
+            properties:
+              Time:
+                type: string
+                description: Time of temperature reading (HH:MM)
+              Temperature:
+                type: string
+                description: Temperature value with units
+              Initials:
+                type: string
+                description: Initials of person recording
+
+        Weighing Records:
+          type: array
+          description: Container weighing records (tare/gross/net)
+          items:
+            type: object
+            properties:
+              Container No:
+                type: string
+                description: Container identification number
+              Tare Weight:
+                type: string
+                description: Tare weight with units
+              Gross Weight:
+                type: string
+                description: Gross weight with units
+              Net Weight:
+                type: string
+                description: Net weight with units
+              Done By:
+                type: string
+                description: Person who performed weighing
+              Checked By:
+                type: string
+                description: Person who verified weighing
+
+        Vacuum Records:
+          type: array
+          description: Vacuum drying monitoring readings
+          items:
+            type: object
+            properties:
+              Time:
+                type: string
+                description: Time of reading (HH:MM)
+              Temperature:
+                type: string
+                description: Temperature value
+              Vacuum:
+                type: string
+                description: Vacuum pressure value
+              Initials:
+                type: string
+                description: Initials of person recording
+
+        Raw Materials:
+          type: array
+          description: Raw materials dispensed/used on this page
+          items:
+            type: object
+            properties:
+              S No:
+                type: string
+                description: Serial number
+              Raw Material Name:
+                type: string
+                description: Material name and/or item code
+              UOM:
+                type: string
+                description: Unit of measurement
+              Batch No:
+                type: string
+                description: Raw material batch/lot number
+              Standard Qty:
+                type: string
+                description: Standard (required) quantity
+              Gross Qty:
+                type: string
+                description: Gross quantity dispensed
+              Net Qty:
+                type: string
+                description: Net quantity dispensed
+              Tare Qty:
+                type: string
+                description: Tare quantity
+              Done By:
+                type: string
+                description: Person who dispensed
+              Checked By:
+                type: string
+                description: Person who verified dispensing
+
+        Yield:
+          type: string
+          description: Batch yield amount or percentage
+        Theoretical Weight:
+          type: string
+          description: Theoretical weight for yield calculation
+        Obtained Weight:
+          type: string
+          description: Actual weight obtained
+        Yield Percentage:
+          type: string
+          description: Yield percentage value
+
+        Deviations:
+          type: array
+          description: Deviation records noted on this page
+          items:
+            type: object
+            properties:
+              Date:
+                type: string
+                description: Date of deviation (DD/MM/YYYY)
+              Details:
+                type: string
+                description: Deviation description
+              Justification:
+                type: string
+                description: Justification or corrective action
+
+        Equipment Cleaning:
+          type: array
+          description: Equipment cleaning records
+          items:
+            type: object
+            properties:
+              Equipment Name:
+                type: string
+                description: Name of equipment cleaned
+              Equipment ID:
+                type: string
+                description: Equipment identification number
+              Previous Batch No:
+                type: string
+                description: Previous batch processed on this equipment
+              Start Time:
+                type: string
+                description: Cleaning start time (HH:MM)
+              End Time:
+                type: string
+                description: Cleaning end time (HH:MM)
+              Duration:
+                type: string
+                description: Cleaning duration
+              Done By:
+                type: string
+                description: Person who performed cleaning
+              Checked By:
+                type: string
+                description: Person who verified cleaning
+
+        Sifting Records:
+          type: array
+          description: Sifting/vibro-sifter operation records
+          items:
+            type: object
+            properties:
+              Input Qty:
+                type: string
+                description: Input quantity with units (e.g. 278.10 Kg)
+              Mesh Size:
+                type: string
+                description: Sieve mesh size number (e.g. 40, 80)
+              Start Time:
+                type: string
+                description: Sifting start time (HH:MM)
+              End Time:
+                type: string
+                description: Sifting end time (HH:MM)
+              Duration:
+                type: string
+                description: Sifting duration
+              Done By:
+                type: string
+                description: Person who performed sifting
+              Checked By:
+                type: string
+                description: Person who verified sifting
+              Verified By:
+                type: string
+                description: QA person who verified
+
+        Pin Milling Records:
+          type: array
+          description: Pin mill operation records
+          items:
+            type: object
+            properties:
+              Input Qty:
+                type: string
+                description: Input quantity with units
+              RPM:
+                type: string
+                description: Pin mill RPM setting
+              Start Time:
+                type: string
+                description: Milling start time (HH:MM)
+              End Time:
+                type: string
+                description: Milling end time (HH:MM)
+              Duration:
+                type: string
+                description: Milling duration
+              Done By:
+                type: string
+                description: Person who performed milling
+              Checked By:
+                type: string
+                description: Person who verified milling
+
+        Mixing Records:
+          type: array
+          description: Blender mixing operation records
+          items:
+            type: object
+            properties:
+              Equipment No:
+                type: string
+                description: Blender equipment ID (e.g. BLE002)
+              Operation:
+                type: string
+                description: Mixing operation description
+              Date:
+                type: string
+                description: Date of mixing operation (DD/MM/YYYY)
+              Start Time:
+                type: string
+                description: Mixing start time (HH:MM)
+              End Time:
+                type: string
+                description: Mixing end time (HH:MM)
+              Duration:
+                type: string
+                description: Mixing duration
+              Done By:
+                type: string
+                description: Person who performed mixing
+              Checked By:
+                type: string
+                description: Person who verified mixing
+
+        Metal Detector Records:
+          type: array
+          description: Metal detector operation records
+          items:
+            type: object
+            properties:
+              Input Qty:
+                type: string
+                description: Input quantity with units
+              Start Time:
+                type: string
+                description: Operation start time (HH:MM)
+              End Time:
+                type: string
+                description: Operation end time (HH:MM)
+              Duration:
+                type: string
+                description: Operation duration
+              Done By:
+                type: string
+                description: Person who performed detection
+              Checked By:
+                type: string
+                description: Person who verified detection
+
+        In Process Results:
+          type: array
+          description: In-process test results (pH, water content, IR, etc.)
+          items:
+            type: object
+            properties:
+              Test Name:
+                type: string
+                description: Name of test (e.g. pH, Water Content, IR)
+              Limit:
+                type: string
+                description: Acceptance limit or specification
+              Result:
+                type: string
+                description: Observed test result value
+              Step No:
+                type: string
+                description: Associated manufacturing step number
+              Date:
+                type: string
+                description: Date of test (DD/MM/YYYY)
+
+        Reconciliation After Drying:
+          type: string
+          description: Quantity after drying (kg)
+        Reconciliation Powder Processing:
+          type: string
+          description: Quantity after powder processing operations (kg)
+        Reconciliation Sample Qty:
+          type: string
+          description: Quantity sent for sample/analysis (kg)
+        Reconciliation Final Output:
+          type: string
+          description: Final output quantity (kg)
+        Date Of Completion:
+          type: string
+          description: Batch completion date (DD/MM/YYYY)
+        Time Of Completion:
+          type: string
+          description: Batch completion time (HH:MM)
+
+  manufacturing_checklists:
+    description: >
+      Equipment checklists, line clearance, pre-start checks.
+      critical_fields: batch_no, equipment_no, date, yes_no_na_decisions, signatures.
+    schema:
+      type: object
+      properties:
+        Batch No:
+          type: string
+          description: Batch or lot number
+        Equipment No:
+          type: string
+          description: Equipment identification number
+        Equipment Name:
+          type: string
+          description: Name or description of the equipment
+        Date:
+          type: string
+          description: Date of checklist activity (DD/MM/YYYY)
+        Done By:
+          type: string
+          description: Person who performed the check
+        Checked By:
+          type: string
+          description: Person who verified the check
+        Room No:
+          type: string
+          description: Room or area number
+        Product Name:
+          type: string
+          description: Product being manufactured
+        Line Clearance:
+          type: string
+          description: Line clearance status or observation
+        Remarks:
+          type: string
+          description: Comments or observations
+
+        Checklist Items:
+          type: array
+          description: Individual checklist line items with Yes/No/NA decisions
+          items:
+            type: object
+            properties:
+              S No:
+                type: string
+                description: Serial/item number
+              Description:
+                type: string
+                description: Checklist item description or question
+              Decision:
+                type: string
+                description: Decision value — Yes, No, NA, or N/A
+              Done By:
+                type: string
+                description: Person who checked this item
+              Checked By:
+                type: string
+                description: Person who verified this item
+              Remarks:
+                type: string
+                description: Item-level remarks
+
+  instrument_data_reports:
+    description: >
+      Instrument data, monitoring, chromatograms.
+      critical_fields: instrument_id, run_datetime, method_id, batch_no.
+    schema:
+      type: object
+      properties:
+        Instrument ID:
+          type: string
+          description: Instrument identification number or asset tag
+        Run Datetime:
+          type: string
+          description: Date and time of instrument run
+        Method ID:
+          type: string
+          description: Analytical method identification
+        Batch No:
+          type: string
+          description: Batch or lot number
+        Sample ID:
+          type: string
+          description: Sample identification number
+        Result:
+          type: string
+          description: Analytical result or measurement value
+        Units:
+          type: string
+          description: Measurement units (e.g. mg/mL, pH, C)
+        Operator:
+          type: string
+          description: Instrument operator name or initials
+
+  analysis_reports:
+    description: >
+      Certificate of Analysis, analytical data review, QC/QA reports.
+      critical_fields: ar_no, batch_no, result, reviewer_signoff.
+    schema:
+      type: object
+      properties:
+        AR No:
+          type: string
+          description: Analytical Report number
+        Batch No:
+          type: string
+          description: Batch or lot number
+        Product Name:
+          type: string
+          description: Product name
+        Test:
+          type: string
+          description: Name of the test or analysis performed
+        Specification:
+          type: string
+          description: Acceptance specification or limit
+        Result:
+          type: string
+          description: Test result or observed value
+        Status:
+          type: string
+          description: Pass/Fail/Complies status
+        Analyst:
+          type: string
+          description: Name of the analyst who performed the test
+        Reviewer Signoff:
+          type: string
+          description: Name of reviewer who approved the report
+        Date:
+          type: string
+          description: Date of analysis or review (DD/MM/YYYY)
+
+  sieving_reports:
+    description: >
+      Sieving analysis, weighing, balance printouts.
+      critical_fields: batch_no, sieve_size, retained_qty, date.
+    schema:
+      type: object
+      properties:
+        Batch No:
+          type: string
+          description: Batch or lot number
+        Sieve Size:
+          type: string
+          description: Sieve mesh size (e.g. #40, 0.425 mm)
+        Retained Qty:
+          type: string
+          description: Quantity retained on sieve with units
+        Date:
+          type: string
+          description: Date of sieving analysis (DD/MM/YYYY)
+        Gross Weight:
+          type: string
+          description: Gross weight with units
+        Net Weight:
+          type: string
+          description: Net weight with units
+        Tare Weight:
+          type: string
+          description: Tare weight with units
+        Done By:
+          type: string
+          description: Person who performed the analysis

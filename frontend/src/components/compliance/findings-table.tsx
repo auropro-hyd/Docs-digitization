@@ -38,7 +38,8 @@ import {
   ShieldAlert,
   Gauge,
 } from "lucide-react";
-import { reviewComplianceFinding, resolveComplianceFinding } from "@/lib/api";
+import { reviewComplianceFinding, resolveComplianceFinding, getPageImageUrl } from "@/lib/api";
+import { VisualEvidenceViewer } from "@/components/compliance/visual-evidence-viewer";
 import { toast } from "sonner";
 
 interface SectionRef {
@@ -369,10 +370,10 @@ export function FindingsTable({
   initialSeverityFilter = "all",
 }: FindingsTableProps) {
   const [findings, setFindings] = useState<Finding[]>(initialFindings);
-  const [severityFilter, setSeverityFilter] = useState(initialSeverityFilter);
-  const [agentFilter, setAgentFilter] = useState(initialAgentFilter);
-  const [resolvedFilter, setResolvedFilter] = useState("all");
-  const [hitlFilter, setHitlFilter] = useState(initialHitlFilter);
+  const [severityFilter, setSeverityFilter] = useState<string>(initialSeverityFilter);
+  const [agentFilter, setAgentFilter] = useState<string>(initialAgentFilter);
+  const [resolvedFilter, setResolvedFilter] = useState<string>("all");
+  const [hitlFilter, setHitlFilter] = useState<string>(initialHitlFilter);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [expandedId, setExpandedId] = useState<string | null>(highlightId || null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -587,10 +588,24 @@ export function FindingsTable({
                               Resolved
                             </Badge>
                           )}
-                          {finding.evaluation_channels?.includes("vision") && (
-                            <Badge variant="outline" className="text-[10px] border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/10">
-                              <Eye className="size-2.5 mr-0.5" /> VLM
-                            </Badge>
+                          {finding.evaluation_channels && finding.evaluation_channels.length > 0 && (
+                            <>
+                              {finding.evaluation_channels.includes("vision") && (
+                                <Badge variant="outline" className="text-[10px] border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/10">
+                                  <Eye className="size-2.5 mr-0.5" /> VLM
+                                </Badge>
+                              )}
+                              {finding.evaluation_channels.includes("text") && !finding.evaluation_channels.includes("vision") && (
+                                <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
+                                  TEXT
+                                </Badge>
+                              )}
+                              {finding.evaluation_channels.includes("text") && finding.evaluation_channels.includes("vision") && (
+                                <Badge variant="outline" className="text-[10px] border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/10">
+                                  TEXT+VLM
+                                </Badge>
+                              )}
+                            </>
                           )}
                           <p className="text-xs text-muted-foreground truncate flex-1 ml-1">
                             {finding.description}
@@ -680,17 +695,35 @@ export function FindingsTable({
                                   <p className="text-xs text-muted-foreground">{finding.visual_evidence}</p>
                                 )}
                                 {finding.page_numbers.length > 0 && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-6 text-[10px] border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400"
-                                    onClick={() => {
-                                      const imgUrl = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8100"}/api/documents/${docId}/pages/${finding.page_numbers[0]}/image`;
-                                      window.open(imgUrl, "_blank");
-                                    }}
-                                  >
-                                    <Eye className="size-3 mr-1" /> View page image
-                                  </Button>
+                                  <div className="flex items-center gap-3">
+                                    <VisualEvidenceViewer
+                                      docId={docId}
+                                      pageNum={finding.page_numbers[0]}
+                                      visualEvidence={finding.visual_evidence}
+                                      visualRegions={finding.visual_regions}
+                                      evaluationChannels={finding.evaluation_channels}
+                                      ruleId={finding.rule_id}
+                                    />
+                                    {/* Thumbnail preview */}
+                                    <VisualEvidenceViewer
+                                      docId={docId}
+                                      pageNum={finding.page_numbers[0]}
+                                      visualEvidence={finding.visual_evidence}
+                                      visualRegions={finding.visual_regions}
+                                      evaluationChannels={finding.evaluation_channels}
+                                      ruleId={finding.rule_id}
+                                      trigger={
+                                        <button className="rounded border border-violet-200 dark:border-violet-800 overflow-hidden hover:ring-2 hover:ring-violet-400 transition-all flex-shrink-0">
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img
+                                            src={getPageImageUrl(docId, finding.page_numbers[0])}
+                                            alt={`Page ${finding.page_numbers[0]} thumbnail`}
+                                            className="h-16 w-auto object-cover"
+                                          />
+                                        </button>
+                                      }
+                                    />
+                                  </div>
                                 )}
                               </div>
                             )}

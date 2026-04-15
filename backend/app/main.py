@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import compliance, documents, review, rules
+from app.api.routes import compliance, corrections, documents, review, rules
 from app.compliance.rules.profiles import validate_compliance_configs
 from app.compliance.rules.registry import get_registry
 from app.api.websocket import router as ws_router
@@ -59,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(review.router, prefix="/api/review", tags=["review"])
     app.include_router(compliance.router, prefix="/api/compliance", tags=["compliance"])
     app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
+    app.include_router(corrections.router, prefix="/api/corrections", tags=["corrections"])
     app.include_router(ws_router, tags=["websocket"])
 
     return app

@@ -14,6 +14,7 @@ import {
   Moon,
   Settings,
   LogOut,
+  SpellCheck,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -49,6 +50,7 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { href: "/review", label: "Page Review", icon: <PenLine className="size-[18px]" /> },
       { href: "/compliance", label: "Compliance", icon: <ShieldCheck className="size-[18px]" /> },
+      { href: "/corrections", label: "Corrections", icon: <SpellCheck className="size-[18px]" /> },
     ],
   },
 ];

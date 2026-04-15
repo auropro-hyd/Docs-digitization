@@ -155,12 +155,32 @@ The header displays a real-time progress indicator:
 
 Where `reviewed` equals the current page index (pages before the current one are considered reviewed).
 
+## VLM Visual Findings Indicator
+
+When a compliance review has been run and includes VLM (Vision Language Model) findings, the review interface shows a **"Visual findings"** badge in the page divider for pages with vision-channel compliance findings.
+
+- The badge appears as a violet pill: `👁 Visual findings`
+- Clicking the badge navigates to the compliance page (`/compliance?doc={docId}`)
+- Data is fetched lazily via `getComplianceReport(docId)` on page load — non-blocking, best-effort
+- If no compliance report exists yet (e.g., compliance hasn't been run), no badges appear
+
+This provides cross-referencing between the review and compliance workflows, helping reviewers identify pages that have been flagged by the visual compliance system.
+
+**Props added to `ReviewInterface`:**
+- `vlmPages?: Set<number>` — set of page numbers with VLM findings, passed from parent
+
+**Props added to `PageDivider`:**
+- `hasVlmFindings?: boolean` — whether the page has VLM findings
+- `docId?: string` — for constructing the compliance link
+
 ## Review Flow
 
 ```
 Fetch review pages (GET /api/review/{docId}/pages)
-  → Sort by confidence ascending (smart queue)
+  → Fetch compliance report (GET /api/compliance/{docId}/report) — async, best-effort
+  → Build vlmPages set from findings with evaluation_channels including "vision"
   → Display first page in split-pane view
+  → Page divider shows VLM badge if page has visual findings
   → Reviewer:  Approve ──▶ POST approve, next page
               Edit    ──▶ Modify extraction, save
               Flag    ──▶ POST flag with reason, next page

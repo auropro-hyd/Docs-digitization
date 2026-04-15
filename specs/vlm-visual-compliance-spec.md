@@ -1,7 +1,7 @@
 # VLM-Powered Visual Compliance Audit — Technical Specification
 
-> **Status**: Draft v1.0
-> **Date**: 2026-04-13
+> **Status**: Implemented (Phase 1-2, Phase 4 complete) | Phase 3, 5 deferred
+> **Date**: 2026-04-13 | **Updated**: 2026-04-15
 > **Authors**: Engineering Team
 > **Scope**: Backend service architecture, compliance rule integration, infrastructure, and frontend enhancements
 
@@ -789,62 +789,62 @@ In the findings table, add a column/badge showing evaluation source:
 
 ## 13. Migration & Rollout Plan
 
-### Phase 1 — Foundation (Weeks 1-2)
+### Phase 1 — Foundation (COMPLETED)
 
-| Task | Description | Files |
-|------|------------|-------|
-| 1.1 | Create `VLMProvider` port | `core/ports/vlm.py` |
-| 1.2 | Create `VLMConfig` settings | `config/settings.py` |
-| 1.3 | Wire VLM into Container | `config/container.py` |
-| 1.4 | Page image extraction node | `workflow/nodes.py` |
-| 1.5 | Page image storage (filesystem) | `adapters/storage/filesystem.py` |
-| 1.6 | Page image API endpoint | `api/routes/documents.py` |
-| 1.7 | Add `evaluation_strategy` to AuditRule | `compliance/rules/registry.py` |
-| 1.8 | Update `.env.example` with VLM config | `.env.example` |
+| Task | Description | Files | Status |
+|------|------------|-------|--------|
+| 1.1 | Create `VLMProvider` port | `core/ports/vlm.py` | Done |
+| 1.2 | Create `VLMConfig` settings | `config/settings.py` | Done |
+| 1.3 | Wire VLM into Container | `config/container.py` | Done |
+| 1.4 | Page image extraction / loader | `compliance/page_image_loader.py` | Done |
+| 1.5 | Page image storage (filesystem) | On-demand render via pypdfium2 | Done |
+| 1.6 | Page image API endpoint | `api/routes/documents.py` — `GET /{doc_id}/pages/{page_num}/image` | Done |
+| 1.7 | Add `evaluation_strategy` to AuditRule | `compliance/rules/registry.py` | Done |
+| 1.8 | Update `.env.example` with VLM config | `.env.example` | Done |
 
-### Phase 2 — Gemini Integration (Weeks 2-3)
+### Phase 2 — Gemini Integration (COMPLETED)
 
-| Task | Description | Files |
-|------|------------|-------|
-| 2.1 | Gemini VLM adapter | `adapters/vlm/gemini.py` |
-| 2.2 | Vision evaluator (parallel to text evaluator) | `compliance/vision_evaluator.py` |
-| 2.3 | Vision-aware context builder | `compliance/context_builder.py` |
-| 2.4 | Update rule YAML with evaluation_strategy tags | `compliance/rules/*.yaml` |
-| 2.5 | Orchestrator integration (parallel text+vision) | `compliance/evaluator.py` |
-| 2.6 | Result merger (text + vision) | `compliance/result_merger.py` |
-| 2.7 | Vision system prompts per visual check | `compliance/vision_evaluator.py` |
-| 2.8 | Graceful degradation (VLM unavailable) | `compliance/evaluator.py` |
+| Task | Description | Files | Status |
+|------|------------|-------|--------|
+| 2.1 | Gemini VLM adapter | `adapters/vlm/gemini.py` | Done |
+| 2.2 | Vision evaluator (parallel to text evaluator) | `compliance/vision_evaluator.py` | Done |
+| 2.3 | Vision-aware context builder | `compliance/context_builder.py` | Done |
+| 2.4 | Update rule YAML with evaluation_strategy tags | `compliance/rules/alcoa_rules.yaml`, `gmp_rules.yaml`, `checklist_rules.yaml` | Done |
+| 2.5 | Orchestrator integration (parallel text+vision) | `compliance/evaluator.py` | Done |
+| 2.6 | Result merger (text + vision) | Integrated in `compliance/evaluator.py` via `_merge_text_vision` | Done |
+| 2.7 | Vision system prompts per visual check | `compliance/vision_evaluator.py` | Done |
+| 2.8 | Graceful degradation (VLM unavailable) | `compliance/evaluator.py` | Done |
 
-### Phase 3 — Container VLM (Weeks 3-4)
+### Phase 3 — Container VLM (PARTIAL — adapter done, infra deferred)
 
-| Task | Description | Files |
-|------|------------|-------|
-| 3.1 | vLLM/OpenAI-compatible adapter | `adapters/vlm/vllm_openai.py` |
-| 3.2 | Docker compose overlay | `docker-compose.vlm.yaml` |
-| 3.3 | Health check and readiness probe | `adapters/vlm/vllm_openai.py` |
-| 3.4 | Model download / cache management | Documentation + Makefile |
-| 3.5 | Provider switching (Gemini ↔ vLLM) via config | `config/container.py` |
+| Task | Description | Files | Status |
+|------|------------|-------|--------|
+| 3.1 | vLLM/OpenAI-compatible adapter | `adapters/vlm/vllm_openai.py` | Done |
+| 3.2 | Docker compose overlay | `docker-compose.vlm.yaml` | Deferred — no GPU available in dev |
+| 3.3 | Health check and readiness probe | Built into adapter | Done |
+| 3.4 | Model download / cache management | Documentation + Makefile | Deferred |
+| 3.5 | Provider switching (Gemini <-> vLLM) via config | `config/container.py` | Done |
 
-### Phase 4 — Frontend & HITL (Weeks 4-5)
+### Phase 4 — Frontend & HITL (COMPLETED)
 
-| Task | Description | Files |
-|------|------------|-------|
-| 4.1 | Page image display in findings | `components/compliance/findings-table.tsx` |
-| 4.2 | Visual evidence overlay component | `components/compliance/visual-evidence-overlay.tsx` |
-| 4.3 | HITL review with visual context | `components/compliance/findings-table.tsx` |
-| 4.4 | Evaluation channel badges | `components/compliance/findings-table.tsx` |
-| 4.5 | Page image API client | `lib/api.ts` |
+| Task | Description | Files | Status |
+|------|------------|-------|--------|
+| 4.1 | Page image display in findings (inline viewer + thumbnail) | `components/compliance/findings-table.tsx` | Done |
+| 4.2 | Visual evidence viewer dialog with region overlays and zoom | `components/compliance/visual-evidence-viewer.tsx` | Done |
+| 4.3 | HITL review with visual context (VLM findings indicator in page divider) | `components/review/review-interface.tsx`, `app/review/page.tsx` | Done |
+| 4.4 | Evaluation channel badges (TEXT / VLM / TEXT+VLM) in collapsed finding row | `components/compliance/findings-table.tsx` | Done |
+| 4.5 | Page image API client (`getPageImageUrl`) | `lib/api.ts` | Done |
 
-### Phase 5 — Optimization & Hardening (Weeks 5-6)
+### Phase 5 — Optimization & Hardening (DEFERRED)
 
-| Task | Description |
-|------|------------|
-| 5.1 | Fine-tune visual prompts based on real batch records |
-| 5.2 | Add VLM confidence calibration |
-| 5.3 | Performance benchmarking (throughput, latency, accuracy) |
-| 5.4 | Cost monitoring dashboards |
-| 5.5 | Integration tests with mock VLM |
-| 5.6 | E2E tests with real batch record PDFs |
+| Task | Description | Status |
+|------|------------|--------|
+| 5.1 | Fine-tune visual prompts based on real batch records | Deferred |
+| 5.2 | Add VLM confidence calibration | Deferred |
+| 5.3 | Performance benchmarking (throughput, latency, accuracy) | Deferred |
+| 5.4 | Cost monitoring dashboards | Deferred |
+| 5.5 | Integration tests with mock VLM | Deferred |
+| 5.6 | E2E tests with real batch record PDFs | Deferred |
 
 ---
 

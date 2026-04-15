@@ -44,6 +44,10 @@ export function getDocumentPdfUrl(docId: string): string {
   return `${API_BASE}/api/documents/${docId}/pdf`;
 }
 
+export function getPageImageUrl(docId: string, pageNum: number): string {
+  return `${API_BASE}/api/documents/${docId}/pages/${pageNum}/image`;
+}
+
 export async function getReviewPages(docId: string) {
   const response = await fetch(`${API_BASE}/api/review/${docId}/pages`);
   if (!response.ok) throw new Error(`Failed to fetch review pages: ${response.statusText}`);
@@ -397,5 +401,43 @@ export async function bulkComponentAction(
     body: JSON.stringify({ component_ids: componentIds, action }),
   });
   if (!response.ok) throw new Error(`Bulk component action failed: ${response.statusText}`);
+  return response.json();
+}
+
+// ── OCR Corrections ─────────────────────────────────────────
+
+export async function getCorrectionRules(active?: boolean) {
+  const params = new URLSearchParams();
+  if (active !== undefined) params.set("active", String(active));
+  const response = await fetch(`${API_BASE}/api/corrections/rules?${params.toString()}`);
+  if (!response.ok) throw new Error(`Failed to fetch correction rules: ${response.statusText}`);
+  return response.json();
+}
+
+export async function toggleCorrectionRule(ruleId: string) {
+  const response = await fetch(`${API_BASE}/api/corrections/rules/${ruleId}/toggle`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(`Failed to toggle rule: ${response.statusText}`);
+  return response.json();
+}
+
+export async function rebuildCorrections() {
+  const response = await fetch(`${API_BASE}/api/corrections/rebuild`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error(`Rebuild failed: ${response.statusText}`);
+  return response.json();
+}
+
+export async function getCorrectionStats() {
+  const response = await fetch(`${API_BASE}/api/corrections/stats`);
+  if (!response.ok) throw new Error(`Failed to fetch correction stats: ${response.statusText}`);
+  return response.json();
+}
+
+export async function getConfusionMatrix() {
+  const response = await fetch(`${API_BASE}/api/corrections/confusion-matrix`);
+  if (!response.ok) throw new Error(`Failed to fetch confusion matrix: ${response.statusText}`);
   return response.json();
 }

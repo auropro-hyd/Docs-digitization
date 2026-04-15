@@ -1,0 +1,330 @@
+{
+  "Manufacturing Steps": null,
+  "Vacuum Records": null,
+  "Product Name": "Sertraline Hydrochloride (Micronized Grade – I)",
+  "Product Name_citations": [
+    "/page/0/Table/3"
+  ],
+  "MPCR Number": "UIIMEHSII03-04",
+  "MPCR Number_citations": [
+    "/page/0/Table/3"
+  ],
+  "Manufacturing Date": "03/10/2025",
+  "Manufacturing Date_citations": [
+    "/page/2/Table/6"
+  ],
+  "Done By": "Y, CHINNA KOTI REDDY (21977)",
+  "Done By_citations": [
+    "/page/0/Table/7"
+  ],
+  "Date": "07/04/2025",
+  "Date_citations": [
+    "/page/0/Table/7"
+  ],
+  "Theoretical Weight": null,
+  "Theoretical Weight_citations": [],
+  "Reconciliation After Drying": null,
+  "Reconciliation After Drying_citations": [],
+  "Reconciliation Final Output": null,
+  "Reconciliation Final Output_citations": [],
+  "Manufacturing Steps_citations": [],
+  "Vacuum Records_citations": [],
+  "Raw Materials": [
+    {
+      "S No": "1",
+      "S No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Raw Material Name": "Ethyl acetate* (fresh/recovered) (C4050150/C4060193)",
+      "Raw Material Name_citations": [
+        "/page/2/Table/6"
+      ],
+      "UOM": "L",
+      "UOM_citations": [
+        "/page/2/Table/6"
+      ],
+      "Batch No": "2538104115",
+      "Batch No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Standard Qty": "4305–5228 L",
+      "Standard Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Gross Qty": null,
+      "Gross Qty_citations": [],
+      "Net Qty": "4305",
+      "Net Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Tare Qty": null,
+      "Tare Qty_citations": [],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "S No": "2",
+      "S No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Raw Material Name": "Sertraline Mandelate (from Unit-IX) (C2060719)",
+      "Raw Material Name_citations": [
+        "/page/2/Table/6"
+      ],
+      "UOM": "Kg",
+      "UOM_citations": [
+        "/page/2/Table/6"
+      ],
+      "Batch No": "2439104941/2439105046/2539103583",
+      "Batch No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Standard Qty": "400",
+      "Standard Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Gross Qty": null,
+      "Gross Qty_citations": [],
+      "Net Qty": "110.900/205.480/83.62",
+      "Net Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Tare Qty": null,
+      "Tare Qty_citations": [],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "S No": "3",
+      "S No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Raw Material Name": "Caustic Soda Flakes (Sodium Hydroxide) (C4042430)",
+      "Raw Material Name_citations": [
+        "/page/2/Table/6"
+      ],
+      "UOM": "Kg",
+      "UOM_citations": [
+        "/page/2/Table/6"
+      ],
+      "Batch No": "391-26-1907658",
+      "Batch No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Standard Qty": "70.77",
+      "Standard Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Gross Qty": null,
+      "Gross Qty_citations": [],
+      "Net Qty": "70.77",
+      "Net Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Tare Qty": null,
+      "Tare Qty_citations": [],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "S No": "4",
+      "S No_citations": [
+        "/page/2/Table/6"
+      ],
+      "Raw Material Name": "Purified Water*",
+      "Raw Material Name_citations": [
+        "/page/2/Table/6"
+      ],
+      "UOM": "L",
+      "UOM_citations": [
+        "/page/2/Table/6"
+      ],
+      "Batch No": null,
+      "Batch No_citations": [],
+      "Standard Qty": "1508–1908 L",
+      "Standard Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Gross Qty": null,
+      "Gross Qty_citations": [],
+      "Net Qty": "1508",
+      "Net Qty_citations": [
+        "/page/2/Table/6"
+      ],
+      "Tare Qty": null,
+      "Tare Qty_citations": [],
+      "Done By": "[Signature]",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    }
+  ],
+  "In Process Results": null,
+  "Batch No": "2538104192",
+  "Batch No_citations": [
+    "/page/0/Table/3"
+  ],
+  "Batch Size": "400.0 Kg",
+  "Batch Size_citations": [
+    "/page/0/Table/3"
+  ],
+  "Expiry Date": null,
+  "Expiry Date_citations": [],
+  "Checked By": "YEDDULA, RAMESH (5578) (Quality Assurance HOD)",
+  "Checked By_citations": [
+    "/page/0/Table/7"
+  ],
+  "Remarks": "Changed the Hyflow supercell bed preparation in Reactor SRE016 instead of SRE015, accordingly step numbers are changed. Removed the Packing material request Cum issuance record, Raw Material Request Cum Issue Record sheet & Seed material request cum report. Incorporated recording provision for average temperature set point in remarks column during at step No. 85.3 & 87.3.",
+  "Remarks_citations": [
+    "/page/1/Table/6"
+  ],
+  "Obtained Weight": null,
+  "Obtained Weight_citations": [],
+  "Reconciliation Powder Processing": null,
+  "Reconciliation Powder Processing_citations": [],
+  "Date Of Completion": null,
+  "Date Of Completion_citations": [],
+  "In Process Results_citations": [],
+  "Equipment Cleaning": null,
+  "Pin Milling Records": null,
+  "BPCR Number": "UIIBEHSII03",
+  "BPCR Number_citations": [
+    "/page/0/Table/3"
+  ],
+  "Effective Date": "09/04/2025",
+  "Effective Date_citations": [
+    "/page/0/Table/5"
+  ],
+  "Stage": "API",
+  "Stage_citations": [
+    "/page/0/Table/3"
+  ],
+  "Verified By": "VANKATTULA, L NARASIMHA RAO",
+  "Verified By_citations": [
+    "/page/0/Table/7"
+  ],
+  "Yield": null,
+  "Yield_citations": [],
+  "Yield Percentage": null,
+  "Yield Percentage_citations": [],
+  "Reconciliation Sample Qty": null,
+  "Reconciliation Sample Qty_citations": [],
+  "Time Of Completion": null,
+  "Time Of Completion_citations": [],
+  "Equipment Cleaning_citations": [],
+  "Pin Milling Records_citations": [],
+  "Sifting Records": null,
+  "Weighing Records": [
+    {
+      "Container No": null,
+      "Container No_citations": [],
+      "Tare Weight": null,
+      "Tare Weight_citations": [],
+      "Gross Weight": null,
+      "Gross Weight_citations": [],
+      "Net Weight": "4305 L",
+      "Net Weight_citations": [
+        "/page/2/Table/6"
+      ],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "Container No": null,
+      "Container No_citations": [],
+      "Tare Weight": null,
+      "Tare Weight_citations": [],
+      "Gross Weight": null,
+      "Gross Weight_citations": [],
+      "Net Weight": "110.900/205.480/83.62 Kg",
+      "Net Weight_citations": [
+        "/page/2/Table/6"
+      ],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "Container No": null,
+      "Container No_citations": [],
+      "Tare Weight": null,
+      "Tare Weight_citations": [],
+      "Gross Weight": null,
+      "Gross Weight_citations": [],
+      "Net Weight": "70.77 Kg",
+      "Net Weight_citations": [
+        "/page/2/Table/6"
+      ],
+      "Done By": "NOOP",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    },
+    {
+      "Container No": null,
+      "Container No_citations": [],
+      "Tare Weight": null,
+      "Tare Weight_citations": [],
+      "Gross Weight": null,
+      "Gross Weight_citations": [],
+      "Net Weight": "1508 L",
+      "Net Weight_citations": [
+        "/page/2/Table/6"
+      ],
+      "Done By": "[Signature]",
+      "Done By_citations": [
+        "/page/2/Table/6"
+      ],
+      "Checked By": "[Signature]",
+      "Checked By_citations": [
+        "/page/2/Table/6"
+      ]
+    }
+  ],
+  "Temperature Records": null,
+  "Sifting Records_citations": [],
+  "Temperature Records_citations": [],
+  "Mixing Records": null,
+  "Metal Detector Records": null,
+  "Deviations": null,
+  "Mixing Records_citations": [],
+  "Metal Detector Records_citations": [],
+  "Deviations_citations": []
+}

@@ -13,6 +13,15 @@ families:
       - major equipments
       - revision summary
       - bpcr
+      - sifting record
+      - pin milling
+      - mixing record
+      - metal detector
+      - equipment cleaning
+      - reconciliation
+      - deviation
+      - yield details
+      - in process
     critical_fields:
       - product_name
       - batch_no

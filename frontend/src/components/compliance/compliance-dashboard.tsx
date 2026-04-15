@@ -81,7 +81,7 @@ export function ComplianceDashboard({ score, findings }: ComplianceDashboardProp
   const categories = [...new Set(findings.map((f) => f.rule_category))];
   const categoryData = categories.map((cat) => ({
     name: CATEGORY_LABELS[cat] || cat,
-    count: findings.filter((f) => f.category === cat).length,
+    count: findings.filter((f) => f.rule_category === cat).length,
   }));
 
   const scoreColor = score >= 80 ? "text-success" : score >= 60 ? "text-warning" : "text-destructive";

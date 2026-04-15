@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ReviewInterface } from "@/components/review/review-interface";
 import { DocumentContextBar } from "@/components/common/document-context-bar";
-import { getDocument, getReviewPages, approvePage, editPage, flagPage } from "@/lib/api";
+import { getDocument, getReviewPages, approvePage, editPage, flagPage, getComplianceReport } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/common/empty-state";
@@ -75,12 +75,29 @@ function ReviewContent() {
   const [error, setError] = useState<string | null>(null);
   const [filename, setFilename] = useState<string | null>(null);
   const [fullMarkdown, setFullMarkdown] = useState("");
+  const [vlmPages, setVlmPages] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!docId) return;
     getDocument(docId)
       .then((doc) => setFilename(doc.filename ?? null))
       .catch(() => setFilename(null));
+  }, [docId]);
+
+  useEffect(() => {
+    if (!docId) return;
+    getComplianceReport(docId)
+      .then((report) => {
+        const findings = report?.findings ?? [];
+        const visionPageNums = new Set<number>();
+        for (const f of findings) {
+          if (f.evaluation_channels?.includes("vision") && f.page_numbers) {
+            for (const p of f.page_numbers) visionPageNums.add(p);
+          }
+        }
+        setVlmPages(visionPageNums);
+      })
+      .catch(() => { /* compliance report may not exist yet */ });
   }, [docId]);
 
   useEffect(() => {
@@ -265,6 +282,7 @@ function ReviewContent() {
         pages={pages}
         fullMarkdown={fullMarkdown}
         initialPage={initialPage}
+        vlmPages={vlmPages}
         onApprove={handleApprove}
         onEdit={handleEdit}
         onFlag={handleFlag}

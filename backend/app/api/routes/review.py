@@ -152,6 +152,14 @@ def _append_correction(results: dict, record: dict) -> None:
         min_corrections_for_trigger=settings.azure_di.drift_min_corrections_for_trigger,
     )
 
+    if settings.feedback.rebuild_on_review_save:
+        try:
+            from app.core.services.ocr_post_correction import rebuild_global_corrections
+
+            rebuild_global_corrections(settings.storage.base_path, settings.feedback)
+        except Exception:
+            logger.warning("Failed to rebuild global correction store", exc_info=True)
+
 
 def _page_num_from_component_id(component_id: str) -> int:
     m = re.match(r"^p(\d+)-", str(component_id or ""))
@@ -318,13 +326,15 @@ async def edit_page(doc_id: str, page_num: int, body: EditPageBody):
         before = str(raw_markdown.get(str(page_num), raw_markdown.get(page_num, "")) or "")
         raw_markdown[str(page_num)] = body.markdown
         results["raw_markdown"] = raw_markdown
+        from app.core.services.feedback_learning import infer_criticality
+
         _append_correction(results, {
             "source": "page_edit",
             "page_num": page_num,
             "field_id": "page_markdown",
             "before_value": before[:2000],
             "after_value": str(body.markdown)[:2000],
-            "criticality": "major",
+            "criticality": infer_criticality(before[:2000], str(body.markdown)[:2000], "page_markdown"),
         })
 
     decisions = results.get("hitl_decisions", [])
@@ -456,6 +466,8 @@ async def component_action(doc_id: str, body: ComponentActionBody):
     if body.value is not None:
         before = _lookup_component_value(results, body.component_id)
         decision["value"] = body.value
+        from app.core.services.feedback_learning import infer_criticality
+
         _append_correction(results, {
             "source": "component_action",
             "page_num": _page_num_from_component_id(body.component_id),
@@ -463,7 +475,7 @@ async def component_action(doc_id: str, body: ComponentActionBody):
             "field_id": body.component_id,
             "before_value": before[:500],
             "after_value": str(body.value)[:500],
-            "criticality": "major",
+            "criticality": infer_criticality(before[:500], str(body.value)[:500], body.component_id),
         })
     if body.reason:
         decision["reason"] = body.reason

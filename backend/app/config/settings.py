@@ -24,6 +24,7 @@ class PipelineConfig(BaseModel):
 
     azure_di:       Azure Document Intelligence — cloud API or disconnected container.
     marker_docling: Marker OCR + Docling quality scoring — fully offline.
+    datalab:        Data Lab (Chandra) OCR — superior handwriting + tables.
     """
 
     mode: str = "azure_di"
@@ -102,6 +103,58 @@ class AzureDIConfig(BaseModel):
     def features_for_profile(self, profile: str | None) -> list[str]:
         key = (profile or "default").strip().lower()
         return list(self.feature_profiles.get(key) or self.feature_profiles.get("default") or self.features)
+
+
+class DatalabConfig(BaseModel):
+    """Data Lab (Chandra) OCR settings.
+
+    Chandra excels at handwriting recognition, complex tables, checkbox
+    detection, and form understanding.  Uses the datalab-python-sdk.
+    """
+
+    api_key: str = ""
+    base_url: str = "https://www.datalab.to"
+    timeout: int = 300
+    mode: str = "accurate"  # "fast" | "balanced" | "accurate"
+    paginate: bool = True
+    max_pages: int | None = None
+    extras: str = "new_block_types,table_row_bboxes,chart_understanding"
+    output_format: str = "markdown"
+    disable_image_extraction: bool = True
+    disable_image_captions: bool = True
+    token_efficient_markdown: bool = False
+    page_range: str | None = None
+    max_polls: int = 300
+    poll_interval: float = 1.0
+    chunk_pages: int = 50
+    max_concurrent_chunks: int = 8
+    submit_max_retries: int = 3
+    submit_retry_base_delay: float = 5.0
+
+    # Quality enhancements
+    use_llm: bool = True
+    force_ocr: bool = False
+    strip_existing_ocr: bool = False
+
+    # Structured extraction (Extract API)
+    enable_extraction: bool = True
+    extraction_schema_family: str = "bpr_core"
+    extraction_schema: dict = Field(default_factory=dict)
+    save_checkpoint: bool = True
+
+    # Bounding box enrichment via JSON output
+    fetch_block_bboxes: bool = True
+
+
+class FeedbackConfig(BaseModel):
+    """OCR correction learning settings (Tier 1: runtime post-correction)."""
+
+    auto_correct_enabled: bool = False
+    min_correction_occurrences: int = 3
+    min_correction_source_docs: int = 2
+    min_correction_confidence: float = 0.8
+    rebuild_on_review_save: bool = True
+    correction_store_path: str = "data/corrections/global_corrections.json"
 
 
 class LLMConfig(BaseModel):
@@ -256,12 +309,14 @@ class AppSettings(BaseSettings):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     marker: MarkerConfig = Field(default_factory=MarkerConfig)
     azure_di: AzureDIConfig = Field(default_factory=AzureDIConfig)
+    datalab: DatalabConfig = Field(default_factory=DatalabConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     vlm: VLMConfig = Field(default_factory=VLMConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     hitl: HITLConfig = Field(default_factory=HITLConfig)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
 
     model_config = {
         "env_prefix": "AT_",

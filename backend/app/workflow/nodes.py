@@ -270,6 +270,40 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         confidence = 0.50 * avg_conf + 0.20 * min_conf + 0.30 * validation.pass_rate
         confidence_scores[page_num] = round(min(max(confidence, 0.0), 1.0), 3)
 
+    # ── OCR post-correction (learned corrections from reviewer feedback) ──
+    settings = get_settings()
+    _post_corrector = None
+    if settings.feedback.auto_correct_enabled:
+        try:
+            from app.core.services.ocr_post_correction import (
+                OCRPostCorrector,
+                load_global_corrections,
+            )
+
+            _store = load_global_corrections(settings.feedback)
+            if _store.rules:
+                _post_corrector = OCRPostCorrector(_store, settings.feedback)
+                logger.info("Loaded %d OCR correction rules", len(_store.rules))
+        except Exception:
+            logger.warning("Failed to load OCR correction store; skipping post-correction", exc_info=True)
+
+    if _post_corrector:
+        for ext in extractions:
+            md = ext.get("markdown", "")
+            corrected_md, md_applied = _post_corrector.correct_markdown(md)
+            if md_applied:
+                ext["markdown"] = corrected_md
+                ext.setdefault("auto_corrections", []).extend(md_applied)
+            for kv in ext.get("key_value_pairs", []):
+                v = kv.get("value", "")
+                if v:
+                    corrected_v, kv_applied = _post_corrector.correct_kv_value(
+                        kv.get("key", ""), v
+                    )
+                    if kv_applied:
+                        kv["value"] = corrected_v
+                        ext.setdefault("auto_corrections", []).extend(kv_applied)
+
     page_markdown = {
         int(k): v.get("markdown", "")
         for k, v in azure.items()
@@ -278,7 +312,6 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
     packet_sections = decompose_packet(page_markdown)
     packet_sections_payload = enrich_packet_sections_with_family(sections_as_dicts(packet_sections))
     extraction_routing = route_extraction_strategy(packet_sections_payload)
-    settings = get_settings()
     template_routing = route_template_family(
         packet_sections_payload,
         extraction_family=str(extraction_routing.get("primary_family", "")),
@@ -375,7 +408,6 @@ async def merge_azure_di_results(state: DocumentState) -> dict:
         page_num = int(ext.get("page_num", 0) or 0)
         ext["corruption_risk"] = packet_corruption_risk.get("pages", {}).get(page_num, {})
 
-    settings = get_settings()
     for page_num, score in confidence_scores.items():
         await container.notification.send_update(state["doc_id"], {
             "type": "page_update",

@@ -102,6 +102,39 @@ Each card displays:
 
 When no findings exist, a green success banner appears: "No compliance issues found".
 
+### 5. Visual Evidence Viewer (VLM Findings)
+
+When a finding has `evaluation_channels` including `"vision"`, additional visual analysis UI is shown:
+
+- **Evaluation channel badges** in the collapsed row: `TEXT`, `VLM`, or `TEXT+VLM`
+- **Visual evidence text** from the VLM analysis
+- **Inline thumbnail** of the page image (clickable to open full viewer)
+- **Visual Evidence Viewer dialog** (`visual-evidence-viewer.tsx`) with:
+  - Full page image from `GET /api/documents/{docId}/pages/{pageNum}/image`
+  - Semi-transparent region overlays for `visual_regions` (normalized 0-1 coordinates)
+  - Zoom controls (25%–300%) with reset
+  - Evidence text sidebar with detected region list
+
+**File:** `frontend/src/components/compliance/visual-evidence-viewer.tsx`
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  👁 Visual Evidence — ALC-ATT6 (Page 12)    [TEXT] [VLM]    │
+├──────────────────────────────────────────────────────────────┤
+│  [🔍-] 100% [🔍+] [↺]                                      │
+├──────────────────────────────┬───────────────────────────────┤
+│                              │  Visual Analysis              │
+│   Page Image                 │  "Single-line strikethrough   │
+│   with highlighted           │   detected with initials..."  │
+│   region overlays            │                               │
+│                              │  Detected Regions (2)         │
+│   ┌─────────────┐            │  ● strikethrough              │
+│   │  [violet     │            │  ● initials                   │
+│   │   overlay]   │            │                               │
+│   └─────────────┘            │                               │
+└──────────────────────────────┴───────────────────────────────┘
+```
+
 ## Data Flow
 
 ```
@@ -127,4 +160,6 @@ When no findings exist, a green success banner appears: "No compliance issues fo
 
 - [Frontend Overview](./overview.md) — Architecture and API client reference
 - [Review Interface](./review-interface.md) — HITL review that precedes compliance analysis
+- [Corrections Manager](./corrections-manager.md) — OCR correction rules management
 - [Settings](../backend/configuration/settings.md) — Compliance-related configuration
+- [VLM Visual Compliance Spec](../../specs/vlm-visual-compliance-spec.md) — Full technical specification for VLM integration

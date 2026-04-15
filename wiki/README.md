@@ -9,8 +9,8 @@
 | Document | Description |
 |----------|-------------|
 | [Architecture Overview](architecture/overview.md) | Hexagonal architecture, layer breakdown, system diagram |
-| [Ports & Adapters](architecture/ports-and-adapters.md) | 5 port contracts, Protocol definitions, adapter implementations |
-| [Pipeline Modes](pipeline-modes.md) | `azure_di` vs `marker_docling` — comparison and switching |
+| [Ports & Adapters](architecture/ports-and-adapters.md) | 6 port contracts, Protocol definitions, adapter implementations |
+| [Pipeline Modes](pipeline-modes.md) | `azure_di` vs `marker_docling` vs `datalab` — comparison and switching |
 | [Azure DI Setup](azure-di-setup.md) | Cloud API and disconnected container setup |
 | [Deployment Environments](architecture/deployment-environments.md) | Dev, staging, and on-prem production configs |
 | [Data Flow](architecture/data-flow.md) | End-to-end pipeline from upload to compliance report |
@@ -48,8 +48,9 @@
 |----------|-------------|
 | [Frontend Overview](frontend/overview.md) | Next.js app structure, routing, Zustand state |
 | [Upload Flow](frontend/upload-flow.md) | Drag-and-drop, progress tracking, validation |
-| [Review Interface](frontend/review-interface.md) | Split-pane HITL, inline editing, keyboard shortcuts |
-| [Compliance Dashboard](frontend/compliance-dashboard.md) | ALCOA++ visualizations, severity breakdown |
+| [Review Interface](frontend/review-interface.md) | Split-pane HITL, inline editing, VLM findings, keyboard shortcuts |
+| [Compliance Dashboard](frontend/compliance-dashboard.md) | ALCOA++ visualizations, severity breakdown, visual evidence viewer |
+| [Corrections Manager](frontend/corrections-manager.md) | OCR correction rules, confusion chart, rule management |
 | [WebSocket Streaming](frontend/websocket-streaming.md) | Real-time updates from LangGraph to browser |
 
 ### DevOps

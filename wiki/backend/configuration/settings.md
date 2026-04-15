@@ -31,7 +31,10 @@ class AppSettings(BaseSettings):
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     marker: MarkerConfig = Field(default_factory=MarkerConfig)
     azure_di: AzureDIConfig = Field(default_factory=AzureDIConfig)
+    datalab: DatalabConfig = Field(default_factory=DatalabConfig)
+    vlm: VLMConfig = Field(default_factory=VLMConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     hitl: HITLConfig = Field(default_factory=HITLConfig)
@@ -53,7 +56,7 @@ Controls which processing flow the system uses. This is the primary architectura
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `mode` | `str` | `"azure_di"` | Pipeline mode: `"azure_di"` or `"marker_docling"` |
+| `mode` | `str` | `"azure_di"` | Pipeline mode: `"azure_di"`, `"marker_docling"`, or `"datalab"` |
 
 **Modes:**
 
@@ -61,6 +64,7 @@ Controls which processing flow the system uses. This is the primary architectura
 |------|-----------|-------------------|------------------|
 | `azure_di` | `AzureDIOCRAdapter` | DI per-word scores + validation rules | Cloud API or disconnected container |
 | `marker_docling` | `MarkerOCRAdapter` + `DoclingQualityAdapter` | Docling quality scores + validation rules | None (fully offline) |
+| `datalab` | `DatalabOCRAdapter` | Validation rules (0.5 baseline confidence) | Cloud API or self-hosted Chandra |
 
 ### MarkerConfig
 
@@ -126,6 +130,53 @@ Controls the LLM provider for compliance analysis and other AI tasks:
 | `review_threshold` | `float` | `0.6` | Confidence score below which pages require human review |
 | `batch_review_enabled` | `bool` | `True` | Enable batch review mode |
 
+### DatalabConfig
+
+Controls Data Lab (Chandra) OCR engine (active when `pipeline.mode = datalab`):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `api_key` | `str` | (empty) | Data Lab API key |
+| `base_url` | `str` | `https://www.datalab.to` | Data Lab API base URL |
+| `mode` | `str` | `accurate` | OCR mode: `fast`, `balanced`, `accurate` |
+| `chunk_pages` | `int` | `50` | Pages per chunk for large documents |
+| `max_concurrent_chunks` | `int` | `8` | Max parallel chunk submissions |
+| `poll_interval` | `float` | `1.0` | Seconds between status polls |
+| `use_llm` | `bool` | `True` | Enable LLM-assisted extraction |
+| `enable_extraction` | `bool` | `True` | Enable Extract API for structured fields |
+| `extraction_schema_family` | `str` | `bpr_core` | Schema family from `extraction_schemas.yaml` |
+| `disable_image_extraction` | `bool` | `True` | Skip image model for server-side speedup |
+| `disable_image_captions` | `bool` | `True` | Skip caption model for server-side speedup |
+
+### VLMConfig
+
+Controls the Vision Language Model for visual compliance checks:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | `bool` | `False` | Master switch for VLM functionality |
+| `provider` | `str` | `gemini` | VLM provider: `gemini`, `vllm`, `azure_vision` |
+| `gemini_api_key` | `str` | (empty) | Google Gemini API key |
+| `gemini_model` | `str` | `gemini-2.5-pro` | Gemini model name |
+| `max_image_width` | `int` | `2048` | Max image width before resizing |
+| `max_concurrent` | `int` | `5` | Max concurrent VLM requests |
+| `render_scale` | `float` | `2.0` | PDF page render scale for images |
+
+### FeedbackConfig
+
+Controls OCR correction learning (post-correction from reviewer edits):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `auto_correct_enabled` | `bool` | `False` | Enable automatic OCR correction application |
+| `min_correction_occurrences` | `int` | `3` | Minimum times a correction must be seen |
+| `min_correction_source_docs` | `int` | `2` | Minimum distinct documents a correction must appear in |
+| `min_correction_confidence` | `float` | `0.8` | Consistency threshold for applying corrections |
+| `rebuild_on_review_save` | `bool` | `True` | Rebuild correction store on each review save |
+| `correction_store_path` | `str` | `data/corrections/global_corrections.json` | File path for the global correction store |
+
+The correction store contains `CorrectionRule` entries with `id`, `pattern`, `replacement`, `field_context`, `occurrences`, `confidence`, `source_docs`, `is_active`, and `created_at`. Rules can be managed via the `/api/corrections` API endpoints and the frontend Corrections Manager page.
+
 ## Per-Environment YAML Files
 
 Located in `backend/config/`:
@@ -166,7 +217,7 @@ storage:
   base_path: ./data/documents
 ```
 
-The `pipeline.mode` field is the primary architectural switch. In `azure_di` mode, the `marker` section is still present but ignored by the Container — only the `azure_di` and `llm` sections are active. In `marker_docling` mode, the `azure_di` section is ignored and `marker` drives the OCR.
+The `pipeline.mode` field is the primary architectural switch. In `azure_di` mode, the `marker` and `datalab` sections are still present but ignored by the Container — only the `azure_di` and `llm` sections are active. In `marker_docling` mode, the `azure_di` section is ignored and `marker` drives the OCR. In `datalab` mode, the `datalab` section drives the OCR. The `vlm` and `feedback` sections are cross-cutting and apply regardless of OCR mode.
 
 ## Environment Variable Overrides
 
@@ -235,6 +286,10 @@ pipeline:
 # Or use Marker + Docling (fully offline)
 pipeline:
   mode: marker_docling
+
+# Or use Data Lab (Chandra) for superior handwriting OCR
+pipeline:
+  mode: datalab
 ```
 
 **Via environment variable:**
@@ -242,6 +297,7 @@ pipeline:
 ```bash
 AT_PIPELINE__MODE=azure_di       # Azure DI
 AT_PIPELINE__MODE=marker_docling # Marker + Docling
+AT_PIPELINE__MODE=datalab        # Data Lab (Chandra)
 ```
 
 ## Usage in Code

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -397,7 +398,11 @@ async def _run_pipeline(doc_id: str, pdf_path: str):
         result_data = accumulated
         elapsed_ms = int((perf_counter() - started) * 1000)
         result_data["extraction_telemetry"] = _build_extraction_telemetry(result_data, elapsed_ms)
-        result_path.write_text(json.dumps(result_data, indent=2, default=str))
+
+        def _serialize_and_write():
+            result_path.write_text(json.dumps(result_data, indent=2, default=str))
+
+        await asyncio.to_thread(_serialize_and_write)
         logger.info(f"[{doc_id}] Pipeline complete. Results saved to {result_path}")
 
         total_pages = len(result_data.get("extractions", []))

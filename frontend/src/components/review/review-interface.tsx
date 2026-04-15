@@ -105,6 +105,7 @@ interface ReviewInterfaceProps {
   initialPage?: number;
   signatures?: SignatureInfo[];
   keyValuePairs?: KVPair[];
+  vlmPages?: Set<number>;
   onApprove: (pageNum: number) => Promise<void>;
   onEdit: (pageNum: number, data?: { markdown: string }) => Promise<void>;
   onFlag: (pageNum: number, reason?: string) => Promise<void>;
@@ -360,6 +361,7 @@ export function ReviewInterface({
   pages,
   fullMarkdown,
   initialPage,
+  vlmPages,
   onApprove,
   onEdit,
   onFlag,
@@ -726,6 +728,8 @@ export function ReviewInterface({
           page={page}
           isFirst={page.pageNum === 1}
           actionLoading={actionLoading}
+          hasVlmFindings={vlmPages?.has(page.pageNum) ?? false}
+          docId={docId}
           onApproveAll={handleApproveAllComponents}
           onFlag={openFlagDialog}
           statusBadge={pageStatusBadge}
@@ -983,6 +987,8 @@ function PageDivider({
   page,
   isFirst,
   actionLoading,
+  hasVlmFindings,
+  docId,
   onApproveAll,
   onFlag,
   statusBadge,
@@ -993,6 +999,8 @@ function PageDivider({
   page?: ReviewPage;
   isFirst: boolean;
   actionLoading: string | null;
+  hasVlmFindings?: boolean;
+  docId?: string;
   onApproveAll: (page: ReviewPage) => Promise<void>;
   onFlag: (pageNum: number) => void;
   statusBadge: (page: ReviewPage) => React.ReactNode;
@@ -1045,6 +1053,21 @@ function PageDivider({
               {pageKvCount} fields
             </Badge>
           </button>
+        )}
+
+        {hasVlmFindings && (
+          <Link
+            href={`/compliance?doc=${docId}`}
+            className="inline-flex items-center rounded-md"
+          >
+            <Badge
+              variant="outline"
+              className="text-[9px] gap-0.5 border-violet-300 dark:border-violet-700 text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-900/10 hover:bg-violet-100 dark:hover:bg-violet-900/20 cursor-pointer"
+            >
+              <Eye className="size-2.5" />
+              Visual findings
+            </Badge>
+          </Link>
         )}
 
         <div className="ml-auto flex items-center gap-1">

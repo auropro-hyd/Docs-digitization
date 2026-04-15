@@ -2,13 +2,54 @@
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
+_DATE_RE = re.compile(
+    r"^\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}$"
+    r"|^\d{4}[/\-\.]\d{1,2}[/\-\.]\d{1,2}$"
+)
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance (O(min(m,n)) space)."""
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        curr = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            curr[j] = min(
+                prev[j] + 1,
+                curr[j - 1] + 1,
+                prev[j - 1] + (0 if ca == cb else 1),
+            )
+        prev = curr
+    return prev[-1]
+
+
+def infer_criticality(before: str, after: str, field_id: str = "") -> str:
+    """Classify the severity of an OCR correction.
+
+    Returns ``"minor"`` for small typos/OCR artifacts, ``"critical"`` for
+    missing content or date corrections, and ``"major"`` as the default.
+    """
+    before_s = before.strip()
+    after_s = after.strip()
+
+    if not before_s and after_s:
+        return "critical"
+    if _DATE_RE.match(before_s) and _DATE_RE.match(after_s) and before_s != after_s:
+        return "critical"
+    if _edit_distance(before_s, after_s) <= 2:
+        return "minor"
+    return "major"
 
 
 def build_correction_artifacts(corrections: list[dict[str, Any]]) -> dict[str, Any]:

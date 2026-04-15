@@ -21,6 +21,7 @@ The frontend uses Next.js App Router with four primary routes:
 | `/documents` | Document List | Browse all uploaded documents and their processing status |
 | `/review` | HITL Review | Split-pane human-in-the-loop review interface for extracted data |
 | `/compliance` | Compliance Dashboard | Compliance scoring, severity breakdown, and findings per document |
+| `/corrections` | Corrections Manager | OCR correction rules, confusion chart, and rule management |
 
 Each route maps to a page component in `frontend/src/app/`:
 
@@ -33,8 +34,10 @@ frontend/src/app/
 │   └── page.tsx          # /documents — List view
 ├── review/
 │   └── page.tsx          # /review — HITL review
-└── compliance/
-    └── page.tsx          # /compliance — Dashboard
+├── compliance/
+│   └── page.tsx          # /compliance — Dashboard
+└── corrections/
+    └── page.tsx          # /corrections — Corrections Manager
 ```
 
 ## Component Structure
@@ -44,17 +47,20 @@ Components are organized by feature domain under `frontend/src/components/`:
 ```
 components/
 ├── upload/
-│   ├── document-upload.tsx       # Drag-and-drop upload widget
-│   └── processing-dashboard.tsx  # Real-time processing status display
+│   ├── document-upload.tsx              # Drag-and-drop upload widget
+│   └── processing-dashboard.tsx         # Real-time processing status display
 ├── review/
-│   └── review-interface.tsx      # Split-pane HITL review
+│   └── review-interface.tsx             # Split-pane HITL review (with VLM findings badges)
 ├── compliance/
-│   └── compliance-dashboard.tsx  # Compliance score, findings, categories
+│   ├── compliance-dashboard.tsx         # Compliance score, findings, categories
+│   ├── findings-table.tsx               # Findings list with filters, VLM badges, visual evidence
+│   └── visual-evidence-viewer.tsx       # VLM visual evidence dialog with region overlays and zoom
 └── common/
-    ├── pdf-viewer.tsx            # PDF viewer wrapper with responsive behavior
-    ├── pdf-viewer-inner.tsx      # Page rendering internals
-    ├── confidence-badge.tsx       # Color-coded confidence score badge
-    └── status-indicator.tsx       # Processing status pill/indicator
+    ├── nav.tsx                          # Sidebar navigation (includes Corrections link)
+    ├── pdf-viewer.tsx                   # PDF viewer wrapper with responsive behavior
+    ├── pdf-viewer-inner.tsx             # Page rendering internals
+    ├── confidence-badge.tsx             # Color-coded confidence score badge
+    └── status-indicator.tsx             # Processing status pill/indicator
 ```
 
 ## User-Facing Terminology Policy
@@ -115,10 +121,16 @@ The `useDocumentWebSocket` hook (`frontend/src/hooks/useWebSocket.ts`) wires the
 | `uploadDocument(file)` | POST | `/api/documents/upload` | Upload a PDF file |
 | `getDocument(docId)` | GET | `/api/documents/{docId}` | Fetch document metadata |
 | `listDocuments()` | GET | `/api/documents/` | List all documents |
+| `getPageImageUrl(docId, pageNum)` | — | `/api/documents/{docId}/pages/{pageNum}/image` | Returns URL for page image (no fetch, just URL construction) |
 | `getReviewPages(docId)` | GET | `/api/review/{docId}/pages` | Get pages pending review |
 | `approvePage(docId, pageNum)` | POST | `/api/review/{docId}/pages/{pageNum}/approve` | Approve a single page |
 | `getComplianceReport(docId)` | GET | `/api/compliance/{docId}/report` | Get compliance report |
 | `runComplianceReview(docId)` | POST | `/api/compliance/{docId}/run` | Trigger compliance analysis |
+| `getCorrectionRules(active?)` | GET | `/api/corrections/rules` | List learned OCR correction rules |
+| `toggleCorrectionRule(ruleId)` | POST | `/api/corrections/rules/{id}/toggle` | Enable/disable a correction rule |
+| `rebuildCorrections()` | POST | `/api/corrections/rebuild` | Trigger global correction rebuild |
+| `getCorrectionStats()` | GET | `/api/corrections/stats` | Correction analytics and counts |
+| `getConfusionMatrix()` | GET | `/api/corrections/confusion-matrix` | Top confusion pairs for chart |
 
 Base URL is configured via `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:8100`).
 
@@ -131,5 +143,6 @@ Base URL is configured via `NEXT_PUBLIC_API_URL` (defaults to `http://localhost:
 - [Upload Flow](./upload-flow.md) — Document upload and processing dashboard
 - [Review Interface](./review-interface.md) — Split-pane HITL review
 - [Compliance Dashboard](./compliance-dashboard.md) — Compliance scoring and findings
+- [Corrections Manager](./corrections-manager.md) — OCR correction rules management
 - [WebSocket Streaming](./websocket-streaming.md) — Real-time communication architecture
 - [Local Setup](../devops/local-setup.md) — Development environment setup

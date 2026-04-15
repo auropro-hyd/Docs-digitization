@@ -206,8 +206,22 @@ The compliance graph uses the same checkpointer pattern as the document graph (`
 
 ---
 
+## VLM Visual Compliance (Cross-Cutting)
+
+When `vlm.enabled = true`, rules tagged with `evaluation_strategy: vision` or `text_and_vision` are additionally evaluated by a Vision Language Model against page raster images. This runs **in parallel** with the text-based evaluation above.
+
+Visual checks include: strikethrough detection, signature verification, ink color classification, correction fluid detection, stamp/seal detection, barcode quality, chart label verification, and more (14 visual check types).
+
+Results from text and vision evaluators are merged:
+- **Status**: the more severe result wins
+- **Confidence**: the lower confidence wins (conservative)
+- **Evidence**: both text and visual evidence are preserved with channel prefixes
+
+See [VLM Visual Compliance Spec](../../../specs/vlm-visual-compliance-spec.md) for full details.
+
 ## Related Documentation
 
 - [Document Processing Workflow](./document-processing.md) — the parent graph that produces extractions
 - [HITL Flow](./hitl-flow.md) — human review of OCR results (upstream of compliance)
 - [Composite Confidence Scorer](../confidence-scoring/composite-scorer.md) — OCR confidence (separate from compliance score)
+- [VLM Visual Compliance Spec](../../../specs/vlm-visual-compliance-spec.md) — visual compliance via page images
