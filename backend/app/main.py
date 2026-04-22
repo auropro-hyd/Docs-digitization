@@ -55,7 +55,22 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    origins = ["*"] if settings.debug else settings.cors_origins
+    # CORS spec forbids wildcard origins when credentials are allowed —
+    # browsers reject the combination outright. Keep an explicit origin
+    # list in both modes; debug just widens the allowlist to the common
+    # localhost ports. Ops can override via settings.cors_origins.
+    if settings.debug:
+        origins = sorted(
+            set(settings.cors_origins)
+            | {
+                "http://localhost:3000",
+                "http://localhost:5173",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5173",
+            }
+        )
+    else:
+        origins = list(settings.cors_origins)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
