@@ -1,0 +1,11 @@
+schema_version: "1.0"
+id: alcoa.attributable.operator-signature-present
+version: 1.0.0
+severity: critical
+alcoa_tag: Attributable
+description: "Every executed step page must record an operator signature."
+context_object:
+  scope: same_page
+source:
+  field: operator_signature
+  scope_hint: bpcr_step_page

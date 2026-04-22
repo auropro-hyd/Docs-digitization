@@ -1,0 +1,21 @@
+schema_version: "1.0"
+id: alcoa.accurate.bpcr-step-sum-vs-batch-target
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "Sum of BPCR step weights must match batch target within 0.5%."
+context_object:
+  scope: page_aggregate
+  page_selector:
+    document_role: BPCR
+    page_filter: all_bpcr_step_pages
+  aggregation: sum
+fallback: flag_as_indeterminate
+source:
+  field: dispensed_weight_kg
+expected:
+  field: batch_target_weight_kg
+  document_ref_hint: BMR
+tolerance:
+  kind: percent
+  value: 0.5

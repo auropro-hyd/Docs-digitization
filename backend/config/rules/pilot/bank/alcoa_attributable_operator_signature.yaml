@@ -1,0 +1,14 @@
+schema_version: "1.0"
+id: alcoa.attributable.operator-signature-present
+version: 1.0.0
+severity: critical
+alcoa_tag: Attributable
+gmp_category: "Signature Verification"
+description: |
+  Every executed BPCR step page must record an operator signature. Absence
+  is a critical ALCOA-Attributable violation.
+context_object:
+  scope: same_page
+source:
+  field: operator_signature
+  scope_hint: bpcr_step_page

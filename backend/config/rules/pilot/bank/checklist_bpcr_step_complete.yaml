@@ -1,0 +1,19 @@
+schema_version: "1.0"
+id: checklist.bpcr-step-complete.synthesis
+version: 1.0.0
+severity: major
+alcoa_tag: Complete
+gmp_category: "Batch Record Completeness"
+description: |
+  Per-BPCR-step roll-up: a step is considered complete when the operator
+  signature (alcoa.attributable.operator-signature) AND the raw material
+  weight match (alcoa.accurate.bpcr-raw-material-weight-match) are both
+  clean. The synthesis surfaces a single checklist-style finding per step
+  so reviewers get a step-level verdict alongside the individual rule
+  findings.
+context_object:
+  scope: checklist_synthesis
+  group_by: bpcr_step
+synthesises_from:
+  - alcoa.accurate.bpcr-raw-material-weight-match
+  - alcoa.attributable.operator-signature

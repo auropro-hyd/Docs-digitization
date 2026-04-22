@@ -1,0 +1,35 @@
+{
+  "package_id": "batch42",
+  "pages": [
+    {
+      "doc_id": "bpcr",
+      "document_role": "BPCR",
+      "page_index": 2,
+      "tags": ["bpcr_step_page"],
+      "fields": [
+        {
+          "field": "dispensed_weight_kg",
+          "value": 10.0,
+          "entity_name": "Lactose Monohydrate",
+          "source_doc_id": "bpcr",
+          "source_page_index": 2
+        }
+      ]
+    },
+    {
+      "doc_id": "raw",
+      "document_role": "RawMaterialPage",
+      "page_index": 1,
+      "tags": ["raw_material_page"],
+      "fields": [
+        {
+          "field": "weight_kg",
+          "value": 10.0,
+          "entity_name": "Lactose Monohydrate",
+          "source_doc_id": "raw",
+          "source_page_index": 1
+        }
+      ]
+    }
+  ]
+}

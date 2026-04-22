@@ -1,0 +1,19 @@
+schema_version: "1.0"
+id: alcoa.accurate.tolerance-zero
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "Tolerance value must be strictly positive."
+context_object:
+  scope: cross_document
+  role: RawMaterialPage
+  entity_match:
+    strategy: exact
+source:
+  field: dispensed_weight_kg
+target:
+  field: weight_kg
+tolerance:
+  kind: absolute
+  value: 0
+  unit: kg

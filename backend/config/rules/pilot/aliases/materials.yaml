@@ -1,0 +1,24 @@
+aliases_version: "1.0"
+scope: materials
+description: |
+  Canonical material names and their known aliases. Used by entity_match
+  strategies ``normalise`` and ``alias`` to resolve the same material
+  across BPCR and Raw Material pages.
+
+entries:
+  - canonical: "Lactose Monohydrate"
+    aliases:
+      - "Lactose"
+      - "Lactose Mono"
+      - "Lactose-Mono"
+      - "LACTOSE MONOHYDRATE"
+  - canonical: "Microcrystalline Cellulose"
+    aliases:
+      - "MCC"
+      - "Avicel"
+      - "MicroCrystallineCellulose"
+  - canonical: "Magnesium Stearate"
+    aliases:
+      - "Mg Stearate"
+      - "MgSt"
+      - "Mg-Stearate"

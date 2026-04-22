@@ -1,0 +1,26 @@
+schema_version: "1.0"
+id: alcoa.accurate.bpcr-raw-material-weight-match
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "BPCR dispensed weight must match raw-material page within 0.1 kg."
+context_object:
+  scope: cross_document
+  role: RawMaterialPage
+  entity_match:
+    strategy: normalise
+    normalise: true
+    case_insensitive: true
+    punctuation_strip: ["-", "_", "."]
+    aliases_file: backend/config/rules/pilot/aliases/materials.yaml
+multiplicity: error
+fallback: flag_as_unevaluated
+source:
+  field: dispensed_weight_kg
+  scope_hint: bpcr_step_page
+target:
+  field: weight_kg
+tolerance:
+  kind: absolute
+  value: 0.1
+  unit: kg
