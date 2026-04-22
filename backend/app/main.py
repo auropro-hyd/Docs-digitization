@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,28 +57,22 @@ def create_app() -> FastAPI:
     )
 
     # CORS spec forbids wildcard origins when credentials are allowed —
-    # browsers reject the combination outright. Keep an explicit origin
-    # list in both modes; debug just widens the allowlist to the common
-    # localhost ports. Ops can override via settings.cors_origins.
+    # browsers reject the combination outright. In debug mode accept
+    # any localhost / 127.0.0.1 port via a regex so frontends on
+    # non-default ports (3100, 5173, etc.) work without reconfiguring
+    # the backend; in production keep the explicit allowlist from
+    # settings.cors_origins.
+    cors_kwargs: dict[str, Any] = {
+        "allow_credentials": True,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+        "allow_origins": list(settings.cors_origins),
+    }
     if settings.debug:
-        origins = sorted(
-            set(settings.cors_origins)
-            | {
-                "http://localhost:3000",
-                "http://localhost:5173",
-                "http://127.0.0.1:3000",
-                "http://127.0.0.1:5173",
-            }
+        cors_kwargs["allow_origin_regex"] = (
+            r"^http://(localhost|127\.0\.0\.1)(:\d+)?$"
         )
-    else:
-        origins = list(settings.cors_origins)
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
     app.include_router(review.router, prefix="/api/review", tags=["review"])
