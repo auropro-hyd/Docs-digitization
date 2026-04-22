@@ -550,18 +550,42 @@ class HITLService:
     def _export_report_locked(
         self, run_id: str, *, actor_id: str
     ) -> ExportResult:
-        run_report, grouped = self.project_report(run_id)
+        # Snapshot everything we need to build the revision under the
+        # per-run lock *before* deciding on the gate, so the gate and
+        # the subsequent render + save all observe the same state. The
+        # previous shape re-read the stores three times; even under the
+        # lock this made the relationship between "gate said READY" and
+        # "bundle written" harder to reason about.
+        run_report = self._require_report(run_id)
+        resolutions = self._resolution_store.list_for_run(run_id)
+        active_map = self._resolution_store.list_active_by_finding(run_id)
+        feedback_samples = self._feedback_store.list_for_run(run_id)
+
+        grouped = report_project_v1(
+            run_report=run_report,
+            resolutions=list(active_map.values()),
+            severity_config=self._reporting_config.severity,
+            sections_config=self._reporting_config.sections,
+        )
         if grouped.export_gate is not ExportGateStatus.READY:
             raise ExportGateBlockedError(
                 status=grouped.export_gate,
                 pending=grouped.pending_blocking_count,
             )
-        resolutions = self._resolution_store.list_for_run(run_id)
+        # Defence-in-depth: if any resolution — active or historical —
+        # still flags needs_re_action, hard-block regardless of gate.
+        # Catches bugs where a stale resolution was somehow marked
+        # "active" despite carrying the re-action flag.
+        if any(r.needs_re_action for r in active_map.values()):
+            raise ExportGateBlockedError(
+                status=ExportGateStatus.BLOCKED_BY_STALE_RESOLUTIONS,
+                pending=sum(
+                    1 for r in active_map.values() if r.needs_re_action
+                ),
+            )
         active_by_finding = {
-            r.finding_id: r.resolution_id
-            for r in self._resolution_store.list_active_by_finding(run_id).values()
+            finding_id: res.resolution_id for finding_id, res in active_map.items()
         }
-        feedback_samples = self._feedback_store.list_for_run(run_id)
 
         html_body = self._renderer.render_html(
             run_report=run_report,
