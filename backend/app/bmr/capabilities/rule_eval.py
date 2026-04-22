@@ -716,6 +716,7 @@ def _make_fallback_finding(
         detail=detail,
         source=_finding_source_for_rule(rule),
         evidence=evidence,
+        fallback_applied=fallback,
     )
 
 

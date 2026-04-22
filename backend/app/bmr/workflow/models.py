@@ -57,6 +57,10 @@ class FindingRecord(BaseModel):
     evidence: list[EvidenceRegion] = Field(default_factory=list)
     tolerance_applied: dict[str, Any] | None = None
     fields: dict[str, Any] = Field(default_factory=dict)
+    # Present when a rule's fallback policy (treat_as_pass etc.) produced
+    # the finding — reviewers and gating need to distinguish these from
+    # genuine rule-matched outcomes.
+    fallback_applied: str | None = None
     # Spec 004 / follow-up #4 — selective re-run provenance.
     superseded_by: str | None = None
     supersedes: str | None = None

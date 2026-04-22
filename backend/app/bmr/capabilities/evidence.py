@@ -64,6 +64,11 @@ class FindingDraft(BaseModel):
     evidence: list[EvidenceRegion] = Field(default_factory=list)
     tolerance_applied: dict[str, Any] | None = None
     fields: dict[str, Any] = Field(default_factory=dict)
+    # Marks findings that were produced by a rule's ``fallback`` policy
+    # (e.g. ``treat_as_pass`` when an entity could not be resolved).
+    # Reviewers and severity gating need to treat these distinctly from
+    # genuine rule-matched outcomes. None = the rule evaluated normally.
+    fallback_applied: str | None = None
 
     model_config = ConfigDict(frozen=False)
 

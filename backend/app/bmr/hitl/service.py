@@ -716,6 +716,7 @@ def _drafts_from_records(records: list[FindingRecord]):
                 evidence=list(r.evidence),
                 tolerance_applied=r.tolerance_applied,
                 fields=dict(r.fields),
+                fallback_applied=r.fallback_applied,
             )
         )
     return drafts

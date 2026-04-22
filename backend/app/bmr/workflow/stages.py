@@ -430,6 +430,7 @@ def _project_findings(findings: list[FindingDraft]) -> tuple[list[FindingRecord]
             evidence=list(draft.evidence),
             tolerance_applied=draft.tolerance_applied,
             fields=dict(draft.fields),
+            fallback_applied=draft.fallback_applied,
         )
         records.append(record)
         _bump(summary.by_status, record.status.value)
