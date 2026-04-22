@@ -139,10 +139,15 @@ def checklist_synthesise_v1(
 
     for key, (group_ref, group_findings) in sorted(groups.items()):
         status = _roll_up_status(group_findings)
-        # When the roll-up is OPEN, bump severity to the worst constituent
-        # severity (never below the rule's declared severity).
+        # Always take the higher of (worst constituent severity, rule's
+        # declared severity). Downgrading the rollup below a constituent's
+        # severity would let a declared-info synthesis rule mask a
+        # critical child finding from gating — regulatory miss with no
+        # audit trail.
         worst = max(group_findings, key=lambda f: _severity_rank(f.severity)).severity
-        effective_severity = worst if _severity_rank(worst) > _severity_rank(severity) else severity
+        effective_severity = (
+            worst if _severity_rank(worst) >= _severity_rank(severity) else severity
+        )
 
         open_count = sum(1 for f in group_findings if f.status is FindingStatus.OPEN)
         total = len(group_findings)
