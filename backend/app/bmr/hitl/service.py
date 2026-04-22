@@ -14,8 +14,10 @@ Owns the lifecycle:
 from __future__ import annotations
 
 import hashlib
+import threading
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -150,6 +152,22 @@ class HITLService:
         self._renderer: ReportRenderer = renderer or WeasyPrintRenderer()
         self._reporting_config = reporting_config or ReportingConfig.default()
         self._event_emitter = event_emitter or (lambda *_args, **_kw: None)
+        # Per-run mutex map for HITL writes. Serializes concurrent
+        # resolution / correction / export calls against the same run so
+        # the load → mutate → save sequence is not interleaved. Acquired
+        # by ``_run_lock``; the registry itself is guarded by ``_locks_lock``.
+        self._run_locks: dict[str, threading.Lock] = {}
+        self._locks_lock = threading.Lock()
+
+    @contextmanager
+    def _run_lock(self, run_id: str):
+        with self._locks_lock:
+            lock = self._run_locks.get(run_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._run_locks[run_id] = lock
+        with lock:
+            yield
 
     @property
     def reporting_config(self) -> ReportingConfig:
@@ -158,6 +176,22 @@ class HITLService:
     # ── resolutions ──────────────────────────────────────────────────────────
 
     def record_resolution(
+        self,
+        *,
+        run_id: str,
+        finding_id: str,
+        draft: ResolutionDraft,
+        actor_id: str,
+    ) -> ResolveFindingResult:
+        with self._run_lock(run_id):
+            return self._record_resolution_locked(
+                run_id=run_id,
+                finding_id=finding_id,
+                draft=draft,
+                actor_id=actor_id,
+            )
+
+    def _record_resolution_locked(
         self,
         *,
         run_id: str,
@@ -205,6 +239,22 @@ class HITLService:
     # ── corrections ──────────────────────────────────────────────────────────
 
     def record_correction(
+        self,
+        *,
+        run_id: str,
+        finding_id: str,
+        draft: CorrectionDraft,
+        actor_id: str,
+    ) -> CorrectionResult:
+        with self._run_lock(run_id):
+            return self._record_correction_locked(
+                run_id=run_id,
+                finding_id=finding_id,
+                draft=draft,
+                actor_id=actor_id,
+            )
+
+    def _record_correction_locked(
         self,
         *,
         run_id: str,
@@ -480,6 +530,12 @@ class HITLService:
     # ── export ───────────────────────────────────────────────────────────────
 
     def export_report(
+        self, run_id: str, *, actor_id: str
+    ) -> ExportResult:
+        with self._run_lock(run_id):
+            return self._export_report_locked(run_id, actor_id=actor_id)
+
+    def _export_report_locked(
         self, run_id: str, *, actor_id: str
     ) -> ExportResult:
         run_report, grouped = self.project_report(run_id)
