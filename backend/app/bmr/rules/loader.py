@@ -35,18 +35,49 @@ from app.bmr.rules.validator import (
 _HASH_EXCLUDED_KEYS = frozenset({"content_hash", "source_path"})
 
 
+def _canonicalize_for_hash(value: Any) -> Any:
+    """Recursively normalize a rule body for hashing.
+
+    YAML happily parses ``1`` as ``int`` and ``1.0`` as ``float`` —
+    semantically identical but producing different JSON output and
+    therefore different SHA-256 digests. For the content hash to be a
+    stable fingerprint of the rule's *meaning*, every numeric leaf is
+    projected onto a single representation (``float``, then formatted
+    with ``repr``), booleans are kept distinct from numbers, and lists
+    preserve order (rule authors do rely on list order).
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return f"__num__:{float(value)!r}"
+    if isinstance(value, float):
+        return f"__num__:{value!r}"
+    if isinstance(value, dict):
+        return {k: _canonicalize_for_hash(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_canonicalize_for_hash(v) for v in value]
+    return value
+
+
 def compute_rule_content_hash(mapping: dict[str, Any]) -> str:
     """Return a deterministic SHA-256 of the rule's canonical body.
 
-    The body is serialised with sorted keys and stable separators so
-    the hash is identical across platforms. Keys listed in
+    The body is serialised with sorted keys, stable separators, and
+    numeric-type normalization so the hash is identical across
+    platforms and across equivalent int/float encodings. Keys listed in
     :data:`_HASH_EXCLUDED_KEYS` are removed first — they are metadata,
     not rule content, and including them would make every load produce
     a new hash.
     """
 
     body = {k: v for k, v in mapping.items() if k not in _HASH_EXCLUDED_KEYS}
-    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(
+        _canonicalize_for_hash(body),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
