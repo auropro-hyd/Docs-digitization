@@ -16,6 +16,7 @@ only these files.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -25,6 +26,8 @@ from app.bmr.hitl.models import (
     FeedbackSample,
     StructuredResolution,
 )
+
+logger = logging.getLogger(__name__)
 
 # Run / resolution / revision / sample identifiers must be filesystem-safe
 # tokens. Anything not matching this charset is rejected before it is
@@ -97,7 +100,8 @@ class ResolutionStore:
             return StructuredResolution.model_validate_json(
                 target.read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError, ValueError):
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.error("could not load store record %s: %s", target, exc)
             return None
 
     def list_for_run(self, run_id: str) -> list[StructuredResolution]:
@@ -116,7 +120,8 @@ class ResolutionStore:
                         path.read_text(encoding="utf-8")
                     )
                 )
-            except (OSError, json.JSONDecodeError, ValueError):
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.error("skipping corrupt store record %s: %s", path, exc)
                 continue
         return out
 
@@ -167,7 +172,8 @@ class FeedbackStore:
                 out.append(
                     FeedbackSample.model_validate_json(path.read_text(encoding="utf-8"))
                 )
-            except (OSError, json.JSONDecodeError, ValueError):
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.error("skipping corrupt store record %s: %s", path, exc)
                 continue
         return out
 
@@ -268,7 +274,8 @@ class RevisionStore:
                         target.read_text(encoding="utf-8")
                     )
                 )
-            except (OSError, json.JSONDecodeError, ValueError):
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.error("skipping corrupt store record %s: %s", path, exc)
                 continue
         return out
 
@@ -341,7 +348,8 @@ class CorrectionStore:
             return CorrectionWorkflow.model_validate_json(
                 target.read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError, ValueError):
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            logger.error("could not load store record %s: %s", target, exc)
             return None
 
     def list_for_run(self, run_id: str) -> list[CorrectionWorkflow]:
@@ -360,7 +368,8 @@ class CorrectionStore:
                         path.read_text(encoding="utf-8")
                     )
                 )
-            except (OSError, json.JSONDecodeError, ValueError):
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.error("skipping corrupt store record %s: %s", path, exc)
                 continue
         return out
 

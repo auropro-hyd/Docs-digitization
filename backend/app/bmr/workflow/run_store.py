@@ -12,10 +12,13 @@ trivial to swap for Postgres later. Writes are best-effort atomic via
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from pathlib import Path
 
 from app.bmr.workflow.models import RunReport
+
+logger = logging.getLogger(__name__)
 
 
 class RunStore:
@@ -48,9 +51,14 @@ class RunStore:
             return None
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("could not load run report %s: %s", target, exc)
             return None
-        return RunReport.model_validate(payload)
+        try:
+            return RunReport.model_validate(payload)
+        except Exception as exc:
+            logger.error("run report %s failed model validation: %s", target, exc)
+            return None
 
     def list_ids(self) -> list[str]:
         if not self._base.is_dir():

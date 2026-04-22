@@ -15,11 +15,14 @@ process is out of scope for v0; a future swap to Postgres is trivial.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from pathlib import Path
 
 from app.bmr.ingest.models import DocumentPackage
+
+logger = logging.getLogger(__name__)
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -85,9 +88,16 @@ class PackageStore:
             return None
         try:
             payload = json.loads(target.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("could not load package %s: %s", target, exc)
             return None
-        return DocumentPackage.model_validate(payload)
+        try:
+            return DocumentPackage.model_validate(payload)
+        except Exception as exc:
+            logger.error(
+                "package %s failed model validation: %s", target, exc
+            )
+            return None
 
     def list_ids(self) -> list[str]:
         if not self._base.is_dir():
