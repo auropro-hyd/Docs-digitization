@@ -58,6 +58,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
     app = create_app()
     client = TestClient(app)
+    client.headers.update({"X-Actor-Id": "test.actor"})
     client.package_store = package_store  # type: ignore[attr-defined]
     return client
 

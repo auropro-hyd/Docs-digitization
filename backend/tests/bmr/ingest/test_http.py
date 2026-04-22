@@ -34,7 +34,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
 
     app = create_app()
-    return TestClient(app)
+    client = TestClient(app)
+    client.headers.update({"X-Actor-Id": "test.actor"})
+    return client
 
 
 def test_manifests_list(client: TestClient):

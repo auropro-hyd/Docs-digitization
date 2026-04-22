@@ -19,14 +19,15 @@ from pathlib import Path
 
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
-    Request,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
 from pydantic import BaseModel, Field
 
+from app.api.deps import require_actor
 from app.bmr.events import get_event_bus
 from app.bmr.ingest.package_store import PackageStore
 from app.bmr.workflow import BMRRunService, RunReport, RunStore, StartRunSpec
@@ -118,7 +119,9 @@ def _service() -> BMRRunService:
     response_model=RunReport,
     status_code=status.HTTP_201_CREATED,
 )
-async def start_run(body: StartRunRequest) -> RunReport:
+async def start_run(
+    body: StartRunRequest, _actor: str = Depends(require_actor)
+) -> RunReport:
     service = _service()
 
     rules_dir = (
@@ -141,7 +144,7 @@ async def start_run(body: StartRunRequest) -> RunReport:
 
 
 @router.get("/runs/{run_id}", response_model=RunReport)
-async def get_run(run_id: str) -> RunReport:
+async def get_run(run_id: str, _actor: str = Depends(require_actor)) -> RunReport:
     report = _service().get_report(run_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
@@ -149,7 +152,7 @@ async def get_run(run_id: str) -> RunReport:
 
 
 @router.get("/runs", response_model=RunListResponse)
-async def list_runs() -> RunListResponse:
+async def list_runs(_actor: str = Depends(require_actor)) -> RunListResponse:
     ids = _service().list_run_ids()
     return RunListResponse(runs=[RunListItem(run_id=i) for i in ids])
 
@@ -172,7 +175,9 @@ class LegibilityDecisionRequest(BaseModel):
 
 
 @router.get("/runs/{run_id}/legibility", response_model=LegibilityStatusResponse)
-async def get_legibility(run_id: str) -> LegibilityStatusResponse:
+async def get_legibility(
+    run_id: str, _actor: str = Depends(require_actor)
+) -> LegibilityStatusResponse:
     report = _service().get_report(run_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"run {run_id} not found")
@@ -192,9 +197,10 @@ async def get_legibility(run_id: str) -> LegibilityStatusResponse:
     status_code=status.HTTP_200_OK,
 )
 async def decide_legibility(
-    run_id: str, body: LegibilityDecisionRequest, request: Request
+    run_id: str,
+    body: LegibilityDecisionRequest,
+    actor_id: str = Depends(require_actor),
 ) -> RunReport:
-    actor_id = request.headers.get("x-actor-id") or "anonymous"
     service = _service()
     try:
         return await asyncio.to_thread(

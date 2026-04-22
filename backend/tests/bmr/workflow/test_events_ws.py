@@ -63,6 +63,7 @@ def ws_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     app = create_app()
     client = TestClient(app)
+    client.headers.update({"X-Actor-Id": "test.actor"})
     client.package_store = package_store  # type: ignore[attr-defined]
     client.ingest_service = ingest_service  # type: ignore[attr-defined]
     return client
@@ -171,6 +172,7 @@ def test_service_publishes_run_started_and_completed(
 
     app = create_app()
     client = TestClient(app)
+    client.headers.update({"X-Actor-Id": "test.actor"})
 
     package_id, bpcr_id, rm_id = build_classified_package(ingest_service)
     write_extraction_fixture(

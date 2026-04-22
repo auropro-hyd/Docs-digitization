@@ -16,9 +16,10 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
+from app.api.deps import require_actor
 from app.bmr.ingest import (
     DocumentPackage,
     PackageIngestService,
@@ -81,6 +82,7 @@ def _store() -> PackageStore:
 async def upload_package(
     files: list[UploadFile] = File(..., description="One or more PDFs."),  # noqa: B008 — FastAPI pattern
     manifest_id: str = Form(..., description="Manifest id, e.g. 'default'."),  # noqa: B008
+    _actor: str = Depends(require_actor),
 ) -> DocumentPackage:
     """Upload a BMR document package and classify its files.
 
@@ -109,7 +111,7 @@ async def upload_package(
 
 
 @router.get("/packages/{package_id}", response_model=DocumentPackage)
-async def get_package(package_id: str) -> DocumentPackage:
+async def get_package(package_id: str, _actor: str = Depends(require_actor)) -> DocumentPackage:
     package = _store().load(package_id)
     if package is None:
         raise HTTPException(status_code=404, detail=f"package {package_id} not found")
@@ -117,13 +119,13 @@ async def get_package(package_id: str) -> DocumentPackage:
 
 
 @router.get("/packages", response_model=PackageListResponse)
-async def list_packages() -> PackageListResponse:
+async def list_packages(_actor: str = Depends(require_actor)) -> PackageListResponse:
     ids = _store().list_ids()
     return PackageListResponse(packages=[PackageListItem(package_id=i) for i in ids])
 
 
 @router.get("/manifests", response_model=ManifestListResponse)
-async def list_manifests() -> ManifestListResponse:
+async def list_manifests(_actor: str = Depends(require_actor)) -> ManifestListResponse:
     manifests_dir = _manifests_dir()
     if not manifests_dir.is_dir():
         return ManifestListResponse(manifests=[])

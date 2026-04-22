@@ -19,10 +19,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from app.api.deps import require_actor
 from app.api.routes.bmr_runs import _runs_base_dir
 from app.bmr.events import get_event_bus
 from app.bmr.hitl.models import (
@@ -143,16 +144,6 @@ def _service() -> HITLService:
     )
 
 
-def _actor_id(request: Request) -> str:
-    """Resolve the acting reviewer.
-
-    v0 accepts an ``X-Actor-Id`` header (defaulting to ``anonymous``).
-    Real auth integration lands once Spec 004 joins the auth stack.
-    """
-
-    return request.headers.get("x-actor-id") or "anonymous"
-
-
 # ── endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -160,6 +151,7 @@ def _actor_id(request: Request) -> str:
 async def get_report(
     run_id: str,
     view: str = Query("grouped", pattern="^(grouped|flat)$"),
+    _actor: str = Depends(require_actor),
 ) -> GroupedReport:
     try:
         _, grouped = _service().project_report(run_id, view=view)
@@ -169,7 +161,9 @@ async def get_report(
 
 
 @router.get("/runs/{run_id}/findings/{finding_id}", response_model=FindingDetail)
-async def get_finding(run_id: str, finding_id: str) -> FindingDetail:
+async def get_finding(
+    run_id: str, finding_id: str, _actor: str = Depends(require_actor)
+) -> FindingDetail:
     service = _service()
     try:
         run_report, _ = service.project_report(run_id)
@@ -197,7 +191,7 @@ async def create_resolution(
     run_id: str,
     finding_id: str,
     body: ResolutionRequest,
-    request: Request,
+    actor_id: str = Depends(require_actor),
 ) -> ResolutionResponse:
     service = _service()
     reason_comment = body.reason_comment or body.note
@@ -219,7 +213,7 @@ async def create_resolution(
             run_id=run_id,
             finding_id=finding_id,
             draft=draft,
-            actor_id=_actor_id(request),
+            actor_id=actor_id,
         )
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -257,7 +251,7 @@ async def create_correction(
     run_id: str,
     finding_id: str,
     body: CorrectionRequest,
-    request: Request,
+    actor_id: str = Depends(require_actor),
 ) -> CorrectionResponse:
     service = _service()
     try:
@@ -275,7 +269,7 @@ async def create_correction(
             run_id=run_id,
             finding_id=finding_id,
             draft=draft,
-            actor_id=_actor_id(request),
+            actor_id=actor_id,
         )
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -293,7 +287,9 @@ async def create_correction(
 
 
 @router.get("/runs/{run_id}/export-gate", response_model=ExportGateResponse)
-async def get_export_gate(run_id: str) -> ExportGateResponse:
+async def get_export_gate(
+    run_id: str, _actor: str = Depends(require_actor)
+) -> ExportGateResponse:
     try:
         _, grouped = _service().project_report(run_id)
     except RunNotFoundError as exc:
@@ -308,11 +304,11 @@ async def get_export_gate(run_id: str) -> ExportGateResponse:
     "/runs/{run_id}/reports:export", response_model=ExportRevisionResponse
 )
 async def export_report(
-    run_id: str, request: Request
+    run_id: str, actor_id: str = Depends(require_actor)
 ) -> ExportRevisionResponse:
     service = _service()
     try:
-        result = service.export_report(run_id, actor_id=_actor_id(request))
+        result = service.export_report(run_id, actor_id=actor_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ExportGateBlockedError as exc:
@@ -333,7 +329,9 @@ async def export_report(
 
 
 @router.get("/reports/revisions/{revision_id}/pdf")
-async def get_revision_pdf(revision_id: str) -> Response:
+async def get_revision_pdf(
+    revision_id: str, _actor: str = Depends(require_actor)
+) -> Response:
     store = _service()._revision_store  # noqa: SLF001
     payload = store.read_pdf(revision_id)
     if payload is None:
@@ -345,7 +343,9 @@ async def get_revision_pdf(revision_id: str) -> Response:
 
 
 @router.get("/reports/revisions/{revision_id}/bundle")
-async def get_revision_bundle(revision_id: str) -> Response:
+async def get_revision_bundle(
+    revision_id: str, _actor: str = Depends(require_actor)
+) -> Response:
     store = _service()._revision_store  # noqa: SLF001
     payload = store.read_bundle(revision_id)
     if payload is None:
@@ -358,6 +358,7 @@ async def list_feedback_samples(
     run_id: str | None = None,
     rule_id: str | None = None,
     reason_type: str | None = None,
+    _actor: str = Depends(require_actor),
 ) -> FeedbackListResponse:
     store = _service()._feedback_store  # noqa: SLF001
     samples = store.list_for_run(run_id) if run_id else store.list_all()
