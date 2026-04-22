@@ -111,6 +111,35 @@ def _service() -> BMRRunService:
     )
 
 
+def _allowed_config_roots() -> list[Path]:
+    """Roots a caller may point rules/aliases/extraction at.
+
+    Only the pilot config directory and the package-store directory are
+    whitelisted. Additional roots can be promoted via env when a deployment
+    ships its own rule bank.
+    """
+
+    config_root = (Path(__file__).resolve().parents[3] / "config").resolve()
+    return [config_root, _bmr_base_dir()]
+
+
+def _resolve_user_path(raw: str, *, field: str) -> Path:
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = (_repo_root() / candidate)
+    resolved = candidate.resolve()
+    roots = _allowed_config_roots()
+    if not any(resolved.is_relative_to(root) for root in roots):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field} must resolve inside a configured root "
+                f"({', '.join(str(r) for r in roots)})"
+            ),
+        )
+    return resolved
+
+
 # ── endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -125,13 +154,19 @@ async def start_run(
     service = _service()
 
     rules_dir = (
-        Path(body.rules_dir) if body.rules_dir else _default_rules_dir()
+        _resolve_user_path(body.rules_dir, field="rules_dir")
+        if body.rules_dir
+        else _default_rules_dir()
     )
     aliases_dir = (
-        Path(body.aliases_dir) if body.aliases_dir else _default_aliases_dir()
+        _resolve_user_path(body.aliases_dir, field="aliases_dir")
+        if body.aliases_dir
+        else _default_aliases_dir()
     )
     extraction_path = (
-        Path(body.extraction_path) if body.extraction_path else None
+        _resolve_user_path(body.extraction_path, field="extraction_path")
+        if body.extraction_path
+        else None
     )
 
     spec = StartRunSpec(
