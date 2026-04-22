@@ -21,6 +21,10 @@ from pathlib import Path
 from app.bmr.capabilities.extracted_data import ExtractedPackage
 
 
+class ExtractionPackageMismatchError(ValueError):
+    """Raised when an extraction.json declares a different package_id."""
+
+
 def load_extracted_package(
     package_id: str,
     *,
@@ -36,10 +40,16 @@ def load_extracted_package(
     for path in candidates:
         if path.is_file():
             payload = json.loads(path.read_text(encoding="utf-8"))
-            payload.setdefault("package_id", package_id)
+            existing_pkg = payload.get("package_id")
+            if existing_pkg is not None and existing_pkg != package_id:
+                raise ExtractionPackageMismatchError(
+                    f"extraction file {path!s} declares package_id "
+                    f"{existing_pkg!r} but run targets {package_id!r}"
+                )
+            payload["package_id"] = package_id
             return ExtractedPackage.model_validate(payload)
 
     return ExtractedPackage(package_id=package_id, pages=[])
 
 
-__all__ = ["load_extracted_package"]
+__all__ = ["ExtractionPackageMismatchError", "load_extracted_package"]
