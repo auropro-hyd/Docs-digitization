@@ -27,6 +27,24 @@ from app.bmr.capabilities.evidence import (
 CAPABILITY_VERSION = "1"
 
 
+def _rule_source_evidence(rule: dict[str, Any]) -> list[EvidenceRegion]:
+    """Rule-source evidence for UNEVALUATED synthesis findings.
+
+    Mirrors ``rule_eval._rule_source_evidence`` so that synthesis
+    findings which never tie to a document still satisfy Constitution
+    V's "every finding carries evidence" invariant.
+    """
+
+    return [
+        EvidenceRegion(
+            doc_id="__rule__",
+            page_index=1,
+            field="rule_source",
+            note=f"rule:{rule.get('id', '<unknown>')}@{rule.get('version', '0.0.0')}",
+        )
+    ]
+
+
 def _severity_rank(severity: str) -> int:
     ordering = {"critical": 4, "major": 3, "minor": 2, "info": 1, "observation": 0}
     return ordering.get(severity.lower(), 0)
@@ -97,7 +115,7 @@ def checklist_synthesise_v1(
                 summary="checklist_synthesis rule has no synthesises_from entries",
                 detail="",
                 source=FindingSource.CHECKLIST_SYNTHESIS,
-                evidence=[],
+                evidence=_rule_source_evidence(rule),
             )
         ]
 
@@ -120,7 +138,7 @@ def checklist_synthesise_v1(
                 ),
                 detail=f"referenced rule ids: {sorted(referenced)}",
                 source=FindingSource.CHECKLIST_SYNTHESIS,
-                evidence=[],
+                evidence=_rule_source_evidence(rule),
             )
         ]
 

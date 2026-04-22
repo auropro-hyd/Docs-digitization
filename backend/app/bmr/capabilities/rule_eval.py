@@ -183,6 +183,27 @@ def _rule_core(rule: dict[str, Any]) -> tuple[str, str, str, str | None, str | N
     )
 
 
+def _rule_source_evidence(rule: dict[str, Any]) -> list[EvidenceRegion]:
+    """Synthetic evidence anchoring an UNEVALUATED finding to its rule.
+
+    Constitution V requires every finding to carry an evidence trail.
+    Findings the evaluator cannot tie to a document (missing inputs,
+    degenerate config) still need to answer "why does this finding
+    exist?" — we point them at the rule itself via a reserved
+    ``doc_id="__rule__"`` marker so downstream projection, rendering,
+    and audits can distinguish them without losing provenance.
+    """
+
+    return [
+        EvidenceRegion(
+            doc_id="__rule__",
+            page_index=1,
+            field="rule_source",
+            note=f"rule:{rule.get('id', '<unknown>')}@{rule.get('version', '0.0.0')}",
+        )
+    ]
+
+
 def _unevaluated_finding(
     rule: dict[str, Any], summary: str, detail: str = ""
 ) -> FindingDraft:
@@ -197,7 +218,7 @@ def _unevaluated_finding(
         summary=summary,
         detail=detail,
         source=_finding_source_for_rule(rule),
-        evidence=[],
+        evidence=_rule_source_evidence(rule),
     )
 
 
