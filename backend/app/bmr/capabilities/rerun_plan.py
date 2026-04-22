@@ -44,6 +44,20 @@ def _rule_touches_field(rule: dict[str, Any], field_name: str) -> bool:
     return False
 
 
+# Fields that can indirectly affect alias resolution for any rule. When
+# a reviewer corrects one of these, we cannot tell declaratively which
+# rules depend on a particular alias mapping, so the conservative move
+# is to re-evaluate every leaf rule.
+_ALIAS_SENSITIVE_FIELDS = frozenset(
+    {"entity_name", "material_name", "product_name", "alias", "lot_id"}
+)
+
+
+def _is_alias_sensitive(field_name: str) -> bool:
+    lower = field_name.lower()
+    return any(tok in lower for tok in _ALIAS_SENSITIVE_FIELDS)
+
+
 def plan_selective_rerun_v1(
     *,
     loaded_rules: list[dict[str, Any]],
@@ -58,7 +72,14 @@ def plan_selective_rerun_v1(
         declarative context_object / source / target / etc keys).
     corrected_field:
         The field name the reviewer corrected.
+
+    The declarative match is conservative by design: if the corrected
+    field is alias-sensitive (entity_name, material_name, …) the
+    planner cannot prove which unrelated cross-document rules a
+    mapping change might flip, so it re-evaluates every leaf rule.
     """
+
+    alias_touched = _is_alias_sensitive(corrected_field)
 
     leaf_affected: list[str] = []
     synthesis_rules: list[tuple[str, tuple[str, ...]]] = []
@@ -71,7 +92,7 @@ def plan_selective_rerun_v1(
             )
             synthesis_rules.append((rule_id, synthesises_from))
             continue
-        if _rule_touches_field(rule, corrected_field):
+        if alias_touched or _rule_touches_field(rule, corrected_field):
             leaf_affected.append(rule_id)
 
     affected_set = set(leaf_affected)
