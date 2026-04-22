@@ -25,7 +25,12 @@ from app.bmr.ingest import (
     PackageIngestService,
     PackageStore,
 )
-from app.bmr.ingest.service import IncomingFile
+from app.bmr.ingest.service import (
+    MAX_FILES_PER_PACKAGE,
+    MAX_UPLOAD_BYTES,
+    IncomingFile,
+    PackageTooLargeError,
+)
 from app.config.settings import get_settings
 
 router = APIRouter()
@@ -93,10 +98,25 @@ async def upload_package(
 
     if not files:
         raise HTTPException(status_code=400, detail="at least one file is required")
+    if len(files) > MAX_FILES_PER_PACKAGE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"package contains {len(files)} files; "
+                f"max allowed is {MAX_FILES_PER_PACKAGE}"
+            ),
+        )
 
     incoming: list[IncomingFile] = []
+    running_total = 0
     for f in files:
         content = await f.read()
+        running_total += len(content)
+        if running_total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"package exceeds {MAX_UPLOAD_BYTES} bytes",
+            )
         incoming.append(
             IncomingFile(
                 filename=f.filename or "unnamed.pdf",
@@ -106,7 +126,10 @@ async def upload_package(
         )
 
     service = _service()
-    package = service.ingest(manifest_id=manifest_id, files=incoming)
+    try:
+        package = service.ingest(manifest_id=manifest_id, files=incoming)
+    except PackageTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     return package
 
 

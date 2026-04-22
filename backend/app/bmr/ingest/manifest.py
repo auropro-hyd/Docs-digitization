@@ -109,11 +109,26 @@ class Manifest(BaseModel):
         return self
 
 
+# Defence against YAML anchor-expansion bombs. ``safe_load`` already
+# rejects !!python tags, but billion-laughs-style alias graphs are still
+# accepted and blow up during expansion. We reject oversized manifests
+# before parsing so that graph cannot run.
+_MAX_MANIFEST_BYTES = 1 * 1024 * 1024  # 1 MiB
+
+
 def load_manifest(path: Path) -> Manifest:
     """Load and validate a manifest YAML file."""
 
     if not path.exists():
         raise ManifestValidationError(f"manifest file not found: {path}")
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ManifestValidationError(f"cannot stat manifest {path}: {exc}") from exc
+    if size > _MAX_MANIFEST_BYTES:
+        raise ManifestValidationError(
+            f"manifest {path} is {size} bytes; max allowed is {_MAX_MANIFEST_BYTES}"
+        )
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:

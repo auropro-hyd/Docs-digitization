@@ -7,8 +7,32 @@ validation into a single ``ingest(...)`` call that the API layer depends on.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+# Hard size caps. Env overrides let ops tune the limit per deployment
+# without a code change. The defaults target a worst-case BPCR bundle
+# (several hundred-page PDFs) while staying safely below typical worker
+# memory budgets.
+MAX_UPLOAD_BYTES = _env_int("AT_BMR__MAX_UPLOAD_BYTES", 200 * 1024 * 1024)  # 200 MiB
+MAX_FILES_PER_PACKAGE = _env_int("AT_BMR__MAX_FILES_PER_PACKAGE", 50)
+
+
+class PackageTooLargeError(ValueError):
+    """Raised when an uploaded package exceeds the configured size cap."""
 
 from app.bmr.ingest.classifier import (
     HybridClassifier,
@@ -61,6 +85,17 @@ class PackageIngestService:
         Always returns a package; validation failures are attached as
         :class:`PackageIssue` records and surfaced via ``status``.
         """
+
+        if len(files) > MAX_FILES_PER_PACKAGE:
+            raise PackageTooLargeError(
+                f"package contains {len(files)} files; "
+                f"max allowed is {MAX_FILES_PER_PACKAGE}"
+            )
+        total = sum(len(f.content) for f in files)
+        if total > MAX_UPLOAD_BYTES:
+            raise PackageTooLargeError(
+                f"package total size {total} bytes exceeds cap {MAX_UPLOAD_BYTES}"
+            )
 
         try:
             manifest = self._load_manifest(manifest_id)

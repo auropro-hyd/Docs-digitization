@@ -25,9 +25,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+# Cap OCR work per document so a malformed (or maliciously large) PDF
+# cannot exhaust worker memory. Configurable via env because real BPCRs
+# can legitimately run to the low hundreds of pages.
+MAX_OCR_PAGES_PER_DOC = _env_int("AT_BMR__MAX_OCR_PAGES_PER_DOC", 500)
 
 from app.bmr.capabilities.extracted_data import (
     ExtractedPackage,
@@ -137,7 +155,10 @@ class OCRBackedExtractor:
             if not pdf_path.is_file():
                 continue
             ocr_result = _run_async(
-                self._ocr.extract(str(pdf_path), pages=None)
+                self._ocr.extract(
+                    str(pdf_path),
+                    pages=list(range(1, MAX_OCR_PAGES_PER_DOC + 1)),
+                )
             )
             pages.extend(_project_result_to_pages(doc, role_cfg, ocr_result))
 
