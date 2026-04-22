@@ -167,10 +167,15 @@ class OCRBackedExtractor:
         if self._write_sidecar:
             target = package_dir / "extraction.json"
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(
+            # Write to .tmp then rename — a crash mid-write must not
+            # leave a half-formed JSON sidecar that the next run fails
+            # to parse.
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            tmp.write_text(
                 json.dumps(extracted.model_dump(mode="json"), indent=2),
                 encoding="utf-8",
             )
+            tmp.replace(target)
         return extracted
 
 
