@@ -68,7 +68,12 @@ class SubSectionKind(StrEnum):
 
 
 class StructuredResolution(BaseModel):
-    """Structured reviewer action on a finding (CONFIRM/DISMISS for v0)."""
+    """Structured reviewer action on a finding (CONFIRM/DISMISS for v0).
+
+    Frozen so the audit trail cannot be mutated after save; subsequent
+    reviewer action produces a *new* resolution that ``supersedes_id``
+    the previous one (see Spec 004 §3.2).
+    """
 
     resolution_id: str
     run_id: str
@@ -84,7 +89,7 @@ class StructuredResolution(BaseModel):
     actor_id: str
     created_at: datetime
 
-    model_config = ConfigDict(frozen=False)
+    model_config = ConfigDict(frozen=True)
 
 
 class FeedbackSample(BaseModel):
