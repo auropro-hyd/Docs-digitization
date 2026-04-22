@@ -11,6 +11,22 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.bmr.ingest.classifier import (
+    HybridClassifier,
+    HybridClassifierConfig,
+)
+from app.bmr.ingest.manifest import Manifest, ManifestValidationError, load_manifest
+from app.bmr.ingest.models import (
+    DocumentPackage,
+    DocumentRef,
+    PackageIssue,
+    PackageIssueKind,
+    PackageStatus,
+    now_utc,
+)
+from app.bmr.ingest.package_store import PackageStore
+from app.bmr.ingest.pdf_header import extract_first_page_header
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -33,22 +49,6 @@ MAX_FILES_PER_PACKAGE = _env_int("AT_BMR__MAX_FILES_PER_PACKAGE", 50)
 
 class PackageTooLargeError(ValueError):
     """Raised when an uploaded package exceeds the configured size cap."""
-
-from app.bmr.ingest.classifier import (
-    HybridClassifier,
-    HybridClassifierConfig,
-)
-from app.bmr.ingest.manifest import Manifest, ManifestValidationError, load_manifest
-from app.bmr.ingest.models import (
-    DocumentPackage,
-    DocumentRef,
-    PackageIssue,
-    PackageIssueKind,
-    PackageStatus,
-    now_utc,
-)
-from app.bmr.ingest.package_store import PackageStore
-from app.bmr.ingest.pdf_header import extract_first_page_header
 
 
 @dataclass(frozen=True)

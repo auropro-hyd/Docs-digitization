@@ -30,6 +30,15 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.bmr.capabilities.extracted_data import (
+    ExtractedPackage,
+    ExtractedPage,
+    FieldValue,
+)
+from app.bmr.ingest.models import DocumentPackage, DocumentRef
+from app.bmr.workflow.extraction import load_extracted_package
+from app.core.ports.ocr import OCREngine, OCRResult
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -46,15 +55,6 @@ def _env_int(name: str, default: int) -> int:
 # cannot exhaust worker memory. Configurable via env because real BPCRs
 # can legitimately run to the low hundreds of pages.
 MAX_OCR_PAGES_PER_DOC = _env_int("AT_BMR__MAX_OCR_PAGES_PER_DOC", 500)
-
-from app.bmr.capabilities.extracted_data import (
-    ExtractedPackage,
-    ExtractedPage,
-    FieldValue,
-)
-from app.bmr.ingest.models import DocumentPackage, DocumentRef
-from app.bmr.workflow.extraction import load_extracted_package
-from app.core.ports.ocr import OCREngine, OCRResult
 
 # Role → (field name → OCR key label(s) to pull). Each role can also
 # declare ``page_tags`` so the resulting :class:`ExtractedPage` gets the

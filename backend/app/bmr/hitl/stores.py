@@ -275,7 +275,7 @@ class RevisionStore:
                     )
                 )
             except (OSError, json.JSONDecodeError, ValueError) as exc:
-                logger.error("skipping corrupt store record %s: %s", path, exc)
+                logger.error("skipping corrupt store record %s: %s", target, exc)
                 continue
         return out
 

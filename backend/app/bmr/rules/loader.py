@@ -227,7 +227,7 @@ def _strip_version_suffix(token: str) -> str:
     return token.split("@", 1)[0]
 
 
-def _validate_supersession_chains(bank: "RuleBank") -> None:
+def _validate_supersession_chains(bank: RuleBank) -> None:
     """Attach cycle errors to bank reports.
 
     ``superseded_by`` forms a directed graph across rules. A cycle would
@@ -242,7 +242,7 @@ def _validate_supersession_chains(bank: "RuleBank") -> None:
 
     by_id = {r.id: r for r in bank.rules}
 
-    def _report_for(rule: LoadedRule) -> "RuleValidationReport":
+    def _report_for(rule: LoadedRule) -> RuleValidationReport:
         for rep in bank.reports:
             if rep.source_path == rule.source_path:
                 return rep
