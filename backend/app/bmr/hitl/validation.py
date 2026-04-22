@@ -138,6 +138,17 @@ class CorrectionDraft:
     observed_value_on_document: str | None = None
 
 
+# Accepted JSON scalar types for CORRECT payloads. Extracted field
+# values are scalars (number, string, boolean) — accepting objects or
+# lists lets a reviewer inject arbitrary nested structures into
+# ExtractedPackage, which would silently short-circuit tolerance
+# comparisons downstream.
+_SCALAR_TYPES = (str, int, float, bool)
+
+_MAX_CORRECTED_STRING_LEN = 10_000
+_MAX_REASON_COMMENT_LEN = 10_000
+
+
 def validate_correction_payload(
     *,
     field: str | None,
@@ -148,15 +159,39 @@ def validate_correction_payload(
     if not isinstance(field, str) or not field.strip():
         raise CorrectionValidationError("CORRECT requires a non-empty field name")
     field = field.strip()
-    if corrected_value is None or (
-        isinstance(corrected_value, str) and not corrected_value.strip()
+    if corrected_value is None:
+        raise CorrectionValidationError(
+            "CORRECT requires a concrete corrected_value (null rejected)"
+        )
+    # Reject bool-by-accident-via-int and vice versa? Python makes bool a
+    # subclass of int, so keep the check explicit on the full tuple.
+    if not isinstance(corrected_value, _SCALAR_TYPES):
+        raise CorrectionValidationError(
+            "corrected_value must be a scalar (string, number, or boolean); "
+            f"got {type(corrected_value).__name__}"
+        )
+    if isinstance(corrected_value, str):
+        if not corrected_value.strip():
+            raise CorrectionValidationError(
+                "CORRECT requires a concrete corrected_value (blank string rejected)"
+            )
+        if len(corrected_value) > _MAX_CORRECTED_STRING_LEN:
+            raise CorrectionValidationError(
+                f"corrected_value exceeds {_MAX_CORRECTED_STRING_LEN} chars"
+            )
+    if isinstance(corrected_value, float) and (
+        corrected_value != corrected_value or corrected_value in (float("inf"), float("-inf"))
     ):
         raise CorrectionValidationError(
-            "CORRECT requires a concrete corrected_value (null/blank rejected)"
+            "corrected_value must be a finite number (NaN/inf rejected)"
         )
     if not reason_comment or not reason_comment.strip():
         raise CorrectionValidationError(
             "CORRECT requires a reason_comment describing the reviewer's rationale"
+        )
+    if len(reason_comment) > _MAX_REASON_COMMENT_LEN:
+        raise CorrectionValidationError(
+            f"reason_comment exceeds {_MAX_REASON_COMMENT_LEN} chars"
         )
     return CorrectionDraft(
         field=field,
