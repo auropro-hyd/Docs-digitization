@@ -221,6 +221,58 @@ def load_rule_file(path: Path) -> tuple[LoadedRule | None, RuleValidationReport]
     return loaded, report
 
 
+def _strip_version_suffix(token: str) -> str:
+    """``rule_id@1.2.3`` → ``rule_id`` (stamped_version → bare id)."""
+
+    return token.split("@", 1)[0]
+
+
+def _validate_supersession_chains(bank: "RuleBank") -> None:
+    """Attach cycle errors to bank reports.
+
+    ``superseded_by`` forms a directed graph across rules. A cycle would
+    make prior-run replay tools loop forever, so any cycle is reported
+    as a blocking error keyed to the offending rule's source path.
+
+    A ``superseded_by`` pointing at a rule that is *not* in the current
+    bank is **not** an error: rules can legitimately retire towards a
+    successor that lives in a different bank or has not been loaded
+    together — we only fail loud on structural loops.
+    """
+
+    by_id = {r.id: r for r in bank.rules}
+
+    def _report_for(rule: LoadedRule) -> "RuleValidationReport":
+        for rep in bank.reports:
+            if rep.source_path == rule.source_path:
+                return rep
+        raise AssertionError(
+            f"missing report for loaded rule {rule.id} at {rule.source_path}"
+        )
+
+    for rule in bank.rules:
+        if rule.superseded_by is None:
+            continue
+        visited: list[str] = [rule.id]
+        current: LoadedRule | None = rule
+        while current is not None and current.superseded_by is not None:
+            successor_id = _strip_version_suffix(current.superseded_by)
+            if successor_id in visited:
+                _report_for(rule).errors.append(
+                    RuleValidationError(
+                        path="/superseded_by",
+                        message=(
+                            "superseded_by chain forms a cycle: "
+                            + " -> ".join([*visited, successor_id])
+                        ),
+                        severity="blocking",
+                    )
+                )
+                break
+            visited.append(successor_id)
+            current = by_id.get(successor_id)
+
+
 def load_rule_bank(target: Path) -> RuleBank:
     """Load every rule YAML under ``target`` (file or directory)."""
 
@@ -231,6 +283,12 @@ def load_rule_bank(target: Path) -> RuleBank:
         bank.reports.append(report)
         if loaded is not None:
             bank.rules.append(loaded)
+    _validate_supersession_chains(bank)
+    # Any rule whose supersession chain failed must be removed from the
+    # active set so downstream evaluators do not run it.
+    bad_paths = {rep.source_path for rep in bank.reports if not rep.ok}
+    if bad_paths:
+        bank.rules = [r for r in bank.rules if r.source_path not in bad_paths]
     return bank
 
 

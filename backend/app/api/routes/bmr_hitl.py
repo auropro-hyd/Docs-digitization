@@ -219,6 +219,8 @@ async def create_resolution(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FindingNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ResolutionValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return ResolutionResponse(
         resolution=result.resolution,

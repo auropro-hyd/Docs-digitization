@@ -202,6 +202,18 @@ class HITLService:
         report = self._require_report(run_id)
         finding = self._require_finding(report, finding_id)
 
+        # DISMISS/DUPLICATE_FINDING carries a pointer to the primary
+        # finding — enforce that it actually exists in this run and that
+        # it is not the finding being dismissed itself. Missing
+        # references would produce dangling audit records that look
+        # resolved but point nowhere.
+        if draft.duplicate_of_finding_id is not None:
+            if draft.duplicate_of_finding_id == finding_id:
+                raise ResolutionValidationError(
+                    "duplicate_of_finding_id cannot reference the finding being dismissed"
+                )
+            self._require_finding(report, draft.duplicate_of_finding_id)
+
         resolution = StructuredResolution(
             resolution_id=f"res_{uuid.uuid4().hex}",
             run_id=run_id,
