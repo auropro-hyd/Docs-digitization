@@ -19,6 +19,7 @@ run the graph off the request thread without blocking the event loop.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -32,6 +33,24 @@ from app.bmr.workflow.graph import build_bmr_graph
 from app.bmr.workflow.models import RunReport, RunStage, RunStatus, now_utc
 from app.bmr.workflow.run_store import RunStore
 from app.bmr.workflow.state import BMRRunState
+
+
+def _package_snapshot_hash(
+    package_store: PackageStore, package_id: str
+) -> str | None:
+    """Stable hash of the package.json body at the moment of capture.
+
+    Used to detect drift between the first pass (which paused at
+    legibility review) and the resume call — if the document set has
+    been edited or re-uploaded, compliance would silently run against a
+    different package than the reviewer approved.
+    """
+
+    pkg = package_store.load(package_id)
+    if pkg is None:
+        return None
+    canonical = pkg.model_dump_json()
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 EventPublisher = Callable[[str, str, dict[str, Any]], None]
 
@@ -96,6 +115,9 @@ class BMRRunService:
     def start_run(self, spec: StartRunSpec) -> RunReport:
         run_id = self._run_store.new_run_id()
         started_at = now_utc()
+        snapshot_hash = _package_snapshot_hash(
+            self._package_store, spec.package_id
+        )
 
         pending = RunReport(
             run_id=run_id,
@@ -106,6 +128,7 @@ class BMRRunService:
             rules_dir=str(spec.rules_dir),
             aliases_dir=str(spec.aliases_dir) if spec.aliases_dir else None,
             repo_root=str(self._repo_root),
+            package_snapshot_hash=snapshot_hash,
         )
         self._run_store.save(pending)
         self._publish(
@@ -157,6 +180,16 @@ class BMRRunService:
             raise LegibilityDecisionError(
                 f"run {run_id!r} is {report.status.value}, not awaiting legibility review"
             )
+
+        if action == "proceed" and report.package_snapshot_hash is not None:
+            current_hash = _package_snapshot_hash(
+                self._package_store, report.package_id
+            )
+            if current_hash != report.package_snapshot_hash:
+                raise LegibilityDecisionError(
+                    f"package {report.package_id!r} changed between pause and "
+                    "resume; abort and start a new run",
+                )
 
         decided_at = now_utc()
         report.legibility_decision = action

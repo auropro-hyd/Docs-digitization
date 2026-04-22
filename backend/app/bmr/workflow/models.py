@@ -105,6 +105,11 @@ class RunReport(BaseModel):
     legibility_decision: str | None = None  # "proceed" | "reupload"
     legibility_decided_by: str | None = None
     legibility_decision_note: str | None = None
+    # Captured at initial run start so resume_after_legibility can detect
+    # that the package has drifted (re-upload, mutation, etc.) between
+    # pause and proceed — otherwise ingest would silently re-read a
+    # different document set on resume.
+    package_snapshot_hash: str | None = None
 
     model_config = ConfigDict(frozen=False)
 
