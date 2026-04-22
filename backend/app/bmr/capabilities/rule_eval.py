@@ -656,7 +656,16 @@ def _filter_pages_by_selector(
     if page_filter == "last_page":
         return pages[-1:]
     if page_filter == "by_index":
-        wanted = set(selector.get("page_indices") or [])
+        raw_indices = selector.get("page_indices") or []
+        # Empty ``page_indices`` with ``page_filter=by_index`` is almost
+        # always an authoring mistake: matching zero pages causes the
+        # rule to silently UNEVALUATE on every document. Treat the
+        # selector as degenerate by returning no pages — the caller
+        # will then emit an UNEVALUATED finding with a clear summary,
+        # which is what the reviewer needs to see the mistake.
+        wanted = {int(i) for i in raw_indices if isinstance(i, int) and i >= 1}
+        if not wanted:
+            return []
         return [p for p in pages if p.page_index in wanted]
     if page_filter == "by_tag":
         tag = selector.get("page_tag")

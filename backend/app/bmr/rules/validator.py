@@ -367,6 +367,27 @@ def _semantic_checks(mapping: dict[str, Any]) -> list[RuleValidationError]:
                     severity="blocking",
                 )
             )
+
+    # page_selector.page_filter == "by_index" without a non-empty
+    # page_indices list matches zero pages and produces UNEVALUATED
+    # findings on every document — almost always a copy-paste bug.
+    selector = mapping.get("page_selector")
+    if isinstance(selector, dict) and selector.get("page_filter") == "by_index":
+        indices = selector.get("page_indices")
+        if not isinstance(indices, list) or not any(
+            isinstance(i, int) and i >= 1 for i in indices
+        ):
+            errors.append(
+                RuleValidationError(
+                    path="/page_selector/page_indices",
+                    message=(
+                        "page_filter='by_index' requires a non-empty list of "
+                        "positive page_indices; otherwise every page is skipped."
+                    ),
+                    fix_hint="page_indices: [1, 2, 3]",
+                    severity="blocking",
+                )
+            )
     return errors
 
 
