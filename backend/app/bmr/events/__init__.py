@@ -17,10 +17,13 @@ in later without changing callers.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _EVENT_SCHEMA_VERSION = "1.0"
 
@@ -70,14 +73,24 @@ class EventBus:
             "timestamp": _now_iso(),
             "payload": dict(payload or {}),
         }
+        # Hold the lock across scheduling: if we release it, a subscriber
+        # can unsubscribe + close its loop before call_soon_threadsafe
+        # fires, and the RuntimeError branch below silently drops the
+        # event with no record in the audit trail. Scheduling
+        # call_soon_threadsafe is cheap (does not block on queue fill),
+        # so holding the lock for the whole loop is acceptable.
         with self._lock:
             subs = list(self._subs.get(run_id, set()))
-        for loop, q in subs:
-            try:
-                loop.call_soon_threadsafe(_put_nowait_silent, q, envelope)
-            except RuntimeError:
-                # Loop was closed between publish and scheduling — drop.
-                continue
+            for loop, q in subs:
+                try:
+                    loop.call_soon_threadsafe(_put_nowait_silent, q, envelope)
+                except RuntimeError:
+                    logger.warning(
+                        "dropping %s event for run %s: subscriber loop is closed",
+                        event,
+                        run_id,
+                    )
+                    continue
 
 
 def _put_nowait_silent(q: asyncio.Queue, envelope: dict[str, Any]) -> None:
