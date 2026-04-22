@@ -236,6 +236,35 @@ def _stamp_content_hash(
     return findings
 
 
+def _failure_findings_for_rule(
+    loaded: LoadedRule, *, stage: str
+) -> list[FindingDraft]:
+    """Emit an INDETERMINATE finding in place of findings lost to a crash.
+
+    Silently dropping findings is the worst failure mode for a compliance
+    audit — reviewers cannot tell passing evaluations from evaluations
+    that never completed. We substitute a single marker finding so the
+    rule appears in the report with an unmistakable status.
+    """
+
+    from app.bmr.capabilities.evidence import FindingDraft, FindingSource, FindingStatus
+
+    return [
+        FindingDraft(
+            rule_id=loaded.id,
+            rule_version=loaded.version,
+            rule_content_hash=loaded.content_hash,
+            status=FindingStatus.INDETERMINATE,
+            severity=str(loaded.rule.get("severity", "major")),
+            summary=(
+                f"rule {loaded.id} could not be evaluated during {stage} "
+                "(see server logs for the traceback)"
+            ),
+            source=FindingSource.ALCOA,
+        )
+    ]
+
+
 def _evaluate_leaf_rule(
     loaded: LoadedRule,
     *,
@@ -327,15 +356,33 @@ def make_compliance_stage(
                     )
                     for loaded in leaf_rules
                 ]
-                for future in futures:
-                    findings.extend(future.result())
+                # Collect every future — a crashed evaluator must not orphan
+                # the findings from siblings that finished before it.
+                for loaded, future in zip(leaf_rules, futures, strict=True):
+                    try:
+                        findings.extend(future.result())
+                    except Exception:
+                        logger.exception(
+                            "leaf rule %s evaluation crashed", loaded.id
+                        )
+                        findings.extend(
+                            _failure_findings_for_rule(loaded, stage="compliance")
+                        )
         else:
             for loaded in leaf_rules:
-                findings.extend(
-                    _evaluate_leaf_rule(
-                        loaded, extracted=extracted, alias_tables=alias_tables
+                try:
+                    findings.extend(
+                        _evaluate_leaf_rule(
+                            loaded, extracted=extracted, alias_tables=alias_tables
+                        )
                     )
-                )
+                except Exception:
+                    logger.exception(
+                        "leaf rule %s evaluation crashed", loaded.id
+                    )
+                    findings.extend(
+                        _failure_findings_for_rule(loaded, stage="compliance")
+                    )
 
         for loaded in synthesis_rules:
             synthesised = checklist_synthesise_v1(
