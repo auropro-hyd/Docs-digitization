@@ -66,11 +66,29 @@ class EventBus:
         run_id: str,
         payload: Mapping[str, Any] | None = None,
     ) -> None:
+        # Observability: attach the current trace id to the envelope so
+        # WebSocket subscribers can correlate events with server-side
+        # logs. Fail-open — if the observability layer is absent we still
+        # ship the event.
+        trace_id: str | None = None
+        span_id: str | None = None
+        try:
+            from app.observability import current_trace
+
+            ctx = current_trace()
+            if ctx is not None:
+                trace_id = ctx.trace_id
+                span_id = ctx.span_id
+        except Exception:  # pragma: no cover — fail-open
+            pass
+
         envelope = {
             "schema_version": _EVENT_SCHEMA_VERSION,
             "event": event,
             "run_id": run_id,
             "timestamp": _now_iso(),
+            "trace_id": trace_id,
+            "span_id": span_id,
             "payload": dict(payload or {}),
         }
         # Hold the lock across scheduling: if we release it, a subscriber

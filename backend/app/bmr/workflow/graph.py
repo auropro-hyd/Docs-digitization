@@ -20,6 +20,7 @@ from app.bmr.ingest.package_store import PackageStore
 from app.bmr.workflow.extractor import ExtractorPort
 from app.bmr.workflow.models import RunStage, RunStatus, now_utc
 from app.bmr.workflow.stages import (
+    _observe_stage,
     legibility_and_classification_stage,
     make_compliance_stage,
     make_extraction_stage,
@@ -98,11 +99,28 @@ def build_bmr_graph(
     extraction_stage = make_extraction_stage(package_store, extractor=extractor)
     compliance_stage = make_compliance_stage(repo_root=repo_root)
 
-    builder.add_node("ingest_stage", ingest_stage)
-    builder.add_node("legibility_and_classification_stage", legibility_and_classification_stage)
-    builder.add_node("extraction_stage", extraction_stage)
-    builder.add_node("compliance_stage", compliance_stage)
-    builder.add_node("report_stage", _report_on_failure)
+    builder.add_node(
+        "ingest_stage", _observe_stage(RunStage.INGEST, ingest_stage)
+    )
+    builder.add_node(
+        "legibility_and_classification_stage",
+        _observe_stage(
+            RunStage.LEGIBILITY_AND_CLASSIFICATION,
+            legibility_and_classification_stage,
+        ),
+    )
+    builder.add_node(
+        "extraction_stage",
+        _observe_stage(RunStage.EXTRACTION, extraction_stage),
+    )
+    builder.add_node(
+        "compliance_stage",
+        _observe_stage(RunStage.COMPLIANCE, compliance_stage),
+    )
+    builder.add_node(
+        "report_stage",
+        _observe_stage(RunStage.REPORT, _report_on_failure),
+    )
 
     builder.add_edge(START, "ingest_stage")
     builder.add_conditional_edges(
