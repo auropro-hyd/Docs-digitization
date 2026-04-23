@@ -23,7 +23,6 @@ from contextvars import copy_context
 from typing import Any, ParamSpec, TypeVar
 
 from app.observability.context import (
-    TRACE_CTX,
     TraceContext,
     current_trace,
     reset_trace,
@@ -147,7 +146,7 @@ def traced(name: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
     return decorator
 
 
-def submit_with_context(
+def submit_with_context(  # noqa: UP047 — keep ParamSpec form for cross-version clarity
     executor: Executor,
     fn: Callable[P, R],
     /,

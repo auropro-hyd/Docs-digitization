@@ -15,7 +15,7 @@ typo cannot silently proliferate new scope fields.
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 _SCOPE_KEYS = frozenset(
@@ -45,7 +45,7 @@ class TraceContext:
         if len(self.span_id) != 16 or self.span_id == "0" * 16:
             raise ValueError(f"invalid span_id: {self.span_id!r}")
 
-    def child_span(self, new_span_id: str) -> "TraceContext":
+    def child_span(self, new_span_id: str) -> TraceContext:
         """Return a new context whose ``span_id`` is ``new_span_id`` and whose
         ``parent_span_id`` is the current ``span_id``.
 
@@ -89,8 +89,13 @@ class RequestScope:
 
 
 TRACE_CTX: ContextVar[TraceContext | None] = ContextVar("TRACE_CTX", default=None)
+# RequestScope is frozen + slots=True (immutable), so sharing one default
+# across requests is safe — the only way to "modify" scope is to ``replace``
+# which yields a new instance. ruff's B039 assumes mutability; silence it
+# explicitly.
 REQUEST_SCOPE: ContextVar[RequestScope] = ContextVar(
-    "REQUEST_SCOPE", default=RequestScope()
+    "REQUEST_SCOPE",
+    default=RequestScope(),  # noqa: B039 — RequestScope is frozen
 )
 
 

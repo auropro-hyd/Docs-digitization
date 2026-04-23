@@ -7,7 +7,6 @@ import asyncio
 import pytest
 
 from app.observability.context import (
-    REQUEST_SCOPE,
     TraceContext,
     bind_context,
     current_scope,

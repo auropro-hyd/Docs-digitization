@@ -22,8 +22,8 @@ from app.compliance.models import (
     RuleEvaluation,
     RuleResult,
 )
-from app.config.settings import get_settings
 from app.compliance.rules.registry import AuditRule, RuleBatch
+from app.config.settings import get_settings
 from app.core.ports.llm import LLMProvider
 from app.core.ports.vlm import VLMProvider
 
@@ -1047,7 +1047,7 @@ def _deduplicate_findings(
 
 
 def resync_agent_totals(
-    agent_reports: list["AgentReport"],
+    agent_reports: list[AgentReport],
     global_findings: list[ComplianceFinding],
 ) -> None:
     """After a cross-agent collapse, rebalance ``AgentReport.total_findings``.

@@ -24,9 +24,7 @@ _EXEMPT_KEYS = frozenset(
 def _looks_binary(value: str) -> bool:
     if value.startswith("%PDF"):
         return True
-    if len(value) >= 2048 and _BASE64_RE.match(value):
-        return True
-    return False
+    return bool(len(value) >= 2048 and _BASE64_RE.match(value))
 
 
 def redact_processor(

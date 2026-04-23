@@ -12,7 +12,6 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
 # ═══════════════════════════════════════════════════════════════
 #  Enums
 # ═══════════════════════════════════════════════════════════════
@@ -96,7 +95,7 @@ class VisionBatchResult(BaseModel):
 
     page_num: int = 0
     checks: list[VisualCheckResult] = Field(default_factory=list)
-    rule_evaluations: list["RuleEvaluation"] = Field(default_factory=list)
+    rule_evaluations: list[RuleEvaluation] = Field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════

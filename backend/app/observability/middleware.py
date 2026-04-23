@@ -130,10 +130,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 error_kind=type(exc).__name__,
                 error_msg=str(exc),
             )
-            try:
+            import contextlib
+
+            with contextlib.suppress(Exception):  # pragma: no cover — fail-open
                 ERRORS.labels(route=route, kind=type(exc).__name__).inc()
-            except Exception:  # pragma: no cover — fail-open
-                pass
             response = JSONResponse(
                 status_code=500,
                 content={

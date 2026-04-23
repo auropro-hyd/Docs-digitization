@@ -15,8 +15,8 @@ import asyncio
 import json
 import logging
 import re
+from datetime import UTC
 from pathlib import Path
-
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -456,7 +456,7 @@ class HITLReviewRequest(BaseModel):
 @router.post("/{doc_id}/findings/{finding_id}/review")
 async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
     """HITL review: approve, reject, or modify a finding."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     d = _doc_dir(doc_id)
     result_path = d / _COMPLIANCE_RESULT
@@ -472,7 +472,7 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         "reset": "needs_review",
     }
     new_hitl_status = action_map[body.action]
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     def _update_finding(f: dict) -> bool:
         if f.get("finding_id") != finding_id:
@@ -764,20 +764,20 @@ def _build_report_html(report: dict, stem: str) -> str:
     methodology = report.get("score_methodology", {})
 
     h = []
-    h.append(f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
+    h.append("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
     h.append(f"<title>{_esc(stem)} — Compliance Audit Report</title>")
     h.append(_EXPORT_CSS)
     h.append("</head><body>")
 
     # --- Cover ---
     h.append('<div class="cover">')
-    h.append(f"<h1>Compliance Audit Report</h1>")
+    h.append("<h1>Compliance Audit Report</h1>")
     h.append(f'<p class="meta">{_esc(report.get("filename", stem))} &mdash; '
              f'{_esc(report.get("document_type", ""))} &mdash; '
              f'{report.get("total_pages", "?")} pages</p>')
     h.append(f'<p class="meta">Generated: {_esc(str(report.get("generated_at", "")))}</p>')
     h.append(f'<div class="score-ring {_score_class(score)}">{score:.0f}</div>')
-    h.append(f'<p class="meta">Model Score (out of 100)</p>')
+    h.append('<p class="meta">Model Score (out of 100)</p>')
     if review_score is not None:
         h.append(f'<p class="meta" style="margin-top:0.35rem">Review-Adjusted Score: <strong>{float(review_score):.1f}</strong>/100</p>')
     h.append("</div>")
@@ -910,7 +910,7 @@ def _build_report_html(report: dict, stem: str) -> str:
                 for cs in cat_scores
             }
 
-            h.append(f'<h3 class="page-break">Rule-Level Detail</h3>')
+            h.append('<h3 class="page-break">Rule-Level Detail</h3>')
             for cat_id in cat_order:
                 rules_in_cat = by_cat.get(cat_id, [])
                 if not rules_in_cat:
@@ -923,7 +923,7 @@ def _build_report_html(report: dict, stem: str) -> str:
                 n_na = sum(1 for r in rules_in_cat if r.get("status") == "not_applicable")
                 n_unc = sum(1 for r in rules_in_cat if r.get("status") in ("uncertain", "error"))
 
-                h.append(f'<div class="rule-detail-group">')
+                h.append('<div class="rule-detail-group">')
                 h.append(
                     f'<h4>{cat_label} '
                     f'<span class="cat-summary">{len(rules_in_cat)} rules &mdash; '
@@ -941,12 +941,12 @@ def _build_report_html(report: dict, stem: str) -> str:
                     rule_text = _esc(rv.get("rule_text", ""))
                     reasoning = rv.get("reasoning", "")
 
-                    h.append(f'<div class="rule-row">')
+                    h.append('<div class="rule-row">')
                     h.append(f'<span class="rule-id">{_esc(rv.get("rule_id", ""))}</span>')
                     h.append(f'<span class="st st-{st}">{st_label}</span>')
                     h.append(f'<span class="rule-text">{rule_text}</span>')
                     h.append(f'<span class="rule-pages">{_esc(pages_display)}</span>')
-                    h.append(f'</div>')
+                    h.append('</div>')
                     if reasoning:
                         trimmed = reasoning[:250] + ("..." if len(reasoning) > 250 else "")
                         h.append(f'<div class="rule-reasoning" style="padding-left:90px">{_esc(trimmed)}</div>')

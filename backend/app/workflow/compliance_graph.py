@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.api.websocket import manager as ws_manager
@@ -79,7 +79,7 @@ async def run_compliance_pipeline(
     container = get_container()
     registry = get_registry()
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     llm_call_count = 0
 
     user_selected = bool(selected_agents)
@@ -381,7 +381,7 @@ async def run_compliance_pipeline(
                     "batches_complete": completed,
                     "batches_total": total,
                     "percent": pct,
-                    "label": f"Cross-Page Reconciliation: Evaluating rules...",
+                    "label": "Cross-Page Reconciliation: Evaluating rules...",
                     "rule_updates": rule_updates,
                 })
 
@@ -442,7 +442,7 @@ async def run_compliance_pipeline(
     )
     llm_call_count += 1
 
-    completed_at = datetime.now(timezone.utc)
+    completed_at = datetime.now(UTC)
     total_rules = sum(ar.total_rules for ar in agent_reports)
 
     report = ComplianceReport(
@@ -564,7 +564,7 @@ async def _generate_executive_summary(
 
 def _build_empty_report(doc_id, filename, total_pages, orch_result, started_at, config):
     """Build a report when the document is not relevant for compliance."""
-    completed_at = datetime.now(timezone.utc)
+    completed_at = datetime.now(UTC)
     return ComplianceReport(
         report_id=str(uuid.uuid4()),
         doc_id=doc_id,

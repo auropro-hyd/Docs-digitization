@@ -13,6 +13,7 @@ label not in the set fails :func:`validate_registry` at import time.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 
@@ -327,7 +328,7 @@ def validate_registry() -> None:
             if label not in ALLOWED_LABELS:
                 offenders.append((_metric_name(m), label))
     if offenders:
-        pretty = ", ".join(f"{n}.{l}" for n, l in offenders)
+        pretty = ", ".join(f"{name}.{label}" for name, label in offenders)
         raise RuntimeError(
             f"metric(s) registered with non-whitelisted labels: {pretty}. "
             f"Add the label to ALLOWED_LABELS with a cardinality justification "
@@ -342,16 +343,14 @@ def reset_for_tests() -> None:
     per metric. This is the pattern used throughout their own test suite.
     """
 
+    import contextlib
+
     for m in _REGISTERED:
-        try:
+        with contextlib.suppress(AttributeError):
             m._metrics.clear()  # type: ignore[attr-defined]
-        except AttributeError:
-            pass
-        try:
+        with contextlib.suppress(AttributeError):
             # Unlabelled singletons use ``_value`` directly.
             m._value.set(0)  # type: ignore[attr-defined]
-        except AttributeError:
-            pass
 
 
 # Enforce the whitelist at import time. A new metric that violates it fails
