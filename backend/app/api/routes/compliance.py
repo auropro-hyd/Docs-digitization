@@ -84,15 +84,56 @@ def _deduction_weights(report_data: dict) -> dict[str, int]:
     return merged
 
 
-def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
+# Known HITL state values. Any other string (or a missing field) is
+# classified as ``unknown`` by _normalize_hitl_status below — we never
+# silently impute ``auto_approved`` (FR-013).
+_KNOWN_HITL_STATUSES = frozenset(
+    {
+        "auto_approved",
+        "system_confirmed",
+        "needs_review",
+        "user_approved",
+        "user_rejected",
+        "user_modified",
+        "unknown",
+    }
+)
+
+
+def _normalize_hitl_status(raw: object) -> str:
+    if isinstance(raw, str) and raw in _KNOWN_HITL_STATUSES:
+        return raw
+    return "unknown"
+
+
+def _score_from_findings(
+    findings: list[dict],
+    weights: dict[str, int],
+    *,
+    include_unknown: bool = False,
+) -> dict:
+    """Compute the review-adjusted score.
+
+    ``user_rejected`` findings and resolved findings contribute no
+    penalty. Findings with an unparseable or missing ``hitl_status`` are
+    classified ``unknown``; by default they are excluded from penalty
+    (defence-in-depth — we refuse to score what we cannot trust). Set
+    ``include_unknown=True`` to include them (e.g. for an operator CLI
+    that wants a pessimistic view).
+    """
+
     penalties_by_severity = {k: 0 for k in ["critical", "major", "minor", "observation"]}
     entries: list[dict] = []
     total_penalty = 0
     included = 0
+    unknown_skipped = 0
 
     for f in findings:
-        status = str(f.get("hitl_status", "auto_approved"))
+        status = _normalize_hitl_status(f.get("hitl_status"))
         if status == "user_rejected" or f.get("resolved", False):
+            continue
+        if status == "unknown" and not include_unknown:
+            unknown_skipped += 1
             continue
         sev = str(f.get("severity", "observation")).lower()
         penalty = int(weights.get(sev, 1))
@@ -111,6 +152,7 @@ def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
         "score": round(max(0.0, 100.0 - float(total_penalty)), 1),
         "total_penalty": total_penalty,
         "included_findings": included,
+        "unknown_skipped": unknown_skipped,
         "penalties_by_severity": penalties_by_severity,
         "penalty_entries": entries,
     }

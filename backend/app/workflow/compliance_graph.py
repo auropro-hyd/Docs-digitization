@@ -421,7 +421,10 @@ async def run_compliance_pipeline(
     for ar in agent_reports:
         all_findings.extend(ar.findings)
 
-    all_findings = _deduplicate_findings(all_findings)
+    # Default to attribution-preserving: two agents that both match the
+    # same rule_id keep both findings. Tab badges and filtered lists agree
+    # by construction. See research §R7.
+    all_findings = _deduplicate_findings(all_findings, mode="cross_agent_preserve")
 
     scored_reports = [ar for ar in agent_reports if ar.total_rules > 0]
     total_rules_weight = sum(ar.total_rules for ar in scored_reports)
@@ -464,6 +467,7 @@ async def run_compliance_pipeline(
         agent_reports=agent_reports,
         skipped_agents=list(skipped),
         findings=all_findings,
+        dedup_mode="cross_agent_preserve",
         audit_trail=AuditTrail(
             started_at=started_at,
             completed_at=completed_at,
@@ -485,6 +489,36 @@ async def run_compliance_pipeline(
         "overall_score": report.overall_score,
         "total_findings": report.total_findings,
     })
+
+    # Observability (FR-005): metric rollups for the finished run.
+    try:
+        from app.observability.metrics import (
+            COMPLIANCE_AGENT_DURATION,
+            COMPLIANCE_FINDINGS,
+            COMPLIANCE_RUN_DURATION,
+            COMPLIANCE_RUNS,
+        )
+
+        run_duration = (completed_at - started_at).total_seconds()
+        COMPLIANCE_RUNS.labels(status="ok").inc()
+        COMPLIANCE_RUN_DURATION.labels(status="ok").observe(run_duration)
+        for ar in agent_reports:
+            # We don't have per-agent wall time here; use the number of
+            # findings as a proxy signal for activity and observe the run
+            # duration scoped to the agent row (so rate-of-run per agent
+            # is visible even before T2.5's per-agent timing lands).
+            COMPLIANCE_AGENT_DURATION.labels(
+                agent=ar.agent, status="ok"
+            ).observe(run_duration)
+        for f in report.findings:
+            COMPLIANCE_FINDINGS.labels(
+                agent=f.agent,
+                status=f.status,
+                severity=f.severity,
+                hitl_status=f.hitl_status,
+            ).inc()
+    except Exception:  # pragma: no cover — fail-open
+        pass
 
     return report
 

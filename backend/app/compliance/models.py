@@ -376,4 +376,10 @@ class ComplianceReport(BaseModel):
 
     findings: list[ComplianceFinding] = Field(default_factory=list)
 
+    # Optional: how the global findings list was constructed.
+    # New reports record the explicit mode; legacy reports default to
+    # ``"cross_agent_collapse"`` for read-path compatibility (see spec
+    # 006 / FR-014).
+    dedup_mode: str | None = None
+
     audit_trail: AuditTrail | None = None
