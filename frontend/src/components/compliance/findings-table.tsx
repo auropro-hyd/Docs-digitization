@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { reviewComplianceFinding, resolveComplianceFinding, getPageImageUrl } from "@/lib/api";
 import { VisualEvidenceViewer } from "@/components/compliance/visual-evidence-viewer";
+import { HITLBadge, normalizeHitlStatus } from "@/components/compliance/hitl-badge";
 import { toast } from "sonner";
 
 interface SectionRef {
@@ -75,19 +76,19 @@ const SEVERITY_CONFIG: Record<string, { label: string; icon: typeof AlertCircle;
   observation: { label: "Observation", icon: CheckCircle, cls: "text-muted-foreground", badgeCls: "bg-muted text-muted-foreground" },
 };
 
-const HITL_CONFIG: Record<string, { label: string; cls: string; icon: typeof ShieldCheck }> = {
-  auto_approved: { label: "Auto-approved", cls: "text-success border-success/20 bg-success/5", icon: ShieldCheck },
-  needs_review: { label: "Needs Review", cls: "text-warning border-warning/20 bg-warning/5", icon: Eye },
-  user_approved: { label: "Approved", cls: "text-success border-success/30 bg-success/10", icon: ThumbsUp },
-  user_rejected: { label: "Rejected", cls: "text-destructive border-destructive/20 bg-destructive/5", icon: ThumbsDown },
-  user_modified: { label: "Modified", cls: "text-blue-600 border-blue-300 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-900/10", icon: Pencil },
-};
-
 import { AGENT_DISPLAY_NAMES } from "@/types/compliance";
 
 type SortKey = "severity" | "rule_id" | "agent" | "page" | "confidence" | "hitl";
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, major: 1, minor: 2, observation: 3 };
-const HITL_ORDER: Record<string, number> = { needs_review: 0, user_modified: 1, auto_approved: 2, user_approved: 3, user_rejected: 4 };
+const HITL_ORDER: Record<string, number> = {
+  needs_review: 0,
+  user_modified: 1,
+  auto_approved: 2,
+  system_confirmed: 2,
+  user_approved: 3,
+  user_rejected: 4,
+  unknown: 5,
+};
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
@@ -106,16 +107,6 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   );
 }
 
-function HITLBadge({ status }: { status: string }) {
-  const config = HITL_CONFIG[status] || HITL_CONFIG.auto_approved;
-  const Icon = config.icon;
-  return (
-    <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 gap-0.5", config.cls)}>
-      <Icon className="size-2.5" />
-      {config.label}
-    </Badge>
-  );
-}
 
 function HITLReviewActions({
   finding,
@@ -414,7 +405,12 @@ export function FindingsTable({
     if (resolvedFilter === "unresolved") result = result.filter((f) => !f.resolved);
     if (hitlFilter === "needs_review") result = result.filter((f) => f.hitl_status === "needs_review");
     if (hitlFilter === "reviewed") result = result.filter((f) => ["user_approved", "user_rejected", "user_modified"].includes(f.hitl_status));
-    if (hitlFilter === "auto") result = result.filter((f) => f.hitl_status === "auto_approved");
+    if (hitlFilter === "auto")
+      result = result.filter(
+        (f) =>
+          normalizeHitlStatus(f.hitl_status) === "auto_approved" ||
+          normalizeHitlStatus(f.hitl_status) === "system_confirmed",
+      );
 
     result.sort((a, b) => {
       if (sortKey === "severity") return (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9);

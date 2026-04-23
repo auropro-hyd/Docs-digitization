@@ -210,10 +210,23 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
 
   const hitlCounts = {
     needsReview: findings.filter((f) => f.hitl_status === "needs_review").length,
-    autoApproved: findings.filter((f) => f.hitl_status === "auto_approved").length,
+    // System-confirmed groups both legacy (auto_approved) and new
+    // (system_confirmed) wire values — they are the same display state.
+    autoApproved: findings.filter(
+      (f) => f.hitl_status === "auto_approved" || f.hitl_status === "system_confirmed",
+    ).length,
     userApproved: findings.filter((f) => f.hitl_status === "user_approved").length,
     userRejected: findings.filter((f) => f.hitl_status === "user_rejected").length,
     userModified: findings.filter((f) => f.hitl_status === "user_modified").length,
+    unknown: findings.filter(
+      (f) =>
+        f.hitl_status !== "auto_approved" &&
+        f.hitl_status !== "system_confirmed" &&
+        f.hitl_status !== "needs_review" &&
+        f.hitl_status !== "user_approved" &&
+        f.hitl_status !== "user_rejected" &&
+        f.hitl_status !== "user_modified",
+    ).length,
   };
 
   const handleFindingUpdate = useCallback((findingId: string, updates: Partial<Finding>) => {
