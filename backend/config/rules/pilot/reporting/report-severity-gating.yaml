@@ -1,0 +1,12 @@
+# Spec 004 §4 / report-severity-gating.yaml
+#
+# Declares which finding severities block an export. Rules can override the
+# gate on a per-rule basis (e.g. a minor rule that is still blocking).
+#
+# Schema: see app/bmr/hitl/reporting_config.py::SeverityGatingConfig
+id: pilot-severity-gating
+version: "1.0.0"
+blocking_severities:
+  - critical
+  - major
+rule_overrides: []

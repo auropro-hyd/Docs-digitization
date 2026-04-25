@@ -1,0 +1,49 @@
+manifest_version: "1.0"
+id: pilot.default
+label: "Default pilot BMR package"
+description: |
+  Minimal manifest for the v0 pilot. Declares the logical document roles
+  expected inside a single uploaded package, the canonical BPCR role, and
+  the ingestion classifier policy (filename/header hybrid).
+
+required_roles:
+  - id: BMR
+    label: "Batch Manufacturing Record"
+    cardinality: exactly_one
+    canonical: false
+  - id: BPCR
+    label: "Batch Production and Control Record"
+    cardinality: exactly_one
+    canonical: true
+  - id: RawMaterialPage
+    label: "Raw Material / Dispensing Record"
+    cardinality: at_least_one
+    canonical: false
+
+optional_roles:
+  - id: EquipmentLog
+    label: "Equipment Usage Log"
+    cardinality: zero_or_more
+    canonical: false
+  - id: EnvironmentalLog
+    label: "Environmental Monitoring Log"
+    cardinality: zero_or_more
+    canonical: false
+
+classifier:
+  strategy: hybrid
+  tiers:
+    - filename
+    - header
+  filename_patterns:
+    BMR: ["*bmr*.pdf", "*batch_manufacturing_record*.pdf"]
+    BPCR: ["*bpcr*.pdf", "*batch_production*.pdf", "*bpr*.pdf"]
+    RawMaterialPage: ["*raw*material*.pdf", "*dispense*.pdf", "*rm_*.pdf"]
+    EquipmentLog: ["*equipment*.pdf", "*eqp_log*.pdf"]
+    EnvironmentalLog: ["*environmental*.pdf", "*env_log*.pdf"]
+  header_keywords:
+    BMR: ["batch manufacturing record", "product master batch record"]
+    BPCR: ["batch production", "batch control record"]
+    RawMaterialPage: ["raw material", "dispensing record", "material issue"]
+    EquipmentLog: ["equipment usage log", "equipment log"]
+    EnvironmentalLog: ["environmental monitoring", "environmental log"]

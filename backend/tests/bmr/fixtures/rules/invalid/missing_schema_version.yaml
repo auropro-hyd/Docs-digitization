@@ -1,0 +1,9 @@
+id: alcoa.accurate.foo
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "Missing schema_version — should fail loudly."
+context_object:
+  scope: same_page
+source:
+  field: operator_signature

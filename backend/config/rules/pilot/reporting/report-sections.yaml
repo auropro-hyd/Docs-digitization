@@ -1,0 +1,27 @@
+# Spec 004 §2.3 / report-sections.yaml
+#
+# Declarative ordering + presentation for report sections. The projection
+# capability (report_project.v1) groups findings using evidence heuristics,
+# but this manifest pins display order, human-readable titles, and the
+# sub-section order within a group.
+#
+# Schema: see app/bmr/hitl/reporting_config.py::ReportSectionsConfig
+id: pilot-sections
+version: "1.0.0"
+
+# Order of sub-sections within every group.
+sub_section_order:
+  - alcoa
+  - gmp
+  - checklist
+
+# Order groups are rendered in. Any section not matched falls through to
+# the catch_all bucket (appended last).
+group_order:
+  - kind: bpcr_step
+    title_template: "BPCR Step {step_number}"
+  - kind: document_scope
+    title_template: "Document scope: {document_ref_id}"
+
+catch_all:
+  title: "Other findings"

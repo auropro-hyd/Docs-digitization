@@ -27,7 +27,12 @@ dependencies = [
     "openai",
     "pillow",
     "datalab-python-sdk",
+    "jsonschema>=4.26.0",
+    "weasyprint>=68.1",
 ]
+
+[project.scripts]
+bmr-rules = "app.bmr.cli.__main__:main"
 
 [project.optional-dependencies]
 dev = [

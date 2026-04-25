@@ -1,0 +1,11 @@
+schema_version: "1.0"
+id: alcoa.accurate.unknown-property
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "Has an unknown top-level property."
+context_object:
+  scope: same_page
+source:
+  field: operator_signature
+bogus_field: "should fail unevaluatedProperties"

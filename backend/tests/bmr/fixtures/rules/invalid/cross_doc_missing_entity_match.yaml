@@ -1,0 +1,17 @@
+schema_version: "1.0"
+id: alcoa.accurate.missing-entity-match
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+description: "cross_document scope without entity_match should fail."
+context_object:
+  scope: cross_document
+  role: RawMaterialPage
+source:
+  field: dispensed_weight_kg
+target:
+  field: weight_kg
+tolerance:
+  kind: absolute
+  value: 0.1
+  unit: kg

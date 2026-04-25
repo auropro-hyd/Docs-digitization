@@ -1,0 +1,31 @@
+schema_version: "1.0"
+id: alcoa.accurate.bpcr-raw-material-weight-match
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+gmp_category: "Material Reconciliation"
+description: |
+  For each raw-material step in the BPCR, the dispensed weight recorded on
+  the step page must match the dispensed weight on the corresponding raw
+  material page within ±0.1 kg after alias-normalisation of the material
+  name.
+context_object:
+  scope: cross_document
+  role: RawMaterialPage
+  entity_match:
+    strategy: normalise
+    normalise: true
+    case_insensitive: true
+    punctuation_strip: ["-", "_", "."]
+    aliases_file: backend/config/rules/pilot/aliases/materials.yaml
+multiplicity: error
+fallback: flag_as_unevaluated
+source:
+  field: dispensed_weight_kg
+  scope_hint: bpcr_step_page
+target:
+  field: weight_kg
+tolerance:
+  kind: absolute
+  value: 0.1
+  unit: kg
