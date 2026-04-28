@@ -103,8 +103,29 @@ def normalize_section_type(section_type: str) -> str:
     return value
 
 
-def validate_compliance_configs(registry: RuleRegistry) -> None:
-    """Fail-fast validation for profile + rule references."""
+def validate_compliance_configs(
+    registry: RuleRegistry, *, strict: bool | None = None
+) -> None:
+    """Validate that rule applicability references resolve to known
+    document / section types.
+
+    Behaviour:
+
+    * ``strict=True`` (or ``AT_COMPLIANCE__VALIDATE_STRICT=1``): raise
+      ``ValueError`` on the first batch of errors. Use in CI to catch
+      profile/rule drift early.
+    * ``strict=False`` (default in long-running processes): emit a
+      single ``WARNING`` log line summarising the drift and continue.
+      Rules pointing at unknown types simply won't apply at runtime —
+      the applicability gate already filters them out — so the app
+      stays bootable while config authors converge.
+
+    The default tracks ``AT_COMPLIANCE__VALIDATE_STRICT`` (truthy =
+    strict). Production deployments that want fail-fast can set it; dev
+    iteration where rules and profiles are landing on different
+    schedules stays unblocked.
+    """
+
     profiles = load_profiles()
     known_docs = profiles.known_document_types()
     known_sections = profiles.known_section_types()
@@ -123,8 +144,31 @@ def validate_compliance_configs(registry: RuleRegistry) -> None:
                 if _slug(sec) not in known_sections:
                     errors.append(f"{rule.id}: unknown applicable_section_type '{sec}'")
 
-    if errors:
-        msg = "Compliance config validation failed:\n- " + "\n- ".join(errors[:50])
-        if len(errors) > 50:
-            msg += f"\n- ... plus {len(errors) - 50} more errors"
+    if not errors:
+        return
+
+    if strict is None:
+        import os
+
+        strict = os.getenv("AT_COMPLIANCE__VALIDATE_STRICT", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
+    msg = "Compliance config validation found drift:\n- " + "\n- ".join(errors[:50])
+    if len(errors) > 50:
+        msg += f"\n- ... plus {len(errors) - 50} more errors"
+
+    if strict:
         raise ValueError(msg)
+
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "compliance.config.validation_drift count=%d (rules will skip mismatched "
+        "applicability at runtime; set AT_COMPLIANCE__VALIDATE_STRICT=1 to fail "
+        "the boot). First findings:\n%s",
+        len(errors),
+        msg,
+    )
