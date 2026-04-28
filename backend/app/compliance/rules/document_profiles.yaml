@@ -1,143 +1,311 @@
 version: 1
-
-# Canonical document profiles used by deterministic gating.
-# - expected_sections defines valid section_type values per document_type.
-# - aliases support section naming variance from OCR/LLM segmentation.
-# - required marks critical sections for profile completeness checks.
 document_profiles:
   batch_record:
     aliases:
-      - bmr
-      - bpcr
-      - batch production record
-      - batch production and control record
+    - bmr
+    - bpcr
+    - batch production record
+    - batch production and control record
     expected_sections:
-      - section_type: manufacturing_operations
-        display_name: Manufacturing Operations
-        required: true
-        aliases:
-          - process operations
-          - operation log
-          - production operations
-      - section_type: material_dispensing
-        display_name: Raw Material Weighing and Dispensing
-        required: false
-        aliases:
-          - raw material weighing
-          - dispensing
-          - weighing log
-      - section_type: qc_report
-        display_name: QC Report
-        required: false
-        aliases:
-          - quality control report
-          - qcd report
-      - section_type: in_process_report
-        display_name: In-Process Control Report
-        required: false
-      - section_type: retention_sample
-        display_name: Retention Sample
-        required: false
-      - section_type: deviation
-        display_name: Deviation Record
-        required: false
-      - section_type: oos_investigation
-        display_name: OOS Investigation
-        required: false
-      - section_type: oot_investigation
-        display_name: OOT Investigation
-        required: false
-      - section_type: cleaning_log
-        display_name: Cleaning Log
-        required: false
-      - section_type: line_clearance
-        display_name: Line Clearance
-        required: false
-      - section_type: environmental_monitoring
-        display_name: Environmental Monitoring
-        required: false
-      - section_type: equipment_usage_log
-        display_name: Equipment Usage Log
-        required: false
-      - section_type: raw_data
-        display_name: Raw Data
-        required: false
-      - section_type: balance_printout
-        display_name: Balance Printout
-        required: false
-      - section_type: chromatogram
-        display_name: Chromatogram
-        required: false
-      - section_type: em_report
-        display_name: Environmental Monitoring Report
-        required: false
-      - section_type: yield_calculation
-        display_name: Yield Calculation
-        required: false
-      - section_type: certificate_of_analysis
-        display_name: Certificate of Analysis
-        required: false
-      - section_type: sampling
-        display_name: Sampling
-        required: false
-      - section_type: clean_room
-        display_name: Clean Room
-        required: false
-      - section_type: electronic_records
-        display_name: Electronic Records
-        required: false
-      - section_type: automated_systems
-        display_name: Automated Systems
-        required: false
+    - section_type: cover_page
+      display_name: Cover Page
+      required: true
+      aliases:
+      - title page
+      - front page
+    - section_type: revision_summary
+      display_name: Revision Summary
+      required: false
+      aliases:
+      - revision history
+      - change history
+    - section_type: material_dispensing
+      display_name: Raw Material Weighing and Dispensing
+      required: true
+      aliases:
+      - list of raw materials and weighing details
+      - raw material weighing
+      - dispensing
+      - weighing log
+    - section_type: equipment_list
+      display_name: Equipment List
+      required: false
+      aliases:
+      - list of major equipments
+      - equipment and sop details
+    - section_type: manufacturing_operations
+      display_name: Manufacturing Operations
+      required: true
+      aliases:
+      - manufacturing instructions
+      - process operations
+      - operation log
+    - section_type: sifting_record
+      display_name: Sifting Record
+      required: false
+      aliases:
+      - sifting operation
+      - sifter record
+    - section_type: pin_milling_mixing
+      display_name: PIN Milling and Mixing
+      required: false
+      aliases:
+      - pin milling
+      - pin mill operation
+      - milling and mixing
+    - section_type: micronization
+      display_name: Micronization Operation
+      required: false
+      aliases:
+      - micronization record
+      - micronizer operation
+    - section_type: co_mill_operation
+      display_name: Co-Mill Operation
+      required: false
+      aliases:
+      - co mill
+      - co-milling record
+    - section_type: metal_detection
+      display_name: Metal Detection Operation
+      required: false
+      aliases:
+      - metal detector
+      - metal detection record
+    - section_type: yield_calculation
+      display_name: Yield Calculation
+      required: false
+      aliases:
+      - yield details
+      - batch yield
+    - section_type: cleaning_log
+      display_name: Equipment Cleaning Log
+      required: false
+      aliases:
+      - equipment cleaning details
+      - cleaning record
+    - section_type: deviation
+      display_name: Deviation Record
+      required: false
+      aliases:
+      - description of deviations
+      - deviation log
 
-  sop:
+  raw_material_request:
     aliases:
-      - standard operating procedure
+    - raw material requisition
+    - material request form
+    - store requisition
     expected_sections:
-      - section_type: sop_reference_validation
-        display_name: SOP Reference Validation
-        required: false
-      - section_type: step_alignment
-        display_name: Step Alignment
-        required: false
-      - section_type: deviation_documentation
-        display_name: Deviation Documentation
-        required: false
-      - section_type: parameter_compliance
-        display_name: Parameter Compliance
-        required: false
-      - section_type: material_handling
-        display_name: Material Handling
-        required: false
+    - section_type: material_request
+      display_name: Material Request
+      required: true
+      aliases:
+      - requisition
+      - indent
+      - material indent
+    - section_type: material_issue
+      display_name: Material Issue and Allotment
+      required: false
+      aliases:
+      - issue record
+      - allotted
+      - store issue
+      - material allotment
 
-  protocol:
-    aliases: []
+  scada_report:
+    aliases:
+    - vacuum dryer scada
+    - scada printout
+    - instrument trend report
+    - vde scada
+    - scada data
+    - trend chart
+    - equipment monitoring data
+    - temperature profile
+    - pressure profile
+    expected_sections: []
+
+  ipc_report:
+    aliases:
+    - in-process samples request cum analysis report
+    - ipc report
+    - inprocess report
+    expected_sections: []
+
+  analysis_report:
+    aliases:
+    - instrument analysis report
+    - particle size analysis report
     expected_sections: []
 
   certificate:
     aliases:
+    - coa
+    - certificate of analysis
+    expected_sections:
+    - section_type: certificate_of_analysis
+      display_name: Certificate of Analysis
+      required: true
+      aliases:
       - coa
-      - certificate of analysis
-    expected_sections:
-      - section_type: certificate_of_analysis
-        display_name: Certificate of Analysis
-        required: true
+      - coa report
+      - finished product certificate
 
-  logbook:
+  batch_closure:
     aliases:
-      - equipment log
-      - usage log
+    - batch release package
+    - batch closure record
     expected_sections:
-      - section_type: equipment_usage_log
-        display_name: Equipment Usage Log
-        required: true
+    - section_type: bpcr_review_checklist
+      display_name: BPCR Review Checklist
+      required: false
+      aliases:
+      - bpcr review
+      - batch record review checklist
+    - section_type: batch_release_note
+      display_name: Batch Release Note
+      required: true
+      aliases:
+      - batch release
+      - release note
+      - release disposition
+    - section_type: certificate_of_analysis
+      display_name: Certificate of Analysis
+      required: false
+      aliases:
+      - coa
 
-  other:
-    aliases: []
-    expected_sections: []
+  operation_checklist:
+    aliases:
+    - checklist
+    - operation checklist
+    - equipment checklist
+    - checklist before starting batch
+    - reactor checklist
+    - scrubber checklist
+    - centrifuge checklist
+    - vacuum tray dryer checklist
+    - sifter checklist
+    - pin mill checklist
+    - blender checklist
+    - co-mill checklist
+    - metal detector checklist
+    expected_sections:
+    - section_type: pre_production_checklist
+      display_name: Checklist Before Starting Batch
+      required: true
+      aliases:
+      - checklist before starting batch
+      - pre-batch checklist
+      - line clearance before batch
+    - section_type: cross_contamination_checklist
+      display_name: Checklist for Cross Contamination
+      required: true
+      aliases:
+      - cross contamination checklist
+      - cross-contamination check
+    - section_type: reactor_checklist
+      display_name: Checklist for Reactor Operations
+      required: false
+      aliases:
+      - reactor operations checklist
+      - reactor line clearance
+    - section_type: scrubber_checklist
+      display_name: Checklist for Scrubber Operations
+      required: false
+      aliases:
+      - scrubber operations checklist
+      - scrubber line clearance
+    - section_type: centrifuge_checklist
+      display_name: Checklist for Centrifuge (Bag Lifting Type)
+      required: false
+      aliases:
+      - centrifuge checklist
+      - centrifuge line clearance
+    - section_type: vacuum_tray_dryer_checklist
+      display_name: Checklist for Vacuum Tray Dryer
+      required: false
+      aliases:
+      - vacuum tray dryer checklist
+      - vtd checklist
+      - dryer line clearance
+    - section_type: sifter_checklist
+      display_name: Checklist for Sifter Operation
+      required: false
+      aliases:
+      - sifter operation checklist
+      - sifter line clearance
+    - section_type: pin_mill_checklist
+      display_name: Checklist for Pin Mill Operation
+      required: false
+      aliases:
+      - pin mill operation checklist
+      - pin mill line clearance
+    - section_type: blender_checklist
+      display_name: Checklist for Blender Operation
+      required: false
+      aliases:
+      - blender operation checklist
+      - blender line clearance
+    - section_type: co_mill_checklist
+      display_name: Checklist for Co-Mill Operation
+      required: false
+      aliases:
+      - co-mill operation checklist
+      - co mill checklist
+      - co-mill line clearance
+    - section_type: metal_detector_checklist
+      display_name: Checklist for Metal Detector
+      required: false
+      aliases:
+      - metal detector operation checklist
+      - metal detection line clearance
 
-# Global aliases used by applicability matching.
+  qc_analytical_package:
+    aliases:
+    - qc package
+    - analytical data package
+    - qc data file
+    expected_sections:
+    - section_type: sampling
+      display_name: Sampling
+      required: false
+      aliases:
+      - sampling checklist
+      - sample request
+      - qa review checklist
+    - section_type: analytical_data_review
+      display_name: Analytical Data Review
+      required: false
+      aliases:
+      - qc analytical data review checklist
+      - sample set review checklist
+    - section_type: raw_data
+      display_name: Raw Analytical Data
+      required: false
+      aliases:
+      - chromatogram
+      - analysis report
+      - instrument printout
+      - ftir
+      - ads chart
+    - section_type: qc_report
+      display_name: QC Report
+      required: false
+      aliases:
+      - quality control report
+      - analysis report
+    - section_type: pre_analysis_checklist
+      display_name: Pre-Analysis Checklist
+      required: false
+      aliases:
+      - pre-analysis check
+      - pre analysis checklist
+
+# Global alias map: variant name (snake_case) → canonical section_type id
+# Used by applicability matching to resolve OCR/LLM naming variance.
 section_aliases:
+  # ── Existing canonical aliases ─────────────────────────────────────────────
   manufacturing_operation: manufacturing_operations
   manufacturing_operation_log: manufacturing_operations
   manufacturing_log: manufacturing_operations
@@ -156,3 +324,98 @@ section_aliases:
   lineclearance: line_clearance
   coa: certificate_of_analysis
   coa_report: certificate_of_analysis
+  # ── Cover page ─────────────────────────────────────────────────────────────
+  title_page: cover_page
+  front_page: cover_page
+  # ── Revision summary ───────────────────────────────────────────────────────
+  revision_history: revision_summary
+  change_history: revision_summary
+  # ── Material dispensing ────────────────────────────────────────────────────
+  list_of_raw_materials_and_weighing_details: material_dispensing
+  raw_material_weighing_details: material_dispensing
+  weighing_log: material_dispensing
+  # ── Equipment list ─────────────────────────────────────────────────────────
+  list_of_major_equipments: equipment_list
+  equipment_and_sop_details: equipment_list
+  # ── Manufacturing operations ───────────────────────────────────────────────
+  manufacturing_instructions: manufacturing_operations
+  process_operations: manufacturing_operations
+  operation_log: manufacturing_operations
+  # ── Sub-operations (manufacturing) ────────────────────────────────────────
+  sifting_operation: sifting_record
+  sifter_record: sifting_record
+  pin_milling: pin_milling_mixing
+  pin_mill_operation: pin_milling_mixing
+  milling_and_mixing: pin_milling_mixing
+  micronization_record: micronization
+  micronizer_operation: micronization
+  co_mill: co_mill_operation
+  co_milling_record: co_mill_operation
+  metal_detector: metal_detection
+  metal_detection_record: metal_detection
+  # ── Yield ──────────────────────────────────────────────────────────────────
+  yield_details: yield_calculation
+  batch_yield: yield_calculation
+  # ── Cleaning log ───────────────────────────────────────────────────────────
+  equipment_cleaning_details: cleaning_log
+  cleaning_record: cleaning_log
+  # ── Deviation ──────────────────────────────────────────────────────────────
+  description_of_deviations: deviation
+  deviation_log: deviation
+  # ── Raw material request ───────────────────────────────────────────────────
+  requisition: material_request
+  indent: material_request
+  material_indent: material_request
+  issue_record: material_issue
+  allotted: material_issue
+  store_issue: material_issue
+  material_allotment: material_issue
+  # ── SCADA / raw instrument data ────────────────────────────────────────────
+  scada_data: scada_report
+  # ── In-process report ──────────────────────────────────────────────────────
+  in_process_samples_request_cum_analysis_report: in_process_report
+  in_process_sample_cum_analysis_report: in_process_report
+  # ── QC / sampling ──────────────────────────────────────────────────────────
+  sampling_checklist: sampling
+  sample_request: sampling
+  qa_review_checklist: sampling
+  qc_analytical_data_review: analytical_data_review
+  qc_analytical_data_review_checklist: analytical_data_review
+  sample_set_review_checklist: analytical_data_review
+  quality_control_report: qc_report
+  pre_analysis_check: pre_analysis_checklist
+  # ── Certificate ────────────────────────────────────────────────────────────
+  finished_product_certificate: certificate_of_analysis
+  # ── Batch closure ──────────────────────────────────────────────────────────
+  bpcr_review: bpcr_review_checklist
+  batch_record_review_checklist: bpcr_review_checklist
+  batch_release: batch_release_note
+  release_note: batch_release_note
+  release_disposition: batch_release_note
+  # ── Line clearance / operation checklists ─────────────────────────────────
+  checklist: line_clearance
+  operation_checklist: line_clearance
+  line_clearance_checklist: line_clearance
+  checklist_before_starting_batch: pre_production_checklist
+  pre_batch_checklist: pre_production_checklist
+  line_clearance_before_batch: pre_production_checklist
+  cross_contamination_check: cross_contamination_checklist
+  cross_contamination_checklist: cross_contamination_checklist
+  reactor_operations_checklist: reactor_checklist
+  reactor_line_clearance: reactor_checklist
+  scrubber_operations_checklist: scrubber_checklist
+  scrubber_line_clearance: scrubber_checklist
+  centrifuge_line_clearance: centrifuge_checklist
+  vacuum_tray_dryer_checklist: vacuum_tray_dryer_checklist
+  vtd_checklist: vacuum_tray_dryer_checklist
+  dryer_line_clearance: vacuum_tray_dryer_checklist
+  sifter_operation_checklist: sifter_checklist
+  sifter_line_clearance: sifter_checklist
+  pin_mill_operation_checklist: pin_mill_checklist
+  pin_mill_line_clearance: pin_mill_checklist
+  blender_operation_checklist: blender_checklist
+  blender_line_clearance: blender_checklist
+  co_mill_operation_checklist: co_mill_checklist
+  co_mill_line_clearance: co_mill_checklist
+  metal_detector_operation_checklist: metal_detector_checklist
+  metal_detection_line_clearance: metal_detector_checklist
