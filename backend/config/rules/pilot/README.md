@@ -21,14 +21,33 @@ From the `backend/` directory, with your venv active:
 # 1. Validate every rule against its declared schema_version.
 uv run bmr-rules validate config/rules/pilot/bank
 
-# 2. Fire all four rules against the bundled fixture (positive + negative).
+# 2. Fire one rule against the bundled fixture. The cross_document rule's
+#    aliases_file is rooted at the REPO root, so pass --repo-root ..
+#    when running from inside backend/. Other rules don't need it.
 uv run bmr-rules fixture-run \
-    --rules config/rules/pilot/bank \
-    --fixture tests/bmr/fixtures/rules/fixtures/bpcr_weight_match.json
+    config/rules/pilot/bank/alcoa_accurate_bpcr_weight_match.yaml \
+    --fixture tests/bmr/fixtures/rules/fixtures/bpcr_weight_mismatch.json \
+    --repo-root ..
+
+uv run bmr-rules fixture-run \
+    config/rules/pilot/bank/alcoa_attributable_operator_signature.yaml \
+    --fixture tests/bmr/fixtures/rules/fixtures/bpcr_weight_mismatch.json
+
+uv run bmr-rules fixture-run \
+    config/rules/pilot/bank/alcoa_accurate_bpcr_step_sum.yaml \
+    --fixture tests/bmr/fixtures/rules/fixtures/bpcr_weight_mismatch.json
+
+uv run bmr-rules fixture-run \
+    config/rules/pilot/bank/checklist_bpcr_step_complete.yaml \
+    --fixture tests/bmr/fixtures/rules/fixtures/bpcr_weight_mismatch.json
 
 # 3. Diff a draft against the production bank (used by the authoring skill).
 uv run bmr-rules diff config/rules/pilot/bank <your-draft.yaml>
 ```
+
+> **Note**: `bmr-rules fixture-run` evaluates ONE rule at a time (positional
+> rule path, plus a fixture). For an end-to-end run across the whole bank
+> use `POST /api/bmr/runs` instead.
 
 Or end-to-end via the API: `POST /api/bmr/runs` with a package id whose
 extraction.json has the relevant fields. The four rules will fan out across
