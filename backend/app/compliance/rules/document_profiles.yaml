@@ -287,7 +287,6 @@ document_profiles:
       - chromatogram
       - analysis report
       - instrument printout
-      - ftir
       - ads chart
     - section_type: qc_report
       display_name: QC Report
