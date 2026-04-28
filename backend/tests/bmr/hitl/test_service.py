@@ -70,7 +70,12 @@ def test_projection_initially_blocked_by_pending(
     run_id, finding_ids = failing_run_id
     _, grouped = hitl_service.project_report(run_id)
     assert grouped.export_gate is ExportGateStatus.BLOCKED_BY_PENDING_FINDINGS
-    assert grouped.pending_blocking_count == len(finding_ids)
+    # The pilot bank now also contains the page_aggregate sample which
+    # falls back to UNEVALUATED on this fixture (no BMR page with
+    # batch_target_weight_kg). Only blocking-status findings count
+    # toward the gate's pending count, so the pending count is a
+    # subset of the finding total — strictly positive, never larger.
+    assert 1 <= grouped.pending_blocking_count <= len(finding_ids)
     assert grouped.flat_finding_ids == finding_ids
     kinds = {s.group_kind for s in grouped.sections}
     assert GroupKind.BPCR_STEP in kinds

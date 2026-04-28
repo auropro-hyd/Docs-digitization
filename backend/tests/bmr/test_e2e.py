@@ -129,13 +129,15 @@ def test_v0_quickstart_end_to_end(client: TestClient):
         },
     ).json()
     assert run["status"] == "completed"
-    assert run["rules_evaluated"] == 3
-    # 2 leaf findings (weight-mismatch OPEN, signature missing OPEN) + 1
-    # checklist_synthesis roll-up at BPCR step level.
-    assert len(run["findings"]) == 3
+    assert run["rules_evaluated"] == 4
+    # 3 ALCOA leaf findings — weight-mismatch OPEN, signature missing OPEN,
+    # and the page_aggregate sample's UNEVALUATED on this fixture (no BMR
+    # batch_target_weight_kg) — plus 1 checklist_synthesis roll-up at the
+    # BPCR step level.
+    assert len(run["findings"]) == 4
     sources = [f["source"] for f in run["findings"]]
     assert sources.count("checklist_synthesis") == 1
-    assert sources.count("alcoa") == 2
+    assert sources.count("alcoa") == 3
 
     # 4. Grouped report is blocked by pending findings.
     report = client.get(f"/api/bmr/runs/{run['run_id']}/report").json()
@@ -177,10 +179,14 @@ def test_v0_quickstart_end_to_end(client: TestClient):
     # the gate. Reviewers inspecting the export can trace exactly which
     # resolution justified the sign-off.
     snapshot = export["revision"]["findings_snapshot"]
-    assert len(snapshot) == 3
+    assert len(snapshot) == 4
     resolution_ids = {row["active_resolution_id"] for row in snapshot}
     assert None not in resolution_ids
-    assert all(row["status"] == "open" for row in snapshot)
+    # The page_aggregate sample contributes one UNEVALUATED finding on
+    # this fixture (no BMR batch_target_weight_kg); the other findings
+    # remain OPEN.
+    assert all(row["status"] in {"open", "unevaluated"} for row in snapshot)
+    assert sum(1 for row in snapshot if row["status"] == "open") >= 1
 
     pdf = client.get(f"/api/bmr/reports/revisions/{rev_id}/pdf")
     assert pdf.status_code == 200
@@ -188,15 +194,15 @@ def test_v0_quickstart_end_to_end(client: TestClient):
 
     bundle = client.get(f"/api/bmr/reports/revisions/{rev_id}/bundle").json()
     assert bundle["run"]["run_id"] == run["run_id"]
-    assert len(bundle["resolutions"]) == 3
-    assert len(bundle["feedback_samples"]) == 3
+    assert len(bundle["resolutions"]) == 4
+    assert len(bundle["feedback_samples"]) == 4
 
     # 8. Feedback corpus captures leaf rules AND the synthesis roll-up so
     #    Spec 005's authoring skill can tune both strata.
     samples = client.get(
         "/api/bmr/feedback/samples", params={"run_id": run["run_id"]}
     ).json()
-    assert len(samples["items"]) == 3
+    assert len(samples["items"]) == 4
     rule_ids = {s["rule_id"] for s in samples["items"]}
     assert "alcoa.accurate.bpcr-raw-material-weight-match" in rule_ids
     assert "alcoa.attributable.operator-signature-present" in rule_ids

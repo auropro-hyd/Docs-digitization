@@ -511,6 +511,18 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         (f for f in report_data.get("findings", []) if f["finding_id"] == finding_id),
         {},
     )
+    # Return the recomputed scores so the UI can update its scorecards
+    # immediately without a full report refetch (otherwise the displayed
+    # score doesn't budge after a reject — the fix for the
+    # "score-not-improving" client issue).
+    agent_scores = [
+        {
+            "agent": ar.get("agent"),
+            "model_score": ar.get("model_score"),
+            "review_adjusted_score": ar.get("review_adjusted_score"),
+        }
+        for ar in report_data.get("agent_reports", [])
+    ]
     return {
         "finding_id": finding_id,
         "hitl_status": updated.get("hitl_status"),
@@ -518,6 +530,10 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         "hitl_reviewed_at": updated.get("hitl_reviewed_at"),
         "severity": updated.get("severity"),
         "resolved": updated.get("resolved"),
+        "model_score": report_data.get("model_score"),
+        "review_adjusted_score": report_data.get("review_adjusted_score"),
+        "overall_score": report_data.get("overall_score"),
+        "agent_scores": agent_scores,
     }
 
 

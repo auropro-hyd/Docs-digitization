@@ -1,0 +1,34 @@
+schema_version: "1.0"
+id: alcoa.accurate.bpcr-step-sum-vs-batch-target
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+gmp_category: "Material Reconciliation"
+description: |
+  AGGREGATED VERIFICATION sample — sums the dispensed weights across
+  every BPCR step page and compares the total to the batch target weight
+  declared on the BMR header page. Within 0.5% is acceptable; anything
+  outside is a major Accurate violation.
+
+  This is the page_aggregate scope: one rule, evaluated once per run,
+  reading values across many pages of one document and comparing to a
+  field on a different document.
+context_object:
+  scope: page_aggregate
+  page_selector:
+    document_role: BPCR
+    page_filter: all_bpcr_step_pages
+  aggregation: sum
+# Use UNEVALUATED (not INDETERMINATE) so packages that don't yet have a
+# BMR page with batch_target_weight_kg surface a clear "rule could not
+# be evaluated" signal in the report instead of a blocking finding —
+# the rule lights up as soon as the BMR data lands in extraction.
+fallback: flag_as_unevaluated
+source:
+  field: dispensed_weight_kg
+expected:
+  field: batch_target_weight_kg
+  document_ref_hint: BMR
+tolerance:
+  kind: percent
+  value: 0.5

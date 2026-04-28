@@ -108,7 +108,7 @@ def test_reviewer_proceeds_and_run_completes(
         paused_run.run_id, action="proceed", actor_id="qa.reviewer"
     )
     assert resumed.status is RunStatus.COMPLETED
-    assert resumed.rules_evaluated == 3
+    assert resumed.rules_evaluated == 4
     # Provenance is preserved so the audit trail shows who proceeded.
     assert resumed.legibility_decision == "proceed"
     assert resumed.legibility_decided_by == "qa.reviewer"

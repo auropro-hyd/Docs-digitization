@@ -59,10 +59,24 @@ interface Finding extends BaseFinding {
   applicability_trace?: string[];
 }
 
+interface ReportScoresUpdate {
+  model_score?: number;
+  review_adjusted_score?: number;
+  overall_score?: number;
+  agent_scores?: Array<{
+    agent: string;
+    model_score?: number;
+    review_adjusted_score?: number;
+  }>;
+}
+
 interface FindingsTableProps {
   findings: Finding[];
   docId: string;
   onFindingUpdate?: (findingId: string, updates: Partial<Finding>) => void;
+  // Fires after each HITL review so the parent can refresh its scorecards
+  // without a full report refetch (the "score-not-improving" UX bug fix).
+  onScoresUpdate?: (scores: ReportScoresUpdate) => void;
   highlightId?: string;
   initialHitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
   initialAgentFilter?: string;
@@ -112,10 +126,12 @@ function HITLReviewActions({
   finding,
   docId,
   onUpdate,
+  onScores,
 }: {
   finding: Finding;
   docId: string;
   onUpdate: (updates: Partial<Finding>) => void;
+  onScores?: (scores: ReportScoresUpdate) => void;
 }) {
   const [reviewNote, setReviewNote] = useState(finding.hitl_note || "");
   const [modSeverity, setModSeverity] = useState(finding.severity);
@@ -138,6 +154,17 @@ function HITLReviewActions({
           severity: result.severity,
           resolved: result.resolved,
         });
+        // Lift the recomputed scores to the parent so the agent scorecard
+        // and the toolbar refresh without a full report refetch — without
+        // this the displayed score doesn't budge after a reject.
+        if (onScores) {
+          onScores({
+            model_score: result.model_score,
+            review_adjusted_score: result.review_adjusted_score,
+            overall_score: result.overall_score,
+            agent_scores: result.agent_scores,
+          });
+        }
         toast.success(
           action === "approve"
             ? "Finding approved"
@@ -151,7 +178,7 @@ function HITLReviewActions({
         setSubmitting(false);
       }
     },
-    [docId, finding.finding_id, reviewNote, modSeverity, onUpdate],
+    [docId, finding.finding_id, reviewNote, modSeverity, onUpdate, onScores],
   );
 
   const handleReset = useCallback(async () => {
@@ -164,13 +191,21 @@ function HITLReviewActions({
         hitl_reviewed_at: result.hitl_reviewed_at ?? null,
         resolved: result.resolved ?? false,
       });
+      if (onScores) {
+        onScores({
+          model_score: result.model_score,
+          review_adjusted_score: result.review_adjusted_score,
+          overall_score: result.overall_score,
+          agent_scores: result.agent_scores,
+        });
+      }
       toast.success("Review reset");
     } catch {
       toast.error("Failed to reset review");
     } finally {
       setSubmitting(false);
     }
-  }, [docId, finding.finding_id, onUpdate]);
+  }, [docId, finding.finding_id, onUpdate, onScores]);
 
   const alreadyReviewed = ["user_approved", "user_rejected", "user_modified"].includes(finding.hitl_status);
 
@@ -355,6 +390,7 @@ export function FindingsTable({
   findings: initialFindings,
   docId,
   onFindingUpdate,
+  onScoresUpdate,
   highlightId,
   initialHitlFilter = "all",
   initialAgentFilter = "all",
@@ -788,6 +824,7 @@ export function FindingsTable({
                               finding={finding}
                               docId={docId}
                               onUpdate={(updates) => handleFindingUpdate(finding.finding_id, updates)}
+                              onScores={onScoresUpdate}
                             />
                           </div>
                         </motion.div>

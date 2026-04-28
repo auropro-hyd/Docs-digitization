@@ -196,7 +196,10 @@ function RuleEvaluationsList({ evaluations }: { evaluations: RuleResult[] }) {
 
 export function ComplianceReportView({ report, docId, onReRun, initialFocus }: ComplianceReportProps) {
   const modelScore = Number((report.model_score as number | undefined) ?? report.overall_score ?? 0);
-  const reviewAdjustedScore = report.review_adjusted_score as number | undefined;
+  const persistedReviewAdjusted = report.review_adjusted_score as number | undefined;
+  // ``liveScores`` is a shadowed overlay populated by HITL reviews so the
+  // displayed top-line moves immediately when a reviewer rejects/approves
+  // a finding. Falls back to the persisted value when no live update exists.
 
   const [activeTab, setActiveTab] = useState(initialFocus?.tab || "all");
   const [highlightFinding, setHighlightFinding] = useState<string | null>(null);
@@ -204,8 +207,58 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
   const [viewHitlFilter, setViewHitlFilter] = useState<"all" | "needs_review" | "reviewed" | "auto">(initialFocus?.hitlFilter || "all");
   const [viewSeverityFilter, setViewSeverityFilter] = useState<"all" | "critical" | "major" | "minor" | "observation">(initialFocus?.severityFilter || "all");
 
+  // Live overlay for the report-level scores. Starts unset; HITL reviews
+  // populate it via onScoresUpdate so the displayed scorecards refresh
+  // without a full report refetch.
+  const [liveScores, setLiveScores] = useState<{
+    model_score?: number;
+    review_adjusted_score?: number;
+    overall_score?: number;
+    agent_scores: Record<string, { model_score?: number; review_adjusted_score?: number }>;
+  }>({ agent_scores: {} });
+
+  const handleScoresUpdate = useCallback(
+    (scores: {
+      model_score?: number;
+      review_adjusted_score?: number;
+      overall_score?: number;
+      agent_scores?: Array<{
+        agent: string;
+        model_score?: number;
+        review_adjusted_score?: number;
+      }>;
+    }) => {
+      setLiveScores((prev) => {
+        const merged = { ...prev.agent_scores };
+        for (const ar of scores.agent_scores ?? []) {
+          merged[ar.agent] = {
+            model_score: ar.model_score,
+            review_adjusted_score: ar.review_adjusted_score,
+          };
+        }
+        return {
+          model_score: scores.model_score ?? prev.model_score,
+          review_adjusted_score: scores.review_adjusted_score ?? prev.review_adjusted_score,
+          overall_score: scores.overall_score ?? prev.overall_score,
+          agent_scores: merged,
+        };
+      });
+    },
+    [],
+  );
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const agentReports = (report.agent_reports || []) as Array<Record<string, any>>;
+  const rawAgentReports = (report.agent_reports || []) as Array<Record<string, any>>;
+  // Overlay live HITL-adjusted scores on top of the persisted agent reports.
+  const agentReports = rawAgentReports.map((ar) => {
+    const overlay = liveScores.agent_scores[ar.agent as string];
+    if (!overlay) return ar;
+    return {
+      ...ar,
+      model_score: overlay.model_score ?? ar.model_score,
+      review_adjusted_score: overlay.review_adjusted_score ?? ar.review_adjusted_score,
+    };
+  });
   const skippedAgents = (report.skipped_agents || []) as Array<{ category: string; reason: string }>;
 
   const hitlCounts = {
@@ -292,7 +345,9 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
           <h1 className="text-2xl font-semibold tracking-tight">Compliance Report</h1>
           <p className="text-sm text-muted-foreground mt-1">
             {(report.filename as string) || "Document"} — Model score: {modelScore}/100
-            {typeof reviewAdjustedScore === "number" ? ` • Review-adjusted: ${reviewAdjustedScore}/100` : ""}
+            {typeof (liveScores.review_adjusted_score ?? persistedReviewAdjusted) === "number"
+              ? ` • Review-adjusted: ${liveScores.review_adjusted_score ?? persistedReviewAdjusted}/100`
+              : ""}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -468,6 +523,7 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
             findings={findings}
             docId={docId}
             onFindingUpdate={handleFindingUpdate}
+            onScoresUpdate={handleScoresUpdate}
             highlightId={highlightFinding || undefined}
             initialHitlFilter={viewHitlFilter}
             initialSeverityFilter={viewSeverityFilter}
@@ -534,6 +590,7 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
                 findings={agentFindings}
                 docId={docId}
                 onFindingUpdate={handleFindingUpdate}
+                onScoresUpdate={handleScoresUpdate}
                 highlightId={highlightFinding || undefined}
                 initialHitlFilter={viewHitlFilter}
                 initialAgentFilter={agent}

@@ -53,9 +53,42 @@ class GeminiVLMAdapter:
         self._rpm_timestamps: list[float] = []
         self._lock = asyncio.Lock()
 
+        # Trim — env loaders sometimes leave trailing whitespace or quotes
+        # that the API treats as a malformed key.
+        api_key = (config.gemini_api_key or "").strip().strip('"').strip("'")
+        if not api_key:
+            # Fail fast at construction with an actionable message instead
+            # of letting every downstream call fail with the opaque
+            # "API key not valid" 400. The user has reported exactly this
+            # symptom when AT_VLM__GEMINI_API_KEY is unset or .env is not
+            # being picked up due to a working-directory mismatch.
+            raise RuntimeError(
+                "GeminiVLMAdapter: gemini_api_key is empty. "
+                "Set AT_VLM__GEMINI_API_KEY in backend/.env (and verify the file is "
+                "loaded — uvicorn must be invoked so that pydantic-settings can find "
+                "the absolute backend/.env path)."
+            )
+        # Detect a copied placeholder so the operator sees the real cause.
+        if api_key.startswith(("your-", "REPLACE", "<")) or api_key.endswith(("-here", ">")):
+            raise RuntimeError(
+                f"GeminiVLMAdapter: gemini_api_key looks like a placeholder ({api_key[:8]}…). "
+                "Replace it with a real key from Google AI Studio."
+            )
+        if len(api_key) < 20:
+            raise RuntimeError(
+                f"GeminiVLMAdapter: gemini_api_key is suspiciously short ({len(api_key)} chars). "
+                "Verify the key was copied in full and is not truncated."
+            )
+
         from google import genai
 
-        self._client = genai.Client(api_key=config.gemini_api_key)
+        self._client = genai.Client(api_key=api_key)
+        logger.info(
+            "Gemini VLM adapter ready: model=%s key=***%s (length=%d)",
+            self._model,
+            api_key[-4:],
+            len(api_key),
+        )
 
     # ------------------------------------------------------------------
     # Rate limiter (simplified version of AzureRateLimiter)
