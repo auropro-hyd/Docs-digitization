@@ -278,7 +278,7 @@ def test_service_runs_graph_with_ocr_extractor(
     # read entity_name as missing may cause some rules to unevaluate; we
     # assert only that the compliance stage ran without error.
     assert report.status.value == "completed"
-    assert report.rules_evaluated == 3
+    assert report.rules_evaluated == 4
 
     # Because the entity_name is not recoverable from plain key/value
     # OCR pairs (requires layout-aware extraction), BPCR/RawMaterial

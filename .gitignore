@@ -108,3 +108,7 @@ spec/
 # Generated benchmark reports (runtime artifacts)
 backend/tests/fixtures/extraction_benchmark/reports/
 backend/tests/fixtures/custom_model_dataset/reports/
+
+# Local-only client / engagement notes (kept on disk, not committed)
+CLIENT-REPLY-*.md
+CLIENT-NOTES-*.md

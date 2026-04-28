@@ -40,6 +40,7 @@ import {
 } from "lucide-react";
 import { reviewComplianceFinding, resolveComplianceFinding, getPageImageUrl } from "@/lib/api";
 import { VisualEvidenceViewer } from "@/components/compliance/visual-evidence-viewer";
+import { HITLBadge, normalizeHitlStatus } from "@/components/compliance/hitl-badge";
 import { toast } from "sonner";
 
 interface SectionRef {
@@ -58,10 +59,24 @@ interface Finding extends BaseFinding {
   applicability_trace?: string[];
 }
 
+interface ReportScoresUpdate {
+  model_score?: number;
+  review_adjusted_score?: number;
+  overall_score?: number;
+  agent_scores?: Array<{
+    agent: string;
+    model_score?: number;
+    review_adjusted_score?: number;
+  }>;
+}
+
 interface FindingsTableProps {
   findings: Finding[];
   docId: string;
   onFindingUpdate?: (findingId: string, updates: Partial<Finding>) => void;
+  // Fires after each HITL review so the parent can refresh its scorecards
+  // without a full report refetch (the "score-not-improving" UX bug fix).
+  onScoresUpdate?: (scores: ReportScoresUpdate) => void;
   highlightId?: string;
   initialHitlFilter?: "all" | "needs_review" | "reviewed" | "auto";
   initialAgentFilter?: string;
@@ -75,19 +90,19 @@ const SEVERITY_CONFIG: Record<string, { label: string; icon: typeof AlertCircle;
   observation: { label: "Observation", icon: CheckCircle, cls: "text-muted-foreground", badgeCls: "bg-muted text-muted-foreground" },
 };
 
-const HITL_CONFIG: Record<string, { label: string; cls: string; icon: typeof ShieldCheck }> = {
-  auto_approved: { label: "Auto-approved", cls: "text-success border-success/20 bg-success/5", icon: ShieldCheck },
-  needs_review: { label: "Needs Review", cls: "text-warning border-warning/20 bg-warning/5", icon: Eye },
-  user_approved: { label: "Approved", cls: "text-success border-success/30 bg-success/10", icon: ThumbsUp },
-  user_rejected: { label: "Rejected", cls: "text-destructive border-destructive/20 bg-destructive/5", icon: ThumbsDown },
-  user_modified: { label: "Modified", cls: "text-blue-600 border-blue-300 bg-blue-50 dark:text-blue-400 dark:border-blue-800 dark:bg-blue-900/10", icon: Pencil },
-};
-
 import { AGENT_DISPLAY_NAMES } from "@/types/compliance";
 
 type SortKey = "severity" | "rule_id" | "agent" | "page" | "confidence" | "hitl";
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, major: 1, minor: 2, observation: 3 };
-const HITL_ORDER: Record<string, number> = { needs_review: 0, user_modified: 1, auto_approved: 2, user_approved: 3, user_rejected: 4 };
+const HITL_ORDER: Record<string, number> = {
+  needs_review: 0,
+  user_modified: 1,
+  auto_approved: 2,
+  system_confirmed: 2,
+  user_approved: 3,
+  user_rejected: 4,
+  unknown: 5,
+};
 
 function ConfidenceBadge({ confidence }: { confidence: number }) {
   const pct = Math.round(confidence * 100);
@@ -106,25 +121,17 @@ function ConfidenceBadge({ confidence }: { confidence: number }) {
   );
 }
 
-function HITLBadge({ status }: { status: string }) {
-  const config = HITL_CONFIG[status] || HITL_CONFIG.auto_approved;
-  const Icon = config.icon;
-  return (
-    <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 gap-0.5", config.cls)}>
-      <Icon className="size-2.5" />
-      {config.label}
-    </Badge>
-  );
-}
 
 function HITLReviewActions({
   finding,
   docId,
   onUpdate,
+  onScores,
 }: {
   finding: Finding;
   docId: string;
   onUpdate: (updates: Partial<Finding>) => void;
+  onScores?: (scores: ReportScoresUpdate) => void;
 }) {
   const [reviewNote, setReviewNote] = useState(finding.hitl_note || "");
   const [modSeverity, setModSeverity] = useState(finding.severity);
@@ -147,6 +154,17 @@ function HITLReviewActions({
           severity: result.severity,
           resolved: result.resolved,
         });
+        // Lift the recomputed scores to the parent so the agent scorecard
+        // and the toolbar refresh without a full report refetch — without
+        // this the displayed score doesn't budge after a reject.
+        if (onScores) {
+          onScores({
+            model_score: result.model_score,
+            review_adjusted_score: result.review_adjusted_score,
+            overall_score: result.overall_score,
+            agent_scores: result.agent_scores,
+          });
+        }
         toast.success(
           action === "approve"
             ? "Finding approved"
@@ -160,7 +178,7 @@ function HITLReviewActions({
         setSubmitting(false);
       }
     },
-    [docId, finding.finding_id, reviewNote, modSeverity, onUpdate],
+    [docId, finding.finding_id, reviewNote, modSeverity, onUpdate, onScores],
   );
 
   const handleReset = useCallback(async () => {
@@ -173,13 +191,21 @@ function HITLReviewActions({
         hitl_reviewed_at: result.hitl_reviewed_at ?? null,
         resolved: result.resolved ?? false,
       });
+      if (onScores) {
+        onScores({
+          model_score: result.model_score,
+          review_adjusted_score: result.review_adjusted_score,
+          overall_score: result.overall_score,
+          agent_scores: result.agent_scores,
+        });
+      }
       toast.success("Review reset");
     } catch {
       toast.error("Failed to reset review");
     } finally {
       setSubmitting(false);
     }
-  }, [docId, finding.finding_id, onUpdate]);
+  }, [docId, finding.finding_id, onUpdate, onScores]);
 
   const alreadyReviewed = ["user_approved", "user_rejected", "user_modified"].includes(finding.hitl_status);
 
@@ -364,6 +390,7 @@ export function FindingsTable({
   findings: initialFindings,
   docId,
   onFindingUpdate,
+  onScoresUpdate,
   highlightId,
   initialHitlFilter = "all",
   initialAgentFilter = "all",
@@ -414,7 +441,12 @@ export function FindingsTable({
     if (resolvedFilter === "unresolved") result = result.filter((f) => !f.resolved);
     if (hitlFilter === "needs_review") result = result.filter((f) => f.hitl_status === "needs_review");
     if (hitlFilter === "reviewed") result = result.filter((f) => ["user_approved", "user_rejected", "user_modified"].includes(f.hitl_status));
-    if (hitlFilter === "auto") result = result.filter((f) => f.hitl_status === "auto_approved");
+    if (hitlFilter === "auto")
+      result = result.filter(
+        (f) =>
+          normalizeHitlStatus(f.hitl_status) === "auto_approved" ||
+          normalizeHitlStatus(f.hitl_status) === "system_confirmed",
+      );
 
     result.sort((a, b) => {
       if (sortKey === "severity") return (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9);
@@ -792,6 +824,7 @@ export function FindingsTable({
                               finding={finding}
                               docId={docId}
                               onUpdate={(updates) => handleFindingUpdate(finding.finding_id, updates)}
+                              onScores={onScoresUpdate}
                             />
                           </div>
                         </motion.div>

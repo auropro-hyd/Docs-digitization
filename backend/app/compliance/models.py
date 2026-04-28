@@ -12,7 +12,6 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
 # ═══════════════════════════════════════════════════════════════
 #  Enums
 # ═══════════════════════════════════════════════════════════════
@@ -96,7 +95,7 @@ class VisionBatchResult(BaseModel):
 
     page_num: int = 0
     checks: list[VisualCheckResult] = Field(default_factory=list)
-    rule_evaluations: list["RuleEvaluation"] = Field(default_factory=list)
+    rule_evaluations: list[RuleEvaluation] = Field(default_factory=list)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -375,5 +374,11 @@ class ComplianceReport(BaseModel):
     skipped_agents: list[SkippedCategory] = Field(default_factory=list)
 
     findings: list[ComplianceFinding] = Field(default_factory=list)
+
+    # Optional: how the global findings list was constructed.
+    # New reports record the explicit mode; legacy reports default to
+    # ``"cross_agent_collapse"`` for read-path compatibility (see spec
+    # 006 / FR-014).
+    dedup_mode: str | None = None
 
     audit_trail: AuditTrail | None = None

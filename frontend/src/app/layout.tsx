@@ -9,6 +9,7 @@ import { CommandPalette } from "@/components/common/command-palette";
 import { MobileBottomNav, MobileNavSheet } from "@/components/common/mobile-nav";
 import { GlobalProcessingBar } from "@/components/common/global-processing-bar";
 import { MainContent } from "@/components/common/main-content";
+import { TraceFetchInit } from "@/components/common/trace-fetch-init";
 import "./globals.css";
 
 const inter = Inter({
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <ThemeProvider>
+          <TraceFetchInit />
           <TooltipProvider delayDuration={0}>
             <Sidebar />
             <MobileNavSheet />

@@ -318,10 +318,18 @@ class AppSettings(BaseSettings):
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
 
+    # Resolve ``.env`` to an absolute path relative to the backend package
+    # root so the file is found regardless of which directory uvicorn is
+    # invoked from. Without this, running ``uvicorn`` from the repo root
+    # silently misses ``backend/.env`` and every secret falls back to
+    # empty defaults — the symptom is a 400 INVALID_ARGUMENT from the
+    # downstream LLM/VLM provider.
+    _BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
     model_config = {
         "env_prefix": "AT_",
         "env_nested_delimiter": "__",
-        "env_file": ".env",
+        "env_file": str(_BACKEND_ROOT / ".env"),
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

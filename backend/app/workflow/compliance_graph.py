@@ -12,7 +12,7 @@ import asyncio
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.api.websocket import manager as ws_manager
@@ -79,7 +79,7 @@ async def run_compliance_pipeline(
     container = get_container()
     registry = get_registry()
 
-    started_at = datetime.now(timezone.utc)
+    started_at = datetime.now(UTC)
     llm_call_count = 0
 
     user_selected = bool(selected_agents)
@@ -381,7 +381,7 @@ async def run_compliance_pipeline(
                     "batches_complete": completed,
                     "batches_total": total,
                     "percent": pct,
-                    "label": f"Cross-Page Reconciliation: Evaluating rules...",
+                    "label": "Cross-Page Reconciliation: Evaluating rules...",
                     "rule_updates": rule_updates,
                 })
 
@@ -421,7 +421,10 @@ async def run_compliance_pipeline(
     for ar in agent_reports:
         all_findings.extend(ar.findings)
 
-    all_findings = _deduplicate_findings(all_findings)
+    # Default to attribution-preserving: two agents that both match the
+    # same rule_id keep both findings. Tab badges and filtered lists agree
+    # by construction. See research §R7.
+    all_findings = _deduplicate_findings(all_findings, mode="cross_agent_preserve")
 
     scored_reports = [ar for ar in agent_reports if ar.total_rules > 0]
     total_rules_weight = sum(ar.total_rules for ar in scored_reports)
@@ -439,7 +442,7 @@ async def run_compliance_pipeline(
     )
     llm_call_count += 1
 
-    completed_at = datetime.now(timezone.utc)
+    completed_at = datetime.now(UTC)
     total_rules = sum(ar.total_rules for ar in agent_reports)
 
     report = ComplianceReport(
@@ -464,6 +467,7 @@ async def run_compliance_pipeline(
         agent_reports=agent_reports,
         skipped_agents=list(skipped),
         findings=all_findings,
+        dedup_mode="cross_agent_preserve",
         audit_trail=AuditTrail(
             started_at=started_at,
             completed_at=completed_at,
@@ -485,6 +489,36 @@ async def run_compliance_pipeline(
         "overall_score": report.overall_score,
         "total_findings": report.total_findings,
     })
+
+    # Observability (FR-005): metric rollups for the finished run.
+    try:
+        from app.observability.metrics import (
+            COMPLIANCE_AGENT_DURATION,
+            COMPLIANCE_FINDINGS,
+            COMPLIANCE_RUN_DURATION,
+            COMPLIANCE_RUNS,
+        )
+
+        run_duration = (completed_at - started_at).total_seconds()
+        COMPLIANCE_RUNS.labels(status="ok").inc()
+        COMPLIANCE_RUN_DURATION.labels(status="ok").observe(run_duration)
+        for ar in agent_reports:
+            # We don't have per-agent wall time here; use the number of
+            # findings as a proxy signal for activity and observe the run
+            # duration scoped to the agent row (so rate-of-run per agent
+            # is visible even before T2.5's per-agent timing lands).
+            COMPLIANCE_AGENT_DURATION.labels(
+                agent=ar.agent, status="ok"
+            ).observe(run_duration)
+        for f in report.findings:
+            COMPLIANCE_FINDINGS.labels(
+                agent=f.agent,
+                status=f.status,
+                severity=f.severity,
+                hitl_status=f.hitl_status,
+            ).inc()
+    except Exception:  # pragma: no cover — fail-open
+        pass
 
     return report
 
@@ -530,7 +564,7 @@ async def _generate_executive_summary(
 
 def _build_empty_report(doc_id, filename, total_pages, orch_result, started_at, config):
     """Build a report when the document is not relevant for compliance."""
-    completed_at = datetime.now(timezone.utc)
+    completed_at = datetime.now(UTC)
     return ComplianceReport(
         report_id=str(uuid.uuid4()),
         doc_id=doc_id,

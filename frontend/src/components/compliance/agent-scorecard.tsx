@@ -22,6 +22,8 @@ interface AgentReportData {
   agent: string;
   agent_display: string;
   score: number;
+  model_score?: number;
+  review_adjusted_score?: number;
   total_rules: number;
   total_findings: number;
   severity_counts: Record<string, number>;
@@ -35,8 +37,21 @@ interface AgentScorecardProps {
 }
 
 export function AgentScorecard({ report, onFindingClick }: AgentScorecardProps) {
+  // Prefer the review-adjusted score so reviewer rejects/approvals visibly
+  // move the headline number. Fall back to the legacy score field only if
+  // review_adjusted_score is unset (old persisted reports).
+  const displayScore =
+    typeof report.review_adjusted_score === "number"
+      ? report.review_adjusted_score
+      : report.score;
+  const modelScore =
+    typeof report.model_score === "number" ? report.model_score : report.score;
+  const scoreImproved =
+    typeof report.review_adjusted_score === "number" &&
+    typeof report.model_score === "number" &&
+    report.review_adjusted_score > report.model_score;
   const scoreColor =
-    report.score >= 80 ? "text-success" : report.score >= 60 ? "text-warning" : "text-destructive";
+    displayScore >= 80 ? "text-success" : displayScore >= 60 ? "text-warning" : "text-destructive";
 
   return (
     <div className="space-y-4">
@@ -49,8 +64,21 @@ export function AgentScorecard({ report, onFindingClick }: AgentScorecardProps) 
           </p>
         </div>
         <div className="text-right">
-          <p className={cn("text-2xl font-bold", scoreColor)}>{Math.round(report.score)}</p>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Score</p>
+          <p className={cn("text-2xl font-bold", scoreColor)}>{Math.round(displayScore)}</p>
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+            Review-adjusted
+          </p>
+          {modelScore !== displayScore && (
+            <p
+              className={cn(
+                "text-[10px] mt-0.5",
+                scoreImproved ? "text-success" : "text-muted-foreground",
+              )}
+              title="Score before reviewer actions (rejected findings excluded from penalty)."
+            >
+              Model: {Math.round(modelScore)}
+            </p>
+          )}
         </div>
       </div>
 

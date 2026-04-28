@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -118,6 +119,14 @@ class BMRRunService:
         snapshot_hash = _package_snapshot_hash(
             self._package_store, spec.package_id
         )
+        # Bind business context for the remainder of this call — log lines
+        # emitted by every downstream stage inherit run_id + doc_id.
+        from app.observability import bind_context, reset_context
+        from app.observability.metrics import BMR_RUN_DURATION, BMR_RUNS, BMR_RUNS_IN_FLIGHT
+
+        scope_token = bind_context(run_id=run_id, doc_id=spec.package_id)
+        BMR_RUNS_IN_FLIGHT.inc()
+        run_started = time.monotonic()
 
         pending = RunReport(
             run_id=run_id,
@@ -146,12 +155,29 @@ class BMRRunService:
             started_at=started_at,
             legibility_override=False,
         )
-        return self._invoke_and_persist(
-            run_id=run_id,
-            spec=spec,
-            started_at=started_at,
-            initial_state=initial_state,
-        )
+        try:
+            report = self._invoke_and_persist(
+                run_id=run_id,
+                spec=spec,
+                started_at=started_at,
+                initial_state=initial_state,
+            )
+        finally:
+            BMR_RUNS_IN_FLIGHT.dec()
+            duration = time.monotonic() - run_started
+            # Resolve terminal status from the persisted report if available,
+            # otherwise fall back to a generic "failed" bucket.
+            try:
+                terminal = report.status.value  # type: ignore[union-attr]
+            except Exception:
+                terminal = "failed"
+            try:
+                BMR_RUNS.labels(status=terminal).inc()
+                BMR_RUN_DURATION.labels(status=terminal).observe(duration)
+            except Exception:  # pragma: no cover — fail-open
+                pass
+            reset_context(scope_token)
+        return report
 
     def resume_after_legibility(
         self,

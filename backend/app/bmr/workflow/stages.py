@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -42,6 +43,51 @@ from app.bmr.workflow.state import BMRRunState
 _ = LoadedRule  # re-exported for type hints referenced as forward strings
 
 logger = logging.getLogger(__name__)
+
+# Structlog logger for context-aware, kwarg-based log lines. The module
+# keeps the stdlib ``logger`` too so legacy ``logger.warning("...", arg)``
+# calls continue to work unchanged.
+from app.observability import get_logger as _get_logger  # noqa: E402
+
+_slog = _get_logger(__name__)
+
+
+def _observe_stage(stage: RunStage, fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a stage function with stage timing + context binding.
+
+    Cheap per invocation: one metric observe, two log lines, one
+    ContextVar set/reset. Exposed so ``build_bmr_graph`` can wrap each
+    stage function at composition time.
+    """
+
+    from functools import wraps
+
+    @wraps(fn)
+    def wrapper(state: BMRRunState, *args: Any, **kwargs: Any) -> Any:
+        from app.observability import bind_context, reset_context, span
+        from app.observability.metrics import BMR_STAGE_DURATION
+
+        token = bind_context(stage=stage.value)
+        started = time.monotonic()
+        try:
+            with span(f"bmr.stage.{stage.value}"):
+                _slog.info("bmr.stage.entered", stage=stage.value)
+                result = fn(state, *args, **kwargs)
+        finally:
+            dur = time.monotonic() - started
+            try:
+                BMR_STAGE_DURATION.labels(stage=stage.value).observe(dur)
+            except Exception:  # pragma: no cover
+                pass
+            _slog.info(
+                "bmr.stage.completed",
+                stage=stage.value,
+                duration_ms=round(dur * 1_000, 2),
+            )
+            reset_context(token)
+        return result
+
+    return wrapper
 
 RuleEvalFn = Callable[..., list[FindingDraft]]
 
@@ -341,14 +387,19 @@ def make_compliance_stage(
         worker_count = min(_compliance_max_workers(max_workers), max(1, len(leaf_rules)))
         findings: list[FindingDraft] = []
         if worker_count > 1 and len(leaf_rules) > 1:
+            from app.observability.tracing import submit_with_context
+
             with ThreadPoolExecutor(
                 max_workers=worker_count, thread_name_prefix="bmr-compliance"
             ) as executor:
                 # submit in bank order; results aligned by the same index so
                 # findings_by_rule preserves deterministic ordering regardless
-                # of thread completion order.
+                # of thread completion order. ``submit_with_context`` copies
+                # the current contextvars into the worker thread so trace +
+                # scope survive the handoff (FR-002).
                 futures = [
-                    executor.submit(
+                    submit_with_context(
+                        executor,
                         _evaluate_leaf_rule,
                         loaded,
                         extracted=extracted,

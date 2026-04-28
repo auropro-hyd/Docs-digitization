@@ -29,6 +29,9 @@ dependencies = [
     "datalab-python-sdk",
     "jsonschema>=4.26.0",
     "weasyprint>=68.1",
+    "structlog>=24.0",
+    "prometheus-client>=0.20",
+    "opentelemetry-api>=1.25",
 ]
 
 [project.scripts]
@@ -58,6 +61,9 @@ typeCheckingMode = "basic"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: opt-in benchmarks (NFR-001 / SC-006 overhead gate)",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

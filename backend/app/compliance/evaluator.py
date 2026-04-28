@@ -22,8 +22,8 @@ from app.compliance.models import (
     RuleEvaluation,
     RuleResult,
 )
-from app.config.settings import get_settings
 from app.compliance.rules.registry import AuditRule, RuleBatch
+from app.config.settings import get_settings
 from app.core.ports.llm import LLMProvider
 from app.core.ports.vlm import VLMProvider
 
@@ -945,12 +945,56 @@ def assemble_agent_report(
     )
 
 
-def _deduplicate_findings(findings: list[ComplianceFinding]) -> list[ComplianceFinding]:
-    """Merge findings for the same rule across different pages."""
-    by_rule: dict[str, ComplianceFinding] = {}
+def _deduplicate_findings(
+    findings: list[ComplianceFinding],
+    *,
+    mode: str = "per_agent",
+) -> list[ComplianceFinding]:
+    """Merge findings for the same rule.
+
+    ``mode`` (see research §R7):
+
+    * ``"per_agent"`` — **default** — dedup by ``rule_id`` alone. Correct for
+      the inside-one-agent call (same rule fires on multiple pages).
+    * ``"cross_agent_preserve"`` — dedup by ``(agent, rule_id)`` so two
+      agents that both match the same rule each keep their finding.
+      Prevents the silent attribution loss that made ``AgentReport.
+      total_findings`` drift from the global filtered count.
+    * ``"cross_agent_collapse"`` — legacy behaviour: collapse across
+      agents, first-seen wins. Callers opting in must resync
+      ``AgentReport.total_findings`` themselves via
+      :func:`resync_agent_totals` below.
+
+    Every collapse in modes other than ``"per_agent"`` emits a
+    ``compliance.finding.deduped`` log + increments
+    ``compliance_dedup_merges_total{mode}`` (FR-015).
+    """
+
+    if mode not in ("per_agent", "cross_agent_preserve", "cross_agent_collapse"):
+        raise ValueError(f"unknown dedup mode: {mode!r}")
+
+    def _key(f: ComplianceFinding) -> tuple[str, ...]:
+        if mode == "cross_agent_preserve":
+            return (f.agent, f.rule_id)
+        return (f.rule_id,)
+
+    # Defer observability imports — these paths are used from tests with a
+    # fresh metric registry and we don't want import-time coupling.
+    try:
+        from app.observability import get_logger
+        from app.observability.metrics import COMPLIANCE_DEDUP_MERGES
+
+        _slog = get_logger(__name__)
+    except Exception:  # pragma: no cover — fail-open
+        _slog = None
+        COMPLIANCE_DEDUP_MERGES = None  # type: ignore[assignment]
+
+    merge_tracker: dict[tuple[str, ...], list[str]] = {}
+    by_key: dict[tuple[str, ...], ComplianceFinding] = {}
     for f in findings:
-        if f.rule_id in by_rule:
-            existing = by_rule[f.rule_id]
+        k = _key(f)
+        if k in by_key:
+            existing = by_key[k]
             for pn in f.page_numbers:
                 if pn not in existing.page_numbers:
                     existing.page_numbers.append(pn)
@@ -966,10 +1010,69 @@ def _deduplicate_findings(findings: list[ComplianceFinding]) -> list[ComplianceF
                     existing.applicability_trace.append(step)
             existing.confidence = min(existing.confidence, f.confidence)
             existing.hitl_status = _compute_hitl_status(existing.confidence)
+            if mode != "per_agent":
+                dropped = merge_tracker.setdefault(k, [existing.agent])
+                if f.agent not in dropped:
+                    dropped.append(f.agent)
         else:
-            by_rule[f.rule_id] = f.model_copy()
+            by_key[k] = f.model_copy()
+            if mode != "per_agent":
+                merge_tracker[k] = [f.agent]
+
+    # Emit observability signals for cross-agent collapses only.
+    if mode == "cross_agent_collapse":
+        for key, agents in merge_tracker.items():
+            if len(agents) > 1:
+                winner = by_key[key].agent
+                dropped = [a for a in agents if a != winner]
+                if _slog is not None:
+                    _slog.info(
+                        "compliance.finding.deduped",
+                        rule_id=key[-1],
+                        winner_agent=winner,
+                        dropped_agents=dropped,
+                        mode=mode,
+                    )
+                if COMPLIANCE_DEDUP_MERGES is not None:
+                    try:
+                        COMPLIANCE_DEDUP_MERGES.labels(mode=mode).inc()
+                    except Exception:  # pragma: no cover
+                        pass
+
     return sorted(
-        by_rule.values(),
+        by_key.values(),
         key=lambda f: SEVERITY_WEIGHTS.get(f.severity, 0),
         reverse=True,
     )
+
+
+def resync_agent_totals(
+    agent_reports: list[AgentReport],
+    global_findings: list[ComplianceFinding],
+) -> None:
+    """After a cross-agent collapse, rebalance ``AgentReport.total_findings``.
+
+    When the global dedup drops findings in favour of another agent's
+    copy, the losing agent's ``total_findings`` would still reflect its
+    pre-global count. This function recounts per-agent occurrences in
+    the globally-surviving list so tab badges match filtered rows.
+    """
+
+    from collections import Counter
+
+    by_agent = Counter(f.agent for f in global_findings)
+    for ar in agent_reports:
+        resynced = by_agent.get(ar.agent, 0)
+        if resynced != ar.total_findings:
+            try:
+                from app.observability import get_logger
+
+                get_logger(__name__).info(
+                    "compliance.agent.total_resynced",
+                    agent=ar.agent,
+                    previous=ar.total_findings,
+                    resynced=resynced,
+                )
+            except Exception:  # pragma: no cover
+                pass
+            ar.total_findings = resynced

@@ -166,8 +166,17 @@ class HITLService:
             if lock is None:
                 lock = threading.Lock()
                 self._run_locks[run_id] = lock
+        # Bind run_id on the observability scope for every log line
+        # emitted while we hold the lock — callers don't have to pass it
+        # explicitly into every logger call.
+        from app.observability import bind_context, reset_context
+
+        scope_token = bind_context(run_id=run_id)
         with lock:
-            yield
+            try:
+                yield
+            finally:
+                reset_context(scope_token)
 
     @property
     def reporting_config(self) -> ReportingConfig:
@@ -233,6 +242,22 @@ class HITLService:
         if draft.action in (ResolutionAction.DISMISS, ResolutionAction.CORRECT):
             feedback = feedback_seed_v1(resolution=resolution, finding=finding)
             self._feedback_store.save(feedback)
+
+        # Metric: one counter increment per recorded resolution, grouped
+        # by (action, reason_type). Bounded cardinality (see research §R5).
+        try:
+            from app.observability.metrics import HITL_RESOLUTIONS
+
+            reason_label = (
+                resolution.reason_type.value
+                if resolution.reason_type is not None
+                else "NONE"
+            )
+            HITL_RESOLUTIONS.labels(
+                action=resolution.action.value, reason_type=reason_label
+            ).inc()
+        except Exception:  # pragma: no cover — fail-open
+            pass
 
         self._event_emitter(
             "resolution.recorded",
@@ -363,6 +388,12 @@ class HITLService:
             workflow.error = f"{type(exc).__name__}: {exc}"
             workflow.applied_at = now_utc()
             self._correction_store.save(workflow)
+            try:
+                from app.observability.metrics import HITL_CORRECTIONS
+
+                HITL_CORRECTIONS.labels(status="failed").inc()
+            except Exception:
+                pass
             self._event_emitter(
                 "correction.failed", run_id, {"workflow_id": workflow_id, "error": workflow.error}
             )
@@ -376,6 +407,13 @@ class HITLService:
         workflow.superseded_finding_ids = superseded_ids
         workflow.new_finding_ids = [f.finding_id for f in new_findings]
         self._correction_store.save(workflow)
+
+        try:
+            from app.observability.metrics import HITL_CORRECTIONS
+
+            HITL_CORRECTIONS.labels(status="applied").inc()
+        except Exception:  # pragma: no cover
+            pass
 
         self._event_emitter(
             "correction.applied",
@@ -567,6 +605,15 @@ class HITLService:
             severity_config=self._reporting_config.severity,
             sections_config=self._reporting_config.sections,
         )
+        try:
+            from app.observability.metrics import HITL_EXPORT_ATTEMPTS
+
+            HITL_EXPORT_ATTEMPTS.labels(
+                gate_status=grouped.export_gate.value
+            ).inc()
+        except Exception:  # pragma: no cover
+            pass
+
         if grouped.export_gate is not ExportGateStatus.READY:
             raise ExportGateBlockedError(
                 status=grouped.export_gate,
@@ -638,6 +685,12 @@ class HITLService:
             ],
         )
         self._revision_store.save(revision, pdf_bytes=pdf_bytes, bundle_bytes=bundle_bytes)
+        try:
+            from app.observability.metrics import HITL_REVISIONS
+
+            HITL_REVISIONS.inc()
+        except Exception:  # pragma: no cover
+            pass
         return ExportResult(
             revision=revision,
             pdf_bytes=pdf_bytes,

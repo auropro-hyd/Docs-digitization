@@ -15,8 +15,8 @@ import asyncio
 import json
 import logging
 import re
+from datetime import UTC
 from pathlib import Path
-
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -84,15 +84,56 @@ def _deduction_weights(report_data: dict) -> dict[str, int]:
     return merged
 
 
-def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
+# Known HITL state values. Any other string (or a missing field) is
+# classified as ``unknown`` by _normalize_hitl_status below — we never
+# silently impute ``auto_approved`` (FR-013).
+_KNOWN_HITL_STATUSES = frozenset(
+    {
+        "auto_approved",
+        "system_confirmed",
+        "needs_review",
+        "user_approved",
+        "user_rejected",
+        "user_modified",
+        "unknown",
+    }
+)
+
+
+def _normalize_hitl_status(raw: object) -> str:
+    if isinstance(raw, str) and raw in _KNOWN_HITL_STATUSES:
+        return raw
+    return "unknown"
+
+
+def _score_from_findings(
+    findings: list[dict],
+    weights: dict[str, int],
+    *,
+    include_unknown: bool = False,
+) -> dict:
+    """Compute the review-adjusted score.
+
+    ``user_rejected`` findings and resolved findings contribute no
+    penalty. Findings with an unparseable or missing ``hitl_status`` are
+    classified ``unknown``; by default they are excluded from penalty
+    (defence-in-depth — we refuse to score what we cannot trust). Set
+    ``include_unknown=True`` to include them (e.g. for an operator CLI
+    that wants a pessimistic view).
+    """
+
     penalties_by_severity = {k: 0 for k in ["critical", "major", "minor", "observation"]}
     entries: list[dict] = []
     total_penalty = 0
     included = 0
+    unknown_skipped = 0
 
     for f in findings:
-        status = str(f.get("hitl_status", "auto_approved"))
+        status = _normalize_hitl_status(f.get("hitl_status"))
         if status == "user_rejected" or f.get("resolved", False):
+            continue
+        if status == "unknown" and not include_unknown:
+            unknown_skipped += 1
             continue
         sev = str(f.get("severity", "observation")).lower()
         penalty = int(weights.get(sev, 1))
@@ -111,6 +152,7 @@ def _score_from_findings(findings: list[dict], weights: dict[str, int]) -> dict:
         "score": round(max(0.0, 100.0 - float(total_penalty)), 1),
         "total_penalty": total_penalty,
         "included_findings": included,
+        "unknown_skipped": unknown_skipped,
         "penalties_by_severity": penalties_by_severity,
         "penalty_entries": entries,
     }
@@ -414,7 +456,7 @@ class HITLReviewRequest(BaseModel):
 @router.post("/{doc_id}/findings/{finding_id}/review")
 async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
     """HITL review: approve, reject, or modify a finding."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     d = _doc_dir(doc_id)
     result_path = d / _COMPLIANCE_RESULT
@@ -430,7 +472,7 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         "reset": "needs_review",
     }
     new_hitl_status = action_map[body.action]
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     def _update_finding(f: dict) -> bool:
         if f.get("finding_id") != finding_id:
@@ -469,6 +511,18 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         (f for f in report_data.get("findings", []) if f["finding_id"] == finding_id),
         {},
     )
+    # Return the recomputed scores so the UI can update its scorecards
+    # immediately without a full report refetch (otherwise the displayed
+    # score doesn't budge after a reject — the fix for the
+    # "score-not-improving" client issue).
+    agent_scores = [
+        {
+            "agent": ar.get("agent"),
+            "model_score": ar.get("model_score"),
+            "review_adjusted_score": ar.get("review_adjusted_score"),
+        }
+        for ar in report_data.get("agent_reports", [])
+    ]
     return {
         "finding_id": finding_id,
         "hitl_status": updated.get("hitl_status"),
@@ -476,6 +530,10 @@ async def review_finding(doc_id: str, finding_id: str, body: HITLReviewRequest):
         "hitl_reviewed_at": updated.get("hitl_reviewed_at"),
         "severity": updated.get("severity"),
         "resolved": updated.get("resolved"),
+        "model_score": report_data.get("model_score"),
+        "review_adjusted_score": report_data.get("review_adjusted_score"),
+        "overall_score": report_data.get("overall_score"),
+        "agent_scores": agent_scores,
     }
 
 
@@ -722,20 +780,20 @@ def _build_report_html(report: dict, stem: str) -> str:
     methodology = report.get("score_methodology", {})
 
     h = []
-    h.append(f"<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
+    h.append("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
     h.append(f"<title>{_esc(stem)} — Compliance Audit Report</title>")
     h.append(_EXPORT_CSS)
     h.append("</head><body>")
 
     # --- Cover ---
     h.append('<div class="cover">')
-    h.append(f"<h1>Compliance Audit Report</h1>")
+    h.append("<h1>Compliance Audit Report</h1>")
     h.append(f'<p class="meta">{_esc(report.get("filename", stem))} &mdash; '
              f'{_esc(report.get("document_type", ""))} &mdash; '
              f'{report.get("total_pages", "?")} pages</p>')
     h.append(f'<p class="meta">Generated: {_esc(str(report.get("generated_at", "")))}</p>')
     h.append(f'<div class="score-ring {_score_class(score)}">{score:.0f}</div>')
-    h.append(f'<p class="meta">Model Score (out of 100)</p>')
+    h.append('<p class="meta">Model Score (out of 100)</p>')
     if review_score is not None:
         h.append(f'<p class="meta" style="margin-top:0.35rem">Review-Adjusted Score: <strong>{float(review_score):.1f}</strong>/100</p>')
     h.append("</div>")
@@ -868,7 +926,7 @@ def _build_report_html(report: dict, stem: str) -> str:
                 for cs in cat_scores
             }
 
-            h.append(f'<h3 class="page-break">Rule-Level Detail</h3>')
+            h.append('<h3 class="page-break">Rule-Level Detail</h3>')
             for cat_id in cat_order:
                 rules_in_cat = by_cat.get(cat_id, [])
                 if not rules_in_cat:
@@ -881,7 +939,7 @@ def _build_report_html(report: dict, stem: str) -> str:
                 n_na = sum(1 for r in rules_in_cat if r.get("status") == "not_applicable")
                 n_unc = sum(1 for r in rules_in_cat if r.get("status") in ("uncertain", "error"))
 
-                h.append(f'<div class="rule-detail-group">')
+                h.append('<div class="rule-detail-group">')
                 h.append(
                     f'<h4>{cat_label} '
                     f'<span class="cat-summary">{len(rules_in_cat)} rules &mdash; '
@@ -899,12 +957,12 @@ def _build_report_html(report: dict, stem: str) -> str:
                     rule_text = _esc(rv.get("rule_text", ""))
                     reasoning = rv.get("reasoning", "")
 
-                    h.append(f'<div class="rule-row">')
+                    h.append('<div class="rule-row">')
                     h.append(f'<span class="rule-id">{_esc(rv.get("rule_id", ""))}</span>')
                     h.append(f'<span class="st st-{st}">{st_label}</span>')
                     h.append(f'<span class="rule-text">{rule_text}</span>')
                     h.append(f'<span class="rule-pages">{_esc(pages_display)}</span>')
-                    h.append(f'</div>')
+                    h.append('</div>')
                     if reasoning:
                         trimmed = reasoning[:250] + ("..." if len(reasoning) > 250 else "")
                         h.append(f'<div class="rule-reasoning" style="padding-left:90px">{_esc(trimmed)}</div>')
