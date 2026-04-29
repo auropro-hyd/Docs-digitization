@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { DocumentWebSocket, type WSMessage } from "@/lib/websocket";
 import { useDocumentStore, type ProcessingStatus } from "@/stores/document-store";
-import { getDocument } from "@/lib/api";
+import { getDocument, getDocumentProgress } from "@/lib/api";
 import { normalizeEngineTerms } from "@/lib/processing-labels";
 
 const VALID_STATUSES: Set<string> = new Set<string>([
@@ -144,17 +144,35 @@ export function useDocumentWebSocket(docId: string | null): void {
 }
 
 /**
- * Polls the backend as a fallback to detect completion when WebSocket
- * messages are missed. Runs every 5s while the document is processing.
+ * Polls the backend as a fallback when WebSocket messages are missed.
+ * Two parallel polls run while the document is processing:
+ *
+ * - ``getDocument`` every 5s detects terminal completion (existing
+ *   behaviour — fires once and flips status to ``completed``).
+ * - ``getDocumentProgress`` every 2s reads the latest progress
+ *   payload from the server-side cache and feeds it into the same
+ *   ``setOcrProgress`` reducer the WebSocket handler uses, so the
+ *   user sees a heartbeat label even when WS is blocked (corporate
+ *   proxies, captive portals, mobile carriers stripping ``Upgrade``).
+ *
+ * The progress poll re-emits the same payload until the cache moves;
+ * the store's monotone-only reducer means duplicate ticks are
+ * absorbed without flicker. The poll stops as soon as ``percent``
+ * reaches 100 so a finished run doesn't keep hitting the endpoint.
  */
 export function useProcessingPollFallback(docId: string | null): void {
-  const { processingStatus, setProcessingStatus, setTotalPages } = useDocumentStore();
+  const {
+    processingStatus,
+    setProcessingStatus,
+    setTotalPages,
+    setOcrProgress,
+  } = useDocumentStore();
   const isActive = docId && isActiveStatus(processingStatus);
 
   useEffect(() => {
     if (!isActive || !docId) return;
 
-    const interval = setInterval(() => {
+    const completionInterval = setInterval(() => {
       getDocument(docId)
         .then((data) => {
           if (data.has_results) {
@@ -166,6 +184,18 @@ export function useProcessingPollFallback(docId: string | null): void {
         .catch(() => {});
     }, 5000);
 
-    return () => clearInterval(interval);
-  }, [isActive, docId, setProcessingStatus, setTotalPages]);
+    const progressInterval = setInterval(() => {
+      getDocumentProgress(docId)
+        .then((data) => {
+          if (data.percent <= 0 && !data.label) return;  // no signal yet
+          setOcrProgress(data.percent, data.label, data.phase);
+        })
+        .catch(() => {});
+    }, 2000);
+
+    return () => {
+      clearInterval(completionInterval);
+      clearInterval(progressInterval);
+    };
+  }, [isActive, docId, setProcessingStatus, setTotalPages, setOcrProgress]);
 }
