@@ -214,6 +214,13 @@ def _project_result_to_pages(
     already uses ``page_num`` in the same convention. We keep one
     :class:`ExtractedPage` per physical page so rules that target a
     particular ``page_index`` align exactly with the OCR output.
+
+    Spec 007 — for BPCR documents we emit one :class:`ExtractedPage`
+    per OCR page (even pages with no matching fields) and populate
+    ``text`` from :attr:`OCRPageResult.markdown` so the section
+    enricher's markdown-fallback path can run when a fresh OCR
+    sidecar is unavailable. Non-BPCR roles preserve the original
+    "page-per-match" semantics to keep extraction.json lean.
     """
 
     pages: dict[int, list[FieldValue]] = {}
@@ -231,15 +238,25 @@ def _project_result_to_pages(
             )
         )
 
+    markdown_by_page: dict[int, str] = {
+        p.page_num: p.markdown for p in result.pages if p.markdown
+    }
+
+    is_bpcr = role_cfg.document_role == "BPCR"
+    page_indices: set[int] = set(pages.keys())
+    if is_bpcr:
+        page_indices.update(markdown_by_page.keys())
+
     out: list[ExtractedPage] = []
-    for page_num, fields in sorted(pages.items()):
+    for page_num in sorted(page_indices):
         out.append(
             ExtractedPage(
                 doc_id=doc.doc_id,
                 document_role=role_cfg.document_role,
                 page_index=page_num,
                 tags=list(role_cfg.page_tags),
-                fields=fields,
+                fields=pages.get(page_num, []),
+                text=markdown_by_page.get(page_num),
             )
         )
     return out

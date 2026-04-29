@@ -528,11 +528,39 @@ def _project_findings(findings: list[FindingDraft]) -> tuple[list[FindingRecord]
     return records, summary
 
 
+def _bpcr_section_summary(extracted: ExtractedPackage | None) -> list[dict[str, Any]]:
+    """Project the BPCR pages' ``section_id`` into a flat reviewer summary.
+
+    Empty when no BPCR pages exist or none carry a section_id. The
+    section enricher tags every BPCR page (including ``unsectioned``)
+    when it runs, so an empty list here is the operator's signal that
+    detection didn't run end-to-end.
+    """
+
+    if extracted is None:
+        return []
+    summary: list[dict[str, Any]] = []
+    for page in extracted.pages:
+        if page.document_role != "BPCR":
+            continue
+        if page.section_id is None:
+            continue
+        summary.append(
+            {
+                "doc_id": page.doc_id,
+                "page_index": page.page_index,
+                "section_id": page.section_id,
+            }
+        )
+    return summary
+
+
 def report_stage(state: BMRRunState) -> dict[str, Any]:
     run_id = state.get("run_id") or uuid.uuid4().hex
     package_id = state.get("package_id", "unknown")
     findings = state.get("findings", [])
     records, summary = _project_findings(findings)
+    extracted = state.get("extracted")
 
     report = RunReport(
         run_id=run_id,
@@ -549,6 +577,7 @@ def report_stage(state: BMRRunState) -> dict[str, Any]:
         rules_dir=state.get("rules_dir"),
         aliases_dir=state.get("aliases_dir"),
         repo_root=state.get("repo_root"),
+        bpcr_sections=_bpcr_section_summary(extracted),
     )
     return {
         "stage": RunStage.REPORT,
