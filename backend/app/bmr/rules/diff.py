@@ -187,6 +187,15 @@ def _tag_entries(
             tags.append(ChangeTag.DEPRECATED)
         if path.startswith("/context_object/scope"):
             tags.append(ChangeTag.SCOPE_CHANGED)
+        # Spec 007 — section_id is part of the rule's targeting envelope.
+        # Treat it as a scope change so reviewers see it tagged in
+        # tune-mode diffs the same way as a page_filter / scope change.
+        if path == "/context_object/page_selector/section_id" and entry.kind in {
+            ChangeKind.ADDED,
+            ChangeKind.CHANGED,
+            ChangeKind.REMOVED,
+        }:
+            tags.append(ChangeTag.SCOPE_CHANGED)
         if path.endswith("/entity_match/aliases_file"):
             if entry.kind is ChangeKind.ADDED:
                 tags.append(ChangeTag.ALIAS_FILE_SET)

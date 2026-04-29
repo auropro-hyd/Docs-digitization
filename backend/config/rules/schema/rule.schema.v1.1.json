@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs-digitization.local/schemas/rule.schema.v1.1.json",
+  "title": "BMR Audit Rule",
+  "description": "Schema v1.1 for BMR audit rule YAMLs. Additive over v1.0: page_selector gains an optional section_id (Spec 007).",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "severity",
+    "alcoa_tag",
+    "description",
+    "context_object"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.1" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]*$",
+      "minLength": 3,
+      "maxLength": 200
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "severity": { "enum": ["critical", "major", "minor", "info"] },
+    "alcoa_tag": {
+      "enum": [
+        "Attributable",
+        "Legible",
+        "Contemporaneous",
+        "Original",
+        "Accurate",
+        "Consistent",
+        "Enduring",
+        "Complete",
+        "Available"
+      ]
+    },
+    "gmp_category": { "type": "string", "minLength": 1 },
+    "description": { "type": "string", "minLength": 10 },
+    "context_object": { "$ref": "#/$defs/ContextObject" },
+    "source": { "$ref": "#/$defs/FieldRef" },
+    "target": { "$ref": "#/$defs/FieldRef" },
+    "expected": { "$ref": "#/$defs/FieldRef" },
+    "tolerance": { "$ref": "#/$defs/Tolerance" },
+    "multiplicity": { "enum": ["first", "all", "error"] },
+    "fallback": {
+      "enum": [
+        "flag_as_unevaluated",
+        "flag_as_indeterminate",
+        "treat_as_pass"
+      ]
+    },
+    "synthesises_from": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "deprecated": {
+      "type": "boolean",
+      "description": "When true, the loader accepts the rule (so prior runs remain reproducible) but the compliance stage skips it. Spec 005 FR-013."
+    },
+    "superseded_by": {
+      "type": "string",
+      "minLength": 3,
+      "description": "Human-readable pointer to the rule that replaces this one (e.g. 'alcoa.accurate.bpcr-weight-match@2.0.0'). Informational only."
+    }
+  },
+  "allOf": [
+    { "$ref": "#/$defs/SourceRequiredForLeafScopes" },
+    { "$ref": "#/$defs/CrossDocumentRequirements" },
+    { "$ref": "#/$defs/PageAggregateRequirements" },
+    { "$ref": "#/$defs/SamePageForbidsCrossScopeKeys" },
+    { "$ref": "#/$defs/ChecklistSynthesisRequirements" }
+  ],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "ContextObject": {
+      "type": "object",
+      "required": ["scope"],
+      "properties": {
+        "scope": {
+          "enum": [
+            "same_page",
+            "cross_document",
+            "page_aggregate",
+            "checklist_synthesis"
+          ]
+        },
+        "group_by": {
+          "enum": ["bpcr_step", "document_scope", "rule", "none"]
+        },
+        "role": { "type": "string", "minLength": 1 },
+        "entity_match": {
+          "type": "object",
+          "required": ["strategy"],
+          "properties": {
+            "strategy": {
+              "enum": [
+                "exact",
+                "normalise",
+                "alias",
+                "step_number",
+                "batch_id",
+                "custom"
+              ]
+            },
+            "normalise": { "type": "boolean" },
+            "case_insensitive": { "type": "boolean" },
+            "punctuation_strip": {
+              "type": "array",
+              "items": { "type": "string", "maxLength": 3 }
+            },
+            "aliases_file": { "type": "string", "minLength": 1 }
+          },
+          "unevaluatedProperties": false
+        },
+        "page_selector": {
+          "type": "object",
+          "required": ["document_role", "page_filter"],
+          "properties": {
+            "document_role": { "type": "string", "minLength": 1 },
+            "page_filter": {
+              "enum": [
+                "all_bpcr_step_pages",
+                "first_page",
+                "last_page",
+                "by_index",
+                "by_tag"
+              ]
+            },
+            "page_indices": {
+              "type": "array",
+              "items": { "type": "integer", "minimum": 1 }
+            },
+            "page_tag": { "type": "string", "minLength": 1 },
+            "section_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "not": { "const": "unsectioned" },
+              "description": "Spec 007 — restrict the selector to pages whose detected section_id matches. The literal 'unsectioned' is reserved and not authorable."
+            }
+          },
+          "unevaluatedProperties": false
+        },
+        "aggregation": {
+          "enum": ["sum", "count", "min", "max", "avg"]
+        }
+      },
+      "unevaluatedProperties": false
+    },
+    "FieldRef": {
+      "type": "object",
+      "required": ["field"],
+      "properties": {
+        "field": { "type": "string", "minLength": 1 },
+        "scope_hint": { "type": "string", "minLength": 1 },
+        "document_ref_hint": { "type": "string", "minLength": 1 }
+      },
+      "unevaluatedProperties": false
+    },
+    "Tolerance": {
+      "type": "object",
+      "required": ["kind", "value"],
+      "properties": {
+        "kind": { "enum": ["absolute", "percent", "relative"] },
+        "value": { "type": "number", "exclusiveMinimum": 0 },
+        "unit": { "type": "string", "minLength": 1 }
+      },
+      "unevaluatedProperties": false
+    },
+    "CrossDocumentRequirements": {
+      "if": {
+        "properties": {
+          "context_object": {
+            "properties": { "scope": { "const": "cross_document" } },
+            "required": ["scope"]
+          }
+        },
+        "required": ["context_object"]
+      },
+      "then": {
+        "required": ["target"],
+        "properties": {
+          "context_object": {
+            "required": ["role", "entity_match"]
+          }
+        }
+      }
+    },
+    "PageAggregateRequirements": {
+      "if": {
+        "properties": {
+          "context_object": {
+            "properties": { "scope": { "const": "page_aggregate" } },
+            "required": ["scope"]
+          }
+        },
+        "required": ["context_object"]
+      },
+      "then": {
+        "properties": {
+          "context_object": {
+            "required": ["page_selector", "aggregation"]
+          }
+        }
+      }
+    },
+    "SourceRequiredForLeafScopes": {
+      "if": {
+        "properties": {
+          "context_object": {
+            "properties": {
+              "scope": {
+                "enum": ["same_page", "cross_document", "page_aggregate"]
+              }
+            },
+            "required": ["scope"]
+          }
+        },
+        "required": ["context_object"]
+      },
+      "then": { "required": ["source"] }
+    },
+    "ChecklistSynthesisRequirements": {
+      "if": {
+        "properties": {
+          "context_object": {
+            "properties": { "scope": { "const": "checklist_synthesis" } },
+            "required": ["scope"]
+          }
+        },
+        "required": ["context_object"]
+      },
+      "then": {
+        "required": ["synthesises_from"],
+        "properties": {
+          "synthesises_from": {
+            "type": "array",
+            "minItems": 1
+          },
+          "context_object": {
+            "not": {
+              "anyOf": [
+                { "required": ["role"] },
+                { "required": ["entity_match"] },
+                { "required": ["page_selector"] },
+                { "required": ["aggregation"] }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "SamePageForbidsCrossScopeKeys": {
+      "if": {
+        "properties": {
+          "context_object": {
+            "properties": { "scope": { "const": "same_page" } },
+            "required": ["scope"]
+          }
+        },
+        "required": ["context_object"]
+      },
+      "then": {
+        "properties": {
+          "context_object": {
+            "not": {
+              "anyOf": [
+                { "required": ["role"] },
+                { "required": ["entity_match"] },
+                { "required": ["page_selector"] },
+                { "required": ["aggregation"] }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

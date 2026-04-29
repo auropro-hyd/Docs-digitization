@@ -48,7 +48,7 @@ def test_graph_pass_and_fail_findings(
 
     assert report.status == RunStatus.COMPLETED
     assert report.stage == RunStage.REPORT
-    assert report.rules_evaluated == 4
+    assert report.rules_evaluated == 5
 
     weight = _finding_for_rule(
         report, "alcoa.accurate.bpcr-raw-material-weight-match"
@@ -86,7 +86,7 @@ def test_graph_emits_fail_for_out_of_tolerance_weight(
     )
 
     assert report.status == RunStatus.COMPLETED
-    assert report.rules_evaluated == 4
+    assert report.rules_evaluated == 5
 
     weight = _finding_for_rule(
         report, "alcoa.accurate.bpcr-raw-material-weight-match"
@@ -170,5 +170,5 @@ def test_run_report_is_persisted(
     assert reloaded is not None
     assert reloaded.run_id == report.run_id
     assert reloaded.status == RunStatus.COMPLETED
-    assert reloaded.rules_evaluated == 4
+    assert reloaded.rules_evaluated == 5
     assert run_service.list_run_ids() == [report.run_id]

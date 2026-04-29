@@ -12,20 +12,15 @@ These tests assert both paths end-to-end through :class:`BMRRunService`.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from app.bmr.ingest.models import (
-    ClassificationDecisionSource,
-    DocumentPackage,
-    DocumentRef,
     PackageIssue,
     PackageIssueKind,
     PackageStatus,
 )
 from app.bmr.ingest.package_store import PackageStore
-from app.bmr.workflow.models import RunStatus, now_utc
+from app.bmr.workflow.models import RunStatus
 from app.bmr.workflow.service import (
     BMRRunService,
     LegibilityDecisionError,
@@ -108,7 +103,7 @@ def test_reviewer_proceeds_and_run_completes(
         paused_run.run_id, action="proceed", actor_id="qa.reviewer"
     )
     assert resumed.status is RunStatus.COMPLETED
-    assert resumed.rules_evaluated == 4
+    assert resumed.rules_evaluated == 5
     # Provenance is preserved so the audit trail shows who proceeded.
     assert resumed.legibility_decision == "proceed"
     assert resumed.legibility_decided_by == "qa.reviewer"

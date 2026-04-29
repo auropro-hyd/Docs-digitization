@@ -7,7 +7,6 @@ tests make sure a subscriber that connects before the run starts sees
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest

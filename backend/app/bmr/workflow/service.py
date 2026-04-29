@@ -87,6 +87,7 @@ class BMRRunService:
         run_store: RunStore,
         repo_root: Path,
         extractor: ExtractorPort | None = None,
+        section_enricher: Any | None = None,
         event_bus: EventBus | None = None,
         event_publisher: EventPublisher | None = None,
     ) -> None:
@@ -97,6 +98,7 @@ class BMRRunService:
             package_store=package_store,
             repo_root=self._repo_root,
             extractor=extractor,
+            section_enricher=section_enricher,
         )
         if event_publisher is not None and event_bus is not None:
             raise ValueError(

@@ -34,6 +34,10 @@ class ExtractedPage(BaseModel):
     page_index: int = Field(ge=1)
     tags: list[str] = Field(default_factory=list)
     fields: list[FieldValue] = Field(default_factory=list)
+    # Spec 007 — populated only by the BPCR section tagger after Stage 3
+    # extraction completes. ``None`` means: not a BPCR page, OR section
+    # detection was disabled, OR the detector failed for this document.
+    section_id: str | None = None
 
     model_config = ConfigDict(frozen=True)
 

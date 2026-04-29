@@ -182,10 +182,26 @@ def legibility_and_classification_stage(state: BMRRunState) -> dict[str, Any]:
 # ── Stage 3: Extraction ──────────────────────────────────────────────────────
 
 
+SectionEnricher = Callable[[ExtractedPackage, "DocumentPackage", Path], ExtractedPackage]
+"""Optional Spec 007 hook. Receives the just-extracted package, the
+source :class:`DocumentPackage`, and the package dir on disk; returns
+a (possibly new) :class:`ExtractedPackage` with ``section_id`` stamped
+on every BPCR page that the detector could place. Default is a no-op
+so existing runs are unaffected (FR-012)."""
+
+
+def _bpcr_sections_enabled() -> bool:
+    """Read ``AT_BMR__BPCR_SECTIONS_ENABLED`` (defaults to true)."""
+
+    raw = os.environ.get("AT_BMR__BPCR_SECTIONS_ENABLED", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 def make_extraction_stage(
     package_store: PackageStore,
     *,
     extractor: ExtractorPort | None = None,
+    section_enricher: SectionEnricher | None = None,
 ) -> Callable[[BMRRunState], dict[str, Any]]:
     # Default to the sidecar loader so runs without a configured OCR
     # pipeline keep working exactly as before (Constitution VII — no
@@ -210,6 +226,19 @@ def make_extraction_stage(
         except Exception as exc:  # pragma: no cover - adapters guard internally
             logger.exception("extraction failed for package %s", package.package_id)
             return _fail(RunStage.EXTRACTION, f"extraction: {exc}")
+
+        # Spec 007 — post-extract BPCR section enrichment. Runs only
+        # when wired AND the env flag is on; on any failure the run
+        # continues with the un-enriched package (FR-013 fail-open).
+        if section_enricher is not None and _bpcr_sections_enabled():
+            try:
+                extracted = section_enricher(extracted, package, package_dir)
+            except Exception:  # noqa: BLE001 — fail-open per FR-013
+                logger.exception(
+                    "bpcr section enrichment failed for package %s; "
+                    "continuing with un-enriched extraction",
+                    package.package_id,
+                )
 
         return {"stage": RunStage.EXTRACTION, "extracted": extracted}
 

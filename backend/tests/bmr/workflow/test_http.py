@@ -94,7 +94,7 @@ def test_start_run_and_fetch_report(client: TestClient):
     assert resp.status_code == 201, resp.text
     report = resp.json()
     assert report["status"] == "completed"
-    assert report["rules_evaluated"] == 4
+    assert report["rules_evaluated"] == 5
     assert report["package_id"] == package_id
 
     fetched = client.get(f"/api/bmr/runs/{report['run_id']}")
