@@ -686,6 +686,55 @@ def _merge_text_vision(
     return merged
 
 
+def _merge_text_primary(
+    rule: AuditRule,
+    text_ev: RuleEvaluation | None,
+    vision_ev: RuleEvaluation | None,
+) -> RuleEvaluation:
+    """Merge for text_primary strategy: text verdict wins unless vision escalates.
+
+    Vision can only raise the severity (make things worse), never lower it.
+    Use this for rules where OCR content is the authoritative source and vision
+    supplements only to catch what text missed.
+    """
+    if text_ev is None and vision_ev is None:
+        return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
+    if text_ev is None:
+        return vision_ev  # type: ignore[return-value]
+    if vision_ev is None:
+        return text_ev
+
+    text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
+    vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
+
+    if vision_sev > text_sev:
+        # Vision escalates — use vision verdict
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=vision_ev.status,
+            severity=vision_ev.severity or text_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
+            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
+            description=vision_ev.description or text_ev.description,
+            recommendation=vision_ev.recommendation or text_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+    else:
+        # Text wins (including ties)
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=text_ev.status,
+            severity=text_ev.severity or vision_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Text] {text_ev.reasoning} [Vision] {vision_ev.reasoning}",
+            evidence=f"[Text] {text_ev.evidence} [Vision] {vision_ev.evidence}",
+            description=text_ev.description or vision_ev.description,
+            recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+
+
 def _build_document_scope_prompt(
     rules: list[AuditRule],
     summary_content: str,
