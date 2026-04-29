@@ -1015,19 +1015,31 @@ def assemble_agent_report(
             if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(prev, 0):
                 per_rule_worst[ev.rule_id] = status
 
-            # Merge into audit trail (H2: keep worst status)
+            # Merge into audit trail (H2: keep worst status for compliance risk)
             if ev.rule_id in raw_eval_map:
                 existing_re = raw_eval_map[ev.rule_id]
                 for pn in pn_list:
                     if pn not in existing_re.page_numbers:
                         existing_re.page_numbers.append(pn)
-                if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(existing_re.status, 0):
+                incoming_sev = _STATUS_SEVERITY.get(status, 0)
+                existing_sev = _STATUS_SEVERITY.get(existing_re.status, 0)
+                if incoming_sev > existing_sev:
+                    # Status upgraded (e.g. N/A → compliant, or compliant → fail).
+                    # Reasoning/evidence MUST follow the evaluation that set the new
+                    # status — otherwise exports show "compliant" with a stale gate-skip
+                    # message from an earlier page (FR: report text matches verdict).
                     existing_re.status = status
+                    if ev.reasoning:
+                        existing_re.reasoning = ev.reasoning
+                    if ev.evidence:
+                        existing_re.evidence = ev.evidence
+                elif incoming_sev == existing_sev:
+                    # Same severity: accumulate pages; fill missing narrative only.
+                    if ev.reasoning and not existing_re.reasoning:
+                        existing_re.reasoning = ev.reasoning
+                    if ev.evidence and not existing_re.evidence:
+                        existing_re.evidence = ev.evidence
                 existing_re.confidence = min(existing_re.confidence, confidence)
-                if ev.reasoning and not existing_re.reasoning:
-                    existing_re.reasoning = ev.reasoning
-                if ev.evidence and not existing_re.evidence:
-                    existing_re.evidence = ev.evidence
                 for step in ev.applicability_trace:
                     if step not in existing_re.applicability_trace:
                         existing_re.applicability_trace.append(step)
