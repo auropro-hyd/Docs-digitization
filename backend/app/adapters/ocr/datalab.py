@@ -453,15 +453,50 @@ class DatalabOCRAdapter:
             config.extraction_schema or None,
         )
 
+        # Fail fast on a bad key so the operator sees an actionable
+        # error at startup rather than hours of "OCR progress 0% —
+        # analyzing" with 401s buried in the warning log. Mirrors the
+        # Gemini adapter's pattern. The key never appears verbatim in
+        # the message; we surface only its length and last 4 chars to
+        # help the operator confirm which secret was loaded.
+        api_key = (config.api_key or "").strip().strip('"').strip("'")
+        if not api_key:
+            raise RuntimeError(
+                "DatalabOCRAdapter: AT_DATALAB__api_key is empty. "
+                "Set it in backend/.env (get one from "
+                "https://www.datalab.to/app/keys); restart the server "
+                "after updating."
+            )
+        if api_key.startswith(("your-", "REPLACE", "<")) or api_key.endswith(("-here", ">")):
+            raise RuntimeError(
+                f"DatalabOCRAdapter: AT_DATALAB__api_key looks like a "
+                f"placeholder ({api_key[:6]}…). Replace with a real key from "
+                "https://www.datalab.to/app/keys."
+            )
+        if len(api_key) < 16:
+            raise RuntimeError(
+                f"DatalabOCRAdapter: AT_DATALAB__api_key is suspiciously short "
+                f"({len(api_key)} chars). Verify the key was copied in full."
+            )
+        # Stash the cleaned key so ``_get_client`` doesn't re-parse the
+        # raw config value (which may carry stray quotes from .env).
+        self._cleaned_api_key = api_key
+
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
         from datalab_sdk import AsyncDatalabClient
 
         self._client = AsyncDatalabClient(
-            api_key=self._config.api_key,
+            api_key=self._cleaned_api_key,
             base_url=self._config.base_url,
             timeout=self._config.timeout,
+        )
+        logger.info(
+            "Data Lab adapter ready: key=***%s (length=%d) base_url=%s",
+            self._cleaned_api_key[-4:],
+            len(self._cleaned_api_key),
+            self._config.base_url,
         )
         return self._client
 
@@ -613,7 +648,33 @@ class DatalabOCRAdapter:
                     err = getattr(result, "error", "Unknown error")
                     raise RuntimeError(f"Data Lab conversion failed: {err}")
                 return result
-            except (DatalabAPIError, DatalabTimeoutError, RuntimeError) as exc:
+            except DatalabAPIError as exc:
+                # 401/403 are not transient — the key is wrong, expired,
+                # revoked, or the workspace is over quota. Retrying just
+                # produces hours of misleading "OCR progress 0% —
+                # analyzing" labels while the bar can't move. Re-raise
+                # immediately with an actionable RuntimeError so the
+                # outer pipeline marks the run failed and the UI shows
+                # the auth error instead of a stuck progress bar.
+                if getattr(exc, "status_code", None) in (401, 403):
+                    masked = f"***{self._cleaned_api_key[-4:]}"
+                    raise RuntimeError(
+                        f"Data Lab returned {exc.status_code} Unauthorized — "
+                        f"the configured AT_DATALAB__api_key (key={masked}, "
+                        f"length={len(self._cleaned_api_key)}) was rejected. "
+                        "Get a fresh key from https://www.datalab.to/app/keys "
+                        "and restart the server."
+                    ) from exc
+                last_exc = exc
+                delay = self._config.submit_retry_base_delay * (2**attempt)
+                logger.warning(
+                    "Data Lab submit attempt %d failed (%s), retrying in %.1fs",
+                    attempt + 1,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            except (DatalabTimeoutError, RuntimeError) as exc:
                 last_exc = exc
                 delay = self._config.submit_retry_base_delay * (2**attempt)
                 logger.warning(
