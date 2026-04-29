@@ -63,18 +63,13 @@ export function ProcessingDashboard() {
 
   const elapsedStr = useElapsedTime(isActive);
 
-  if (!docId) return null;
-
-  const pageArray = Array.from(pages.values());
-  const approvedCount = pageArray.filter((p) => p.status === "approved").length;
-  const reviewCount = pageArray.filter(
-    (p) => p.status === "reviewing" || p.status === "flagged",
-  ).length;
-  const displayPages = totalPages || pageArray.length;
   const isOcrPhase = processingStatus === "azure_di_running" || processingStatus === "marker_ocr_running";
-  const hasRealProgress = isOcrPhase && ocrProgress > 0;
 
   // Smooth the OCR phase so progress feels continuous between server ticks.
+  // All hooks must run before any conditional early return so React's
+  // hook ordering stays stable across renders — the early return sits
+  // below this block. The hooks themselves no-op when not in an OCR
+  // phase, so their cost is bounded.
   const [smoothedOcrProgress, setSmoothedOcrProgress] = useState(0);
   useEffect(() => {
     if (!isOcrPhase) {
@@ -101,6 +96,16 @@ export function ProcessingDashboard() {
     () => (isOcrPhase ? Math.max(ocrProgress, smoothedOcrProgress) : 0),
     [isOcrPhase, ocrProgress, smoothedOcrProgress],
   );
+
+  if (!docId) return null;
+
+  const pageArray = Array.from(pages.values());
+  const approvedCount = pageArray.filter((p) => p.status === "approved").length;
+  const reviewCount = pageArray.filter(
+    (p) => p.status === "reviewing" || p.status === "flagged",
+  ).length;
+  const displayPages = totalPages || pageArray.length;
+  const hasRealProgress = isOcrPhase && ocrProgress > 0;
 
   const statusLabel = hasRealProgress && ocrProgressLabel
     ? ocrProgressLabel

@@ -467,8 +467,9 @@ export function FindingsTable({
     return filtered.slice(start, start + PAGE_SIZE);
   }, [filtered, safePage]);
 
-  // Reset to page 1 when any filter/sort changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional reset on filter change
+  // Reset to page 1 when any filter/sort changes (intentional —
+  // the deps array fully enumerates the filters that should
+  // trigger the reset; the lint rule has nothing to flag now).
   React.useEffect(() => { setCurrentPage(1); }, [severityFilter, agentFilter, resolvedFilter, hitlFilter, sortKey]);
 
   // When highlightId changes, jump to the correct page and scroll into view
