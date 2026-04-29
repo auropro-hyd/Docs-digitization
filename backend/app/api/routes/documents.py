@@ -195,6 +195,29 @@ async def delete_document(doc_id: str):
     return {"doc_id": doc_id, "status": "deleted"}
 
 
+@router.get("/{doc_id}/progress")
+async def get_document_progress(doc_id: str):
+    """Return the most recent OCR progress payload for a document.
+
+    Polling fallback for environments where the WebSocket can't stay
+    open. Mirrors the shape pushed over WS by
+    :mod:`app.workflow.nodes` — same ``percent``/``label``/``phase``
+    fields — so the frontend hook can route the response through the
+    same ``setOcrProgress`` reducer regardless of transport.
+
+    Returns the cached payload, or a sensible default when no progress
+    has been recorded yet (fresh upload, or run already evicted from
+    the cache TTL).
+    """
+
+    from app.core.services.progress_cache import get_progress_cache
+
+    payload = get_progress_cache().get(doc_id)
+    if payload is None:
+        return {"type": "progress", "percent": 0, "label": "", "phase": None}
+    return payload
+
+
 @router.get("/{doc_id}")
 async def get_document(doc_id: str):
     """Get the current state/results of a document."""

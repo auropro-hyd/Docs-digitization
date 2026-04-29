@@ -27,6 +27,26 @@ export async function getDocument(docId: string) {
   return response.json();
 }
 
+export interface DocumentProgressPayload {
+  type: "progress";
+  percent: number;
+  label: string;
+  phase: "submit" | "analyzing" | "done" | null;
+  status?: string;
+}
+
+// Polling fallback for the OCR-progress WebSocket. Always 200s with
+// a default ``percent: 0`` payload when the cache is empty — never
+// throws on missing data so the poll loop can keep trying without
+// surfacing transient errors to the UI.
+export async function getDocumentProgress(docId: string): Promise<DocumentProgressPayload> {
+  const response = await fetch(`${API_BASE}/api/documents/${docId}/progress`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch document progress: ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function listDocuments() {
   const response = await fetch(`${API_BASE}/api/documents/`);
   if (!response.ok) throw new Error(`Failed to list documents: ${response.statusText}`);
