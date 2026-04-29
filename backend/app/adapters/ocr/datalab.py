@@ -14,6 +14,7 @@ import json
 import logging
 import re
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pypdfium2
@@ -549,16 +550,23 @@ class DatalabOCRAdapter:
         page_range: str | None,
         progress_callback: ProgressCallback | None,
         chunk_label: str | None = None,
-        baseline_percent: int = 5,
+        baseline_provider: Callable[[], int] | None = None,
     ) -> Any:
         """Submit to Data Lab with exponential-backoff retry.
 
         ``chunk_label`` (e.g. ``"Chunk 3/5 (pages 21-30)"``) shows up
         in the heartbeat tick so multi-chunk batches can identify
-        which chunk is currently in flight. ``baseline_percent`` is
-        the floor we re-emit on every heartbeat so the bar doesn't
-        snap backwards while the SDK polls — the actual percent only
-        advances on chunk-completion in the caller.
+        which chunk is currently in flight.
+
+        ``baseline_provider`` is a callable returning the current
+        floor percent for the heartbeat — read **fresh on every
+        tick**, not captured once at start. With concurrent chunks
+        this matters: chunk A's heartbeat can keep firing while
+        chunks B and C complete, and the bar should reflect the
+        completed-chunks total in those still-running chunks'
+        labels rather than freezing at A's start-of-chunk reading.
+        Defaults to a constant 5% for callers that don't track
+        completed chunks.
         """
         from datalab_sdk.exceptions import DatalabAPIError, DatalabTimeoutError
 
@@ -566,11 +574,13 @@ class DatalabOCRAdapter:
         client = self._get_client()
         last_exc: Exception | None = None
 
+        provider = baseline_provider if baseline_provider is not None else (lambda: 5)
+
         for attempt in range(self._config.submit_max_retries):
             try:
                 if progress_callback:
                     progress_callback(
-                        max(baseline_percent, min(5 + attempt * 2, 15)),
+                        max(provider(), min(5 + attempt * 2, 15)),
                         (
                             f"Submitting {chunk_label} (attempt {attempt + 1})"
                             if chunk_label
@@ -586,13 +596,15 @@ class DatalabOCRAdapter:
                         if chunk_label
                         else f"Data Lab analyzing ({elapsed:.0f}s)"
                     )
-                    # Re-emit the baseline percent so any upstream
-                    # consumer that snaps to monotone-increasing input
-                    # (a UI smoother, a percent-delta throttle) treats
-                    # this as a heartbeat, not a regression. The
-                    # chunk-completion path (in the caller) is the
-                    # only place that actually moves the bar.
-                    progress_callback(baseline_percent, label)
+                    # Read the baseline on every tick so a chunk
+                    # that finishes during chunk A's poll loop
+                    # advances A's heartbeat percent on the next
+                    # tick. The actual UI bar is gated by the
+                    # frontend store's strict monotone reducer, so
+                    # this can never go backwards even if the
+                    # provider — for whatever reason — returns a
+                    # stale lower value.
+                    progress_callback(provider(), label)
 
                 result = await self._convert_with_heartbeat(
                     client, pdf_path, opts, _heartbeat,
@@ -801,19 +813,29 @@ class DatalabOCRAdapter:
                 chunk_idx + 1, total_chunks, page_range,
             )
 
-            # Baseline percent for this chunk's heartbeat: pin to the
-            # progress already earned by completed chunks. A heartbeat
-            # never moves backwards, and the bar still advances by the
-            # familiar 90/total_chunks step on chunk completion below.
-            baseline_pct = int((completed_counter["n"] / total_chunks) * 90)
+            # Baseline for this chunk's heartbeat: pinned to the
+            # progress already earned by *currently completed* chunks,
+            # read fresh on every tick. With ``max_concurrent_chunks``
+            # > 1 this matters — chunk A's heartbeat keeps firing while
+            # chunks B and C complete, and reading the counter live
+            # lets A's heartbeat reflect the running total instead of
+            # freezing at A's start-of-chunk reading. The frontend
+            # store enforces a strict monotone-only invariant so even
+            # a stale read can never cause a backwards snap.
             chunk_label = f"Chunk {chunk_idx + 1}/{total_chunks} (pages {page_range})"
+
+            def _baseline_pct(
+                _counter: dict = completed_counter,
+                _total: int = total_chunks,
+            ) -> int:
+                return int((_counter["n"] / _total) * 90)
 
             result = await self._submit_with_retry(
                 pdf_path,
                 page_range,
                 progress_callback,
                 chunk_label=chunk_label,
-                baseline_percent=baseline_pct,
+                baseline_provider=_baseline_pct,
             )
 
             pqs = getattr(result, "parse_quality_score", None)
