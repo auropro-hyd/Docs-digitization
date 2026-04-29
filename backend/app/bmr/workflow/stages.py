@@ -52,12 +52,84 @@ from app.observability import get_logger as _get_logger  # noqa: E402
 _slog = _get_logger(__name__)
 
 
+# Pipeline stage order (Constitution II — 5-stage flat pipeline). Used to
+# stamp ``stage_index`` / ``total_stages`` on per-stage progress events
+# so a UI subscriber can render a coarse percent without hard-coding the
+# topology client-side.
+_STAGE_ORDER: tuple[RunStage, ...] = (
+    RunStage.INGEST,
+    RunStage.LEGIBILITY_AND_CLASSIFICATION,
+    RunStage.EXTRACTION,
+    RunStage.COMPLIANCE,
+    RunStage.REPORT,
+)
+
+
+def _stage_position(stage: RunStage) -> int:
+    """1-indexed position of ``stage`` in the canonical pipeline order."""
+
+    try:
+        return _STAGE_ORDER.index(stage) + 1
+    except ValueError:  # pragma: no cover — defensive: future stages
+        return 0
+
+
+def _publish_stage_event(
+    *,
+    event: str,
+    state: BMRRunState,
+    stage: RunStage,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    """Best-effort publish of a stage lifecycle event onto the bus.
+
+    Reads ``run_id`` from state (the legibility-resume path may pass a
+    minimal state dict that omits it; in that case we silently skip
+    rather than synthesise a fake id). Pulled into its own helper
+    because the wrapper below uses it from two call sites and the
+    fail-open semantics matter — observability must never break the
+    pipeline.
+    """
+
+    run_id = state.get("run_id") if isinstance(state, dict) else None
+    if not run_id:
+        return
+    payload: dict[str, Any] = {
+        "stage": stage.value,
+        "stage_index": _stage_position(stage),
+        "total_stages": len(_STAGE_ORDER),
+    }
+    if extra:
+        payload.update(extra)
+    try:
+        from app.bmr.events import get_event_bus
+
+        get_event_bus().publish(event, run_id, payload)
+    except Exception:  # pragma: no cover — observability is fail-open
+        _slog.warning("bmr.event.publish_failed", event=event, stage=stage.value)
+
+
 def _observe_stage(stage: RunStage, fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Wrap a stage function with stage timing + context binding.
+    """Wrap a stage function with stage timing + context binding +
+    per-stage progress event emission.
 
     Cheap per invocation: one metric observe, two log lines, one
-    ContextVar set/reset. Exposed so ``build_bmr_graph`` can wrap each
-    stage function at composition time.
+    ContextVar set/reset, one event publish on entry and on exit.
+    Exposed so ``build_bmr_graph`` can wrap each stage function at
+    composition time.
+
+    The two events match the existing WS envelope shape (see
+    ``app/api/routes/bmr_runs.py::run_events_ws``):
+
+    - ``bmr.stage.entered`` — the stage just started; payload
+      carries ``stage``, ``stage_index``, ``total_stages`` so a
+      subscriber can render a coarse percent without re-deriving
+      the topology.
+    - ``bmr.stage.completed`` — the stage finished; payload adds
+      ``duration_ms`` and ``status`` (the stage's own outcome
+      from the result dict, when available — useful for the UI to
+      stop the spinner immediately on a stage failure rather than
+      waiting for ``run.failed``).
     """
 
     from functools import wraps
@@ -69,9 +141,13 @@ def _observe_stage(stage: RunStage, fn: Callable[..., Any]) -> Callable[..., Any
 
         token = bind_context(stage=stage.value)
         started = time.monotonic()
+        result = None
         try:
             with span(f"bmr.stage.{stage.value}"):
                 _slog.info("bmr.stage.entered", stage=stage.value)
+                _publish_stage_event(
+                    event="bmr.stage.entered", state=state, stage=stage,
+                )
                 result = fn(state, *args, **kwargs)
         finally:
             dur = time.monotonic() - started
@@ -79,10 +155,24 @@ def _observe_stage(stage: RunStage, fn: Callable[..., Any]) -> Callable[..., Any
                 BMR_STAGE_DURATION.labels(stage=stage.value).observe(dur)
             except Exception:  # pragma: no cover
                 pass
+            stage_status = (
+                result.get("status").value
+                if isinstance(result, dict) and hasattr(result.get("status"), "value")
+                else None
+            )
             _slog.info(
                 "bmr.stage.completed",
                 stage=stage.value,
                 duration_ms=round(dur * 1_000, 2),
+            )
+            _publish_stage_event(
+                event="bmr.stage.completed",
+                state=state,
+                stage=stage,
+                extra={
+                    "duration_ms": round(dur * 1_000, 2),
+                    "status": stage_status,
+                },
             )
             reset_context(token)
         return result
