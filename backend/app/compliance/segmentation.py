@@ -42,6 +42,16 @@ def _build_segmentation_prompt(
     profiles = load_profiles()
     allowed_doc_types = ", ".join(sorted(profiles.document_profiles.keys()))
 
+    section_type_hints = []
+    for doc_type_key in sorted(profiles.document_profiles.keys()):
+        profile = profiles.document_profiles[doc_type_key]
+        if profile.expected_sections:
+            types = ", ".join(s.section_type for s in profile.expected_sections)
+            section_type_hints.append(f"  {doc_type_key}: {types}")
+        else:
+            section_type_hints.append(f"  {doc_type_key}: (use a descriptive lowercase_snake_case name)")
+    section_type_guide = "\n".join(section_type_hints)
+
     return (
         f"Analyze this multi-part document and identify each distinct sub-document/section.\n\n"
         f"Look for: page numbering restarts, document titles, headers that change, "
@@ -51,10 +61,11 @@ def _build_segmentation_prompt(
         f"For each section return:\n"
         f"- section_id: short lowercase_snake_case slug\n"
         f"- name: descriptive human-readable name\n"
-        f"- section_type: descriptive type in lowercase_snake_case (be specific)\n"
         f"- document_type: one of: {allowed_doc_types}\n"
         f"  If this section is a sub-section of a larger document already classified above, "
         f"repeat that document's type.\n"
+        f"- section_type: choose from the known types for the document_type, or use a descriptive "
+        f"lowercase_snake_case name if none fit:\n{section_type_guide}\n"
         f"- start_page / end_page: inclusive page range\n"
         f"- description: brief description of the section content\n\n"
         f"Also return the overall document_type and your confidence (0.0-1.0)."
