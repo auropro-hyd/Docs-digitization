@@ -1,55 +1,111 @@
 # BPCR Section Spec — pilot
 #
-# PLACEHOLDER values derived from typical pharma BPCR layouts. Replace
-# with the client-confirmed canonical list after the call (Spec 007,
-# Open Question #1).
+# Section IDs aligned to backend/app/compliance/rules/document_profiles.yaml
+# (the authoritative `batch_record.expected_sections` list, 13 entries).
+# Aliases are real BPCR header text variants we've seen on pilot docs;
+# add to them whenever a real BPCR introduces a phrasing the detector
+# misses. The detector falls back to alias matching when the regex
+# misses, with lower confidence (see _CONF_ALIAS in bpcr_section_detect).
 #
 # Bump `spec_version` whenever this file changes meaning. Append to
 # bpcr-section-spec.CHANGELOG.md alongside every edit.
-spec_version: "1.0.0-pilot"
+spec_version: "1.1.0-pilot"
 
 sections:
-  - section_id: cover
+  - section_id: cover_page
     display_name: "Cover Page"
     aliases:
+      - "Title Page"
+      - "Front Page"
       - "Batch Production and Control Record"
     regex:
       - "^\\s*Batch\\s+Production\\s+and\\s+Control\\s+Record\\b"
       - "^\\s*BPCR\\s+Cover\\b"
+      - "^\\s*COVER\\s+PAGE\\b"
     bands: [top_of_page]
 
-  - section_id: material_dispensing
-    display_name: "Material Dispensing"
+  - section_id: revision_summary
+    display_name: "Revision Summary"
     aliases:
-      - "Dispensing Record"
-      - "Raw Material Dispensing"
+      - "Revision History"
+      - "Change History"
+      - "Document Revisions"
+      - "Amendment Log"
     bands: [top_of_page, top_of_table]
 
-  - section_id: granulation
-    display_name: "Granulation"
+  - section_id: material_dispensing
+    display_name: "Raw Material Weighing and Dispensing"
     aliases:
-      - "Wet Granulation"
-      - "Dry Granulation"
-    bands: [top_of_page]
+      - "Raw Material Weighing"
+      - "Material Dispensing"
+      - "Dispensing"
+      - "Dispensing Record"
+      - "Weighing Log"
+      - "Raw Material Dispensing"
+      - "List of Raw Materials and Weighing Details"
+      - "Raw Material Weighing Details"
+    bands: [top_of_page, top_of_table]
 
-  - section_id: compression
-    display_name: "Compression"
+  - section_id: equipment_list
+    display_name: "Equipment List"
     aliases:
-      - "Tablet Compression"
-    bands: [top_of_page]
+      - "List of Major Equipments"
+      - "Equipment and SOP Details"
+      - "Equipment Details"
+      - "Major Equipment"
+    bands: [top_of_page, top_of_table]
 
-  - section_id: coating
-    display_name: "Coating"
+  - section_id: manufacturing_operations
+    display_name: "Manufacturing Operations"
     aliases:
-      - "Film Coating"
-    bands: [top_of_page]
+      - "Process Operations"
+      - "Manufacturing Operation Log"
+      - "Manufacturing Log"
+      - "Operation Sheet"
+      - "Manufacturing Instructions"
+      - "Production Operations"
+    bands: [top_of_page, top_of_table]
 
-  - section_id: in_process_qc
-    display_name: "In-Process Quality Control"
+  - section_id: sifting_record
+    display_name: "Sifting Record"
     aliases:
-      - "In-Process QC"
-      - "IPC"
-      - "In-Process Controls"
+      - "Sieving Record"
+      - "Sifter Operation"
+      - "Sifting Log"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: pin_milling_mixing
+    display_name: "Pin Milling / Mixing"
+    aliases:
+      - "Pin Mill Operation"
+      - "Pin Milling"
+      - "Mixing Operation"
+      - "Pin Mill / Mixing"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: micronization
+    display_name: "Micronization"
+    aliases:
+      - "Micronisation"
+      - "Micronizer Operation"
+      - "Particle Size Reduction"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: co_mill_operation
+    display_name: "Co-Mill Operation"
+    aliases:
+      - "Co Mill"
+      - "Co-Mill"
+      - "Comill Operation"
+      - "Co-Milling Record"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: metal_detection
+    display_name: "Metal Detection"
+    aliases:
+      - "Metal Detector Operation"
+      - "Metal Detector Check"
+      - "Metal Detector Log"
     bands: [top_of_page, top_of_table]
 
   - section_id: yield_calculation
@@ -57,26 +113,25 @@ sections:
     aliases:
       - "Yield Reconciliation"
       - "Process Yield"
+      - "Yield Computation"
+      - "Final Yield"
     bands: [top_of_page, top_of_table, mid_page]
     requires_emphasis_for_mid_page: true
 
-  - section_id: packaging
-    display_name: "Packaging"
+  - section_id: cleaning_log
+    display_name: "Cleaning Log"
     aliases:
-      - "Bulk Packaging"
-    bands: [top_of_page]
-
-  - section_id: reconciliation
-    display_name: "Reconciliation"
-    aliases:
-      - "Material Reconciliation"
-      - "Final Reconciliation"
+      - "Equipment Cleaning Record"
+      - "Cleaning Record"
+      - "Cleaning Verification"
+      - "Post-Production Cleaning"
     bands: [top_of_page, top_of_table]
 
-  - section_id: sign_off
-    display_name: "Sign-Off and Approval"
+  - section_id: deviation
+    display_name: "Deviation Record"
     aliases:
-      - "Final Approval"
-      - "Quality Approval"
-      - "QA Sign-Off"
-    bands: [top_of_page]
+      - "Deviation Note"
+      - "Deviation Log"
+      - "Deviation Report"
+      - "Process Deviation"
+    bands: [top_of_page, top_of_table]

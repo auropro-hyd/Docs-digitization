@@ -34,6 +34,13 @@ class ExtractedPage(BaseModel):
     page_index: int = Field(ge=1)
     tags: list[str] = Field(default_factory=list)
     fields: list[FieldValue] = Field(default_factory=list)
+    # Per-page text content (markdown). Optional — populated when
+    # available from the upstream OCR/extractor so downstream
+    # capabilities can run text-aware analysis (Spec 007 BPCR section
+    # detection, in particular) without re-reading raw OCR sidecars.
+    # ``None`` means: not extracted, or the extractor source didn't
+    # carry text content for this page.
+    text: str | None = None
     # Spec 007 — populated only by the BPCR section tagger after Stage 3
     # extraction completes. ``None`` means: not a BPCR page, OR section
     # detection was disabled, OR the detector failed for this document.

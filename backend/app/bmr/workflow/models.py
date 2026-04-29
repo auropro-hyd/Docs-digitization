@@ -114,6 +114,13 @@ class RunReport(BaseModel):
     # pause and proceed — otherwise ingest would silently re-read a
     # different document set on resume.
     package_snapshot_hash: str | None = None
+    # Spec 007 — flat per-page summary of BPCR section assignments,
+    # one entry per BPCR page with a section_id stamped. Empty when:
+    # the package has no BPCR doc, section detection was disabled,
+    # the detector failed, or no page carried any content the
+    # detector could read. Reviewers use this to verify
+    # detection ran end-to-end without re-running a CLI.
+    bpcr_sections: list[dict[str, Any]] = Field(default_factory=list)
 
     model_config = ConfigDict(frozen=False)
 
