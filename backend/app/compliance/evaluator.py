@@ -454,6 +454,8 @@ async def run_agent_evaluation(
         text_rules: list[AuditRule] = []
         vision_only_rules: list[AuditRule] = []
         text_and_vision_rules: list[AuditRule] = []
+        text_primary_rules: list[AuditRule] = []
+        llm_arbitrated_rules: list[AuditRule] = []
 
         for rule in applicable_rules:
             strategy = rule.evaluation_strategy
@@ -461,6 +463,12 @@ async def run_agent_evaluation(
                 vision_only_rules.append(rule)
             elif strategy == "text_and_vision" and vlm_available:
                 text_and_vision_rules.append(rule)
+                text_rules.append(rule)
+            elif strategy == "text_primary" and vlm_available:
+                text_primary_rules.append(rule)
+                text_rules.append(rule)
+            elif strategy == "llm_arbitrated" and vlm_available:
+                llm_arbitrated_rules.append(rule)
                 text_rules.append(rule)
             elif strategy == "vision" and not vlm_available:
                 if compliance_settings.vlm_fallback_to_text:
@@ -473,10 +481,13 @@ async def run_agent_evaluation(
                         reasoning="VLM unavailable — vision-only rule skipped",
                         applicability_trace=["vlm_unavailable"],
                     ))
+            elif strategy in ("text_primary", "llm_arbitrated") and not vlm_available:
+                # VLM unavailable — run text only; no merge needed
+                text_rules.append(rule)
             else:
                 text_rules.append(rule)
 
-        all_vision_rules = vision_only_rules + text_and_vision_rules
+        all_vision_rules = vision_only_rules + text_and_vision_rules + text_primary_rules + llm_arbitrated_rules
 
         enriched = build_enriched_context(ext, page_num, global_kv_pairs=global_kv_pairs)
 
@@ -568,7 +579,7 @@ async def run_agent_evaluation(
                     for ev in vlm_result.evaluations:
                         vision_eval_map[ev.rule_id] = ev
 
-            # Merge results: vision-only, text-only, and text_and_vision
+            # Merge results: vision-only, text-only, and dual-channel strategies
             merged_rule_ids: set[str] = set()
 
             for rule in vision_only_rules:
@@ -582,6 +593,20 @@ async def run_agent_evaluation(
                 text_ev = text_eval_map.get(rule.id)
                 vision_ev = vision_eval_map.get(rule.id)
                 all_evals.append(_merge_text_vision(rule, text_ev, vision_ev))
+
+            for rule in text_primary_rules:
+                merged_rule_ids.add(rule.id)
+                text_ev = text_eval_map.get(rule.id)
+                vision_ev = vision_eval_map.get(rule.id)
+                all_evals.append(_merge_text_primary(rule, text_ev, vision_ev))
+
+            for rule in llm_arbitrated_rules:
+                merged_rule_ids.add(rule.id)
+                text_ev = text_eval_map.get(rule.id)
+                vision_ev = vision_eval_map.get(rule.id)
+                ocr_text = ext.get("markdown", "")
+                arb_result = await _merge_llm_arbitrated(rule, text_ev, vision_ev, llm, ocr_text)
+                all_evals.append(arb_result)
 
             for rule_id, ev in text_eval_map.items():
                 if rule_id not in merged_rule_ids:
