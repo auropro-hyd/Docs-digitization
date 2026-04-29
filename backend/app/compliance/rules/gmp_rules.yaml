@@ -77,6 +77,8 @@ categories:
 
       4:
         keywords: ["approved by", "quality assurance hod"]
+        applicable_document_types: [batch_record]
+        applicable_section_types: [cover_page]
         pass_criteria: |
           The cover page contains an "Approved By" entry (or equivalent label) with:
             (a) A non-empty name or employee identifier in the Name column, AND
@@ -93,7 +95,7 @@ categories:
   # ── Pre-Manufacturing Checks ──────────────────────────────────
   pre_manufacturing_checks:
     severity: major
-    applicable_document_types: []
+    applicable_document_types: [operation_checklist]
     applicable_section_types: []
     rules:
       5:
@@ -132,6 +134,8 @@ categories:
 
       6:
         keywords: ["cross contamination", "cross-contamination"]
+        applicable_document_types: [operation_checklist]
+        applicable_section_types: [cross_contamination_checklist]
         pass_criteria: |
           APPLICABILITY CHECK (evaluate this first):
           This rule applies ONLY to pages whose title or heading contains
@@ -169,7 +173,8 @@ categories:
 
       7:
         keywords: ["reactor operations", "check list for reactor", "checklist for reactor"]
-
+        applicable_document_types: [operation_checklist]
+        applicable_section_types: [reactor_checklist]
         pass_criteria: |
           APPLICABILITY CHECK (evaluate this first):
           This rule applies to pages that are part of the "Check List for Reactor
@@ -273,6 +278,7 @@ categories:
     rules:
       9:
         applicable_section_types: [cleaning_log]
+        applicable_document_types: [batch_record]
         keywords: ["equipment cleaning", "cleaning details", "previous batch", "cleaned by", "checked by"]
         pass_criteria: |
           The equipment cleaning log contains a cleaning record for each major piece of
@@ -293,6 +299,7 @@ categories:
 
       10:
         applicable_section_types: [deviation, cleaning_log]
+        applicable_document_types: [batch_record]
         keywords: ["deviation", "deviations", "description of deviations"]
         pass_criteria: |
           The deviation section is either:
@@ -337,7 +344,7 @@ categories:
 
       12:
         applicable_section_types: [bpcr_review_checklist]
-        applicable_document_types: [batch_record, batch_closure]
+        applicable_document_types: [batch_closure]
         keywords: ["bpcr review", "batch record review", "review checklist", "manufacturing", "quality assurance"]
         pass_criteria: |
           For each BPCR Review Checklist page, evaluate only what is visible on this page:
