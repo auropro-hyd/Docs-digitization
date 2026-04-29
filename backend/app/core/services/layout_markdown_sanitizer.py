@@ -14,9 +14,19 @@ _BROKEN_PAGEBREAK_TAIL_RE = re.compile(
     r"(?:^|\n)\s*(?:[a-z]*break|eak|reak|agebreak)\s*-->\s*",
     re.IGNORECASE,
 )
-_BROKEN_TABLE_ROW_OPEN_RE = re.compile(r"(?m)^(?P<indent>\s*)(tr|td|th|thead|tbody|tfoot|table)>\s*")
-_BROKEN_TABLE_ROW_CLOSE_RE = re.compile(r"(?m)^(?P<indent>\s*)/(tr|td|th|thead|tbody|tfoot|table)>\s*")
-_BROKEN_TABLE_ROW_CLOSE_NO_BRACKET_RE = re.compile(r"(?m)^(?P<indent>\s*)/(tr|td|th|thead|tbody|tfoot|table)\s*$")
+# Trailing match is ``[ \t]*`` (not ``\s*``) on purpose — ``\s`` would
+# eat the line-terminating ``\n`` and glue the next tag onto the same
+# line (e.g. ``tr>\n<th>...`` → ``<tr><th>...``). The fixer should
+# repair the malformed tag in place; line topology must survive.
+_BROKEN_TABLE_ROW_OPEN_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)(tr|td|th|thead|tbody|tfoot|table)>[ \t]*"
+)
+_BROKEN_TABLE_ROW_CLOSE_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)/(tr|td|th|thead|tbody|tfoot|table)>[ \t]*"
+)
+_BROKEN_TABLE_ROW_CLOSE_NO_BRACKET_RE = re.compile(
+    r"(?m)^(?P<indent>[ \t]*)/(tr|td|th|thead|tbody|tfoot|table)[ \t]*$"
+)
 _BROKEN_PAGENUM_WITH_TABLE_RE = re.compile(r'<!--\s*PageNumber="[^"\n]*<table>', re.IGNORECASE)
 _BROKEN_TABLE_JOIN_NO_ANGLE_CLOSE_RE = re.compile(r"(?i)/(tr|td|th|thead|tbody|tfoot)\s*<table>")
 
