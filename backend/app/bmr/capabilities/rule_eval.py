@@ -155,7 +155,12 @@ def _compare_numeric(
     return (FindingStatus.PASS if passed else FindingStatus.OPEN), detail
 
 
-def _evidence_from_field(f: FieldValue | None, *, note: str | None = None) -> EvidenceRegion | None:
+def _evidence_from_field(
+    f: FieldValue | None,
+    *,
+    note: str | None = None,
+    section_id: str | None = None,
+) -> EvidenceRegion | None:
     if f is None or f.source_doc_id is None or f.source_page_index is None:
         return None
     return EvidenceRegion(
@@ -165,6 +170,7 @@ def _evidence_from_field(f: FieldValue | None, *, note: str | None = None) -> Ev
         value=f.value,
         bbox=f.page_bbox,
         note=note,
+        section_id=section_id,
     )
 
 
@@ -554,8 +560,14 @@ def page_aggregate_eval_v1(
         ]
 
     values: list[FieldValue] = []
+    # Spec 007 — track the section_id alongside each FieldValue so the
+    # evidence we emit later can carry it. Pages without a section
+    # assignment (non-BPCR or detection disabled) contribute None.
+    section_ids: list[str | None] = []
     for p in target_pages:
-        values.extend(p.get_fields(source_field))
+        page_values = p.get_fields(source_field)
+        values.extend(page_values)
+        section_ids.extend(p.section_id for _ in page_values)
     if not values:
         return [
             _unevaluated_finding(
@@ -595,7 +607,8 @@ def page_aggregate_eval_v1(
     rule_id, rule_version, severity, alcoa, gmp = _rule_core(rule)
 
     source_evidence = [
-        _evidence_from_field(v, note="source_aggregated") for v in values
+        _evidence_from_field(v, note="source_aggregated", section_id=sid)
+        for v, sid in zip(values, section_ids, strict=True)
     ]
     source_evidence = [e for e in source_evidence if e is not None]
 
@@ -650,12 +663,12 @@ def _filter_pages_by_selector(
 ) -> list[ExtractedPage]:
     page_filter = selector.get("page_filter", "all_bpcr_step_pages")
     if page_filter == "all_bpcr_step_pages":
-        return [p for p in pages if "bpcr_step_page" in p.tags]
-    if page_filter == "first_page":
-        return pages[:1]
-    if page_filter == "last_page":
-        return pages[-1:]
-    if page_filter == "by_index":
+        filtered = [p for p in pages if "bpcr_step_page" in p.tags]
+    elif page_filter == "first_page":
+        filtered = pages[:1]
+    elif page_filter == "last_page":
+        filtered = pages[-1:]
+    elif page_filter == "by_index":
         raw_indices = selector.get("page_indices") or []
         # Empty ``page_indices`` with ``page_filter=by_index`` is almost
         # always an authoring mistake: matching zero pages causes the
@@ -666,11 +679,24 @@ def _filter_pages_by_selector(
         wanted = {int(i) for i in raw_indices if isinstance(i, int) and i >= 1}
         if not wanted:
             return []
-        return [p for p in pages if p.page_index in wanted]
-    if page_filter == "by_tag":
+        filtered = [p for p in pages if p.page_index in wanted]
+    elif page_filter == "by_tag":
         tag = selector.get("page_tag")
-        return [p for p in pages if tag and tag in p.tags]
-    return pages
+        filtered = [p for p in pages if tag and tag in p.tags]
+    else:
+        filtered = list(pages)
+
+    # Spec 007 — restrict by detected section_id when the rule says so.
+    # Pages that never received a section assignment (detection was
+    # disabled or the detector failed) are intentionally excluded from
+    # the match set; the caller's `not target_pages` branch then emits
+    # an UNEVALUATED finding under the rule's existing fallback policy
+    # (FR-016). This is what we want — section-aware rules should
+    # degrade visibly rather than silently broaden their scope.
+    section_id = selector.get("section_id")
+    if section_id:
+        filtered = [p for p in filtered if p.section_id == section_id]
+    return filtered
 
 
 def _aggregate(kind: str, values: list[Any]) -> float:

@@ -1,0 +1,36 @@
+schema_version: "1.1"
+id: alcoa.accurate.bpcr-yield-section-vs-batch-target
+version: 1.0.0
+severity: major
+alcoa_tag: Accurate
+gmp_category: "Yield Reconciliation"
+description: |
+  Spec 007 example — same shape as the existing batch-target rule, but
+  scoped to a single BPCR section instead of every BPCR step page.
+
+  When the BPCR section detector tags the *Yield Calculation* section,
+  this rule sums dispensed weights only across pages whose
+  ``section_id == "yield_calculation"`` and compares the total to the
+  batch target weight on the BMR. Pages outside the section (e.g.
+  in-process QC, packaging, sign-off) are excluded.
+
+  When section detection is disabled or the detector fails, no pages
+  match the selector and the rule degrades per the ``fallback``
+  policy below — exactly the behaviour authors expect from the
+  existing fallback contract (Spec 007 FR-016).
+context_object:
+  scope: page_aggregate
+  page_selector:
+    document_role: BPCR
+    page_filter: all_bpcr_step_pages
+    section_id: yield_calculation
+  aggregation: sum
+fallback: flag_as_unevaluated
+source:
+  field: dispensed_weight_kg
+expected:
+  field: batch_target_weight_kg
+  document_ref_hint: BMR
+tolerance:
+  kind: percent
+  value: 0.5

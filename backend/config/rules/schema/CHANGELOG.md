@@ -30,3 +30,16 @@ Initial published schema. Establishes the contract for:
 - Optional `superseded_by` (string) — informational pointer to the replacement rule identity (typically `<rule_id>@<version>`). Not required when `deprecated: true`, but strongly recommended.
 
 Both fields are additive and do not require bumping the schema major version — rules authored before the addition continue to validate unchanged.
+
+---
+
+## 1.1 — 2026-04-29
+
+Additive over 1.0 (Spec 007 — BPCR layout-aware section detection).
+
+- `page_selector.section_id` (optional string, slug pattern `^[a-z][a-z0-9_]*$`) — restrict the page selector to pages whose detected `section_id` matches. Populated post-extraction by the BPCR section tagger; pages with no section assignment never match.
+- The literal `unsectioned` is reserved for the detector's filler spans and is rejected by the schema (`not: { const: "unsectioned" }`) so authors cannot accidentally target the sentinel.
+
+The change is purely additive. v1.0 rules MUST continue to validate against the v1.0 schema unchanged. The loader picks the schema by the rule's pinned `schema_version`; v1.0 and v1.1 schemas both ship in the repo.
+
+When `section_id` is set on a rule but the run produced no section assignments (detection disabled or failed), the engine applies the rule's existing `fallback` policy — no new fallback kind is introduced.

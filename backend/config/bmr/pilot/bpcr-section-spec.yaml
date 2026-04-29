@@ -1,0 +1,82 @@
+# BPCR Section Spec — pilot
+#
+# PLACEHOLDER values derived from typical pharma BPCR layouts. Replace
+# with the client-confirmed canonical list after the call (Spec 007,
+# Open Question #1).
+#
+# Bump `spec_version` whenever this file changes meaning. Append to
+# bpcr-section-spec.CHANGELOG.md alongside every edit.
+spec_version: "1.0.0-pilot"
+
+sections:
+  - section_id: cover
+    display_name: "Cover Page"
+    aliases:
+      - "Batch Production and Control Record"
+    regex:
+      - "^\\s*Batch\\s+Production\\s+and\\s+Control\\s+Record\\b"
+      - "^\\s*BPCR\\s+Cover\\b"
+    bands: [top_of_page]
+
+  - section_id: material_dispensing
+    display_name: "Material Dispensing"
+    aliases:
+      - "Dispensing Record"
+      - "Raw Material Dispensing"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: granulation
+    display_name: "Granulation"
+    aliases:
+      - "Wet Granulation"
+      - "Dry Granulation"
+    bands: [top_of_page]
+
+  - section_id: compression
+    display_name: "Compression"
+    aliases:
+      - "Tablet Compression"
+    bands: [top_of_page]
+
+  - section_id: coating
+    display_name: "Coating"
+    aliases:
+      - "Film Coating"
+    bands: [top_of_page]
+
+  - section_id: in_process_qc
+    display_name: "In-Process Quality Control"
+    aliases:
+      - "In-Process QC"
+      - "IPC"
+      - "In-Process Controls"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: yield_calculation
+    display_name: "Yield Calculation"
+    aliases:
+      - "Yield Reconciliation"
+      - "Process Yield"
+    bands: [top_of_page, top_of_table, mid_page]
+    requires_emphasis_for_mid_page: true
+
+  - section_id: packaging
+    display_name: "Packaging"
+    aliases:
+      - "Bulk Packaging"
+    bands: [top_of_page]
+
+  - section_id: reconciliation
+    display_name: "Reconciliation"
+    aliases:
+      - "Material Reconciliation"
+      - "Final Reconciliation"
+    bands: [top_of_page, top_of_table]
+
+  - section_id: sign_off
+    display_name: "Sign-Off and Approval"
+    aliases:
+      - "Final Approval"
+      - "Quality Approval"
+      - "QA Sign-Off"
+    bands: [top_of_page]

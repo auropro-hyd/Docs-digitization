@@ -39,6 +39,11 @@ class EvidenceRegion(BaseModel):
     value: Any | None = None
     bbox: tuple[float, float, float, float] | None = None
     note: str | None = None
+    # Spec 007 — copied through from the matched ExtractedPage when the
+    # page belongs to a sectioned document (BPCR with detection on).
+    # Stays ``None`` for non-BPCR pages and for runs with section
+    # detection disabled — keeps existing audit-trail JSON noise-free.
+    section_id: str | None = None
 
     model_config = ConfigDict(frozen=True)
 

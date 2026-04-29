@@ -82,6 +82,7 @@ def build_bmr_graph(
     package_store: PackageStore,
     repo_root: Path,
     extractor: ExtractorPort | None = None,
+    section_enricher: Any | None = None,
     checkpointer: Any | None = None,
 ) -> Any:
     """Compile and return the BMR audit LangGraph.
@@ -91,12 +92,21 @@ def build_bmr_graph(
     behaviour (``extraction.json`` sidecar); production wiring passes
     :class:`~app.bmr.workflow.extractor.OCRBackedExtractor` via the
     service constructor.
+
+    ``section_enricher`` is the Spec 007 post-extraction hook. None
+    (default) means: section detection is wired off and existing
+    behaviour is preserved exactly. Production composes a real
+    enricher via the service constructor.
     """
 
     builder: StateGraph = StateGraph(BMRRunState)
 
     ingest_stage = make_ingest_stage(package_store)
-    extraction_stage = make_extraction_stage(package_store, extractor=extractor)
+    extraction_stage = make_extraction_stage(
+        package_store,
+        extractor=extractor,
+        section_enricher=section_enricher,
+    )
     compliance_stage = make_compliance_stage(repo_root=repo_root)
 
     builder.add_node(
