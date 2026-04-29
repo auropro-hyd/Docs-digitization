@@ -45,6 +45,14 @@ class ExtractedPage(BaseModel):
     # extraction completes. ``None`` means: not a BPCR page, OR section
     # detection was disabled, OR the detector failed for this document.
     section_id: str | None = None
+    # Spec 007 follow-up — reviewer-facing metadata stamped alongside
+    # ``section_id`` so the report surface can show *why* a page was
+    # tagged the way it was without re-running the detector. All
+    # three are populated together when the tagger runs; when
+    # ``section_id`` is ``None`` they are too.
+    section_display_name: str | None = None
+    section_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    section_detection_method: str | None = None
 
     model_config = ConfigDict(frozen=True)
 

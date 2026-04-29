@@ -529,12 +529,21 @@ def _project_findings(findings: list[FindingDraft]) -> tuple[list[FindingRecord]
 
 
 def _bpcr_section_summary(extracted: ExtractedPackage | None) -> list[dict[str, Any]]:
-    """Project the BPCR pages' ``section_id`` into a flat reviewer summary.
+    """Project the BPCR pages' section assignment into a flat reviewer summary.
 
     Empty when no BPCR pages exist or none carry a section_id. The
     section enricher tags every BPCR page (including ``unsectioned``)
     when it runs, so an empty list here is the operator's signal that
     detection didn't run end-to-end.
+
+    Each row carries the four pieces of information a reviewer needs
+    to judge the assignment without re-running the CLI: the canonical
+    ``section_id`` (what rules join on), the ``display_name`` (what
+    they read), the detector's ``confidence`` (whether to trust a
+    weak alias-only match), and the ``detection_method`` (which band
+    matched — top_of_page vs. mid_page vs. alias-only). The metadata
+    keys are absent on rows where the detector inherited or fell back
+    to ``unsectioned`` so the JSON shape is unambiguous.
     """
 
     if extracted is None:
@@ -545,13 +554,18 @@ def _bpcr_section_summary(extracted: ExtractedPackage | None) -> list[dict[str, 
             continue
         if page.section_id is None:
             continue
-        summary.append(
-            {
-                "doc_id": page.doc_id,
-                "page_index": page.page_index,
-                "section_id": page.section_id,
-            }
-        )
+        row: dict[str, Any] = {
+            "doc_id": page.doc_id,
+            "page_index": page.page_index,
+            "section_id": page.section_id,
+        }
+        if page.section_display_name is not None:
+            row["display_name"] = page.section_display_name
+        if page.section_confidence is not None:
+            row["confidence"] = page.section_confidence
+        if page.section_detection_method is not None:
+            row["detection_method"] = page.section_detection_method
+        summary.append(row)
     return summary
 
 
