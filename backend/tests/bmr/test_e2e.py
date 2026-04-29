@@ -334,7 +334,10 @@ def test_v0_quickstart_legibility_hitl_and_events(
         # Drain until we see the terminal event. The starlette test
         # transport schedules queued envelopes before unblocking
         # ``receive_json``, so this loop will not hang in practice.
-        for _ in range(6):
+        # Limit accommodates the per-stage progress events
+        # (5 stages × 2 events = 10) plus the lifecycle events
+        # ``run.legibility_decided`` and ``run.completed``.
+        for _ in range(20):
             event = ws.receive_json()
             seen.append(event["event"])
             if event["event"] == "run.completed":

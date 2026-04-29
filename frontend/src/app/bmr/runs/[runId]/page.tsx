@@ -5,6 +5,8 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { BpcrSectionsPanel } from "@/components/bmr/bpcr-sections-panel";
+import { RunStageProgress } from "@/components/bmr/run-stage-progress";
+import { useBmrRunEvents } from "@/hooks/useBmrRunEvents";
 import { getBmrRun } from "@/lib/api";
 import type { RunReport } from "@/types/bmr";
 
@@ -23,6 +25,13 @@ export default function BmrRunDetailPage({ params }: PageProps) {
   const [report, setReport] = useState<RunReport | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Subscribe to the live events stream so an in-flight run shows
+  // stage-by-stage progress instead of just a static "running" badge.
+  // The hook returns a small reduced state; on a finished run the
+  // socket replays the snapshot at connect and then immediately
+  // closes, which is fine — the UI also has the persisted report.
+  const stageProgress = useBmrRunEvents(runId);
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -37,6 +46,15 @@ export default function BmrRunDetailPage({ params }: PageProps) {
       cancelled = true;
     };
   }, [runId]);
+
+  // Re-fetch the report once the live stream sees a terminal event so
+  // the findings + bpcr_sections panels show the just-landed data.
+  useEffect(() => {
+    if (!stageProgress.finished) return;
+    getBmrRun(runId)
+      .then(setReport)
+      .catch(() => {});
+  }, [stageProgress.finished, runId]);
 
   if (error) {
     return (
@@ -66,6 +84,10 @@ export default function BmrRunDetailPage({ params }: PageProps) {
   return (
     <main className="container mx-auto space-y-6 p-6">
       <RunHeader report={report} />
+      <RunStageProgress
+        progress={stageProgress}
+        fallbackStatus={report.status}
+      />
       <BpcrSectionsPanel sections={report.bpcr_sections} />
       <FindingsSummary report={report} />
     </main>
