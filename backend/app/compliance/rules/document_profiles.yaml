@@ -305,6 +305,7 @@ document_profiles:
 # Used by applicability matching to resolve OCR/LLM naming variance.
 section_aliases:
   # ── Existing canonical aliases ─────────────────────────────────────────────
+  batch_production_and_control_record: batch_record
   manufacturing_operation: manufacturing_operations
   manufacturing_operation_log: manufacturing_operations
   manufacturing_log: manufacturing_operations

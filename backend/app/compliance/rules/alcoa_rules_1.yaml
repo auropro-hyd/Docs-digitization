@@ -1,0 +1,174 @@
+# ═══════════════════════════════════════════════════════════════
+#  ALCOA++ Rule Configuration — REFERENCE EXEMPLARS ONLY
+#
+#  Two of the three evaluation patterns Akhilesh's rule-author skill
+#  needs to repopulate against the new document_profiles.yaml:
+#
+#    Rule 1 → SAME-PAGE INDIVIDUAL
+#    Rule 2 → AGGREGATED WITHIN A SINGLE DOCUMENT
+#
+#  The third pattern (CROSS-DOCUMENT) lives in reconciliation_rules.yaml.
+#
+#  All sample / page / section names below resolve in the NEW
+#  document_profiles.yaml taxonomy (batch_record + 9-doc-type model).
+#
+#  Historical rule overlays are preserved in alcoa_rules.archived.yaml.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: observation
+  evaluation_mode: llm
+  applicable_document_types: [batch_record]
+  excluded_document_types: []
+  applicable_page_types: []
+  applicable_section_types: []
+  cross_section_requirements: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Attributable ──────────────────────────────────────────────
+  attributable:
+    severity: major
+    applicable_section_types: [batch_record]
+    rules:
+      1:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        # SAME-PAGE INDIVIDUAL pattern.
+        # Akhilesh: "is the entry there or not, are there any strike-offs"
+        keywords: ["done by", "checked by", "signature", "initial", "date", "time"]
+        pass_criteria: |
+          Every "Done by", "Checked by", signature/initial column, time
+          column, and date column on this page is populated with a
+          legible value.
+
+          Acceptable entries include:
+          - Operator names, codes, or initials (including short codes like "12")
+          - Handwritten signatures or their OCR representation (e.g. "[Signature]")
+          - An image element (embedded image or visual block) in the cell,
+            with or without an accompanying date — this represents a handwritten
+            signature captured visually and counts as a valid entry
+          - A date alone in a Done by / Checked by cell (indicates the field
+            was signed with a date, even if the operator name was not OCR-captured)
+          - Dates in any standard format (e.g. "30/09/2025", "03/10/2025")
+          - Dashes or dash sequences ("--", "---", "----") in Done by / Checked by
+            columns — these indicate the step was not required for that row and
+            are valid completion markers.
+          - "N.A.", "NA", or "N/A" in Done by / Checked by columns — these are
+            valid operator annotations meaning the step was not applicable.
+          - Caret symbols ("^") in Done by / Checked by columns — these are OCR
+            artifacts produced when a diagonal strike-through line crosses a table.
+            A cell containing only "^" means the table (or that section) has been
+            cancelled/struck through and must NOT be flagged as a missing entry.
+
+          Evaluate based solely on the OCR-extracted text content of the page.
+          Do NOT use metadata fields such as "Signatures detected" or
+          "Handwritten regions" counts to judge compliance — those counts are
+          unreliable and must be ignored.
+
+          A row is non-compliant only when a Done by / Checked by / signature /
+          date / time cell is completely blank or empty (no text at all).
+          Strikethroughs over previously written entries are also non-compliant.
+
+          If a row at the bottom of the page appears visually cut off or
+          truncated due to OCR extraction limits (i.e. the row is partially
+          visible and its operator columns are simply not captured), do NOT
+          flag it as non-compliant — treat it as outside the scope of this
+          page's evaluation.
+
+          MANDATORY OVERRIDE — WEIGHING / CONTAINER TABLES:
+          For any table whose columns include "Weighed by" and "Checked by"
+          (e.g. Table-VI, Table-VII, Table-VIII, any container/weighing record):
+          YOU MUST return COMPLIANT if row 1 contains a valid entry, regardless
+          of what you observe in rows 2-N. This is a hard document-layout
+          convention, not a judgment call. The printed form has "Weighed by"
+          and "Checked by" as a tall merged cell spanning all container rows;
+          OCR always renders this as one filled row 1 and blank rows 2-N.
+          Blank rows 2-N in these two columns ARE correct and expected.
+          Do NOT flag them. Do NOT ask for structural evidence of merging.
+          Do NOT override this instruction based on your observation of blank
+          cells. One valid entry anywhere in the column = table is COMPLIANT.
+        skip_conditions:
+          - "page is a cover_page or revision_summary (no operator entries expected)"
+          - "a table on the page is diagonally struck through — evidenced by: (a) OCR text or a note describing a diagonal line across the table, or (b) the Done by/Checked by cells in the table contain only '^' symbols (the OCR artifact of a diagonal strike mark, even if other columns like Time/Temperature contain apostrophes or other artifacts) — then that entire table is not_applicable; do NOT flag any blank cells inside it; evaluate the rest of the page independently"
+          - "an operation step row where ALL operational fields (time From, time To, duration, temperature, remarks, Done by, Checked by) are blank AND the step text contains a conditional instruction (e.g. 'If ... Otherwise proceed to Step N') — the step was not executed and is not_applicable; do not flag its blank operator fields"
+          - "a table has a 'Weighed by' and 'Checked by' header (weighing record or container table, e.g. Table-VI, Table-VII, Table-VIII, or any table whose columns include Container No., Tare Weight, Gross Weight) — rows 2 through N of the Weighed by / Checked by columns are always intentionally blank because these are physically merged cells in the printed form; do NOT evaluate rows 2-N of these columns at all; the table passes if row 1 has a valid entry"
+        notes: |
+          Reference exemplar for the SAME-PAGE INDIVIDUAL pattern.
+          Use this as the template for any rule that returns a verdict
+          per page based on field presence / completeness.
+
+  # ── Contemporaneous ──────────────────────────────────────────
+  contemporaneous:
+    severity: major
+    applicable_section_types: [batch_record]
+    rules:
+      2:
+        # AGGREGATED-WITHIN-A-DOCUMENT pattern (single page).
+        evaluation_strategy: text
+        keywords: ["time", "hr-min", "from", "to", "duration", "date & time of starting"]
+        pass_criteria: |
+          This rule applies only to pages with a step-level time table containing
+          "From" and "To" (or "Time (Hr-Min)") columns. Times may appear in
+          HH-MM (hyphen) or HH:MM (colon) format — both are treated identically
+          as 24-hour clock values (e.g., "09-45", "23-10", "00-15", "14:20").
+
+          Steps must be sequential and non-overlapping. For each consecutive pair
+          of steps (N-1 → N):
+            (a) When step N-1 has a recorded "To" time (not N.A. or blank):
+                the "From" time of step N must be ≥ the "To" time of step N-1.
+                A step starting before the previous step has finished is NON-COMPLIANT.
+            (b) When step N-1's "To" is N.A. or blank (single-point steps such as
+                inspections): the "From" time of step N must be ≥ the "From" time
+                of step N-1.
+
+          Overnight crossing — between consecutive rows:
+            If a time decrease (hour drop) occurs between step N-1 and step N
+            (e.g., 23-10 → 00-10), this is a valid midnight crossing if it can be
+            explained by a single calendar-day advance on the page. Calendar dates
+            visible in any date field on the row (Done By, Checked By, Verified By QA,
+            or similar) advancing by one day at or after the crossing point are
+            sufficient confirmation — no handwriting metadata is required.
+            A second unexplained decrease in hour on the same page is NON-COMPLIANT.
+
+          Overnight crossing — within a single row (From > To numerically):
+            A single operation row where "To" is numerically less than "From"
+            (e.g., From=15-10, To=08-30) represents a valid overnight operation if
+            the Duration field confirms the overnight span
+            (e.g., Duration=17-20 means 17 h 20 m; From + Duration ≈ To next day).
+            Calendar date advancement visible in any date column of that row
+            further confirms this. Such a row counts as one midnight crossing for
+            the page and must NOT be flagged as non-compliant.
+
+          Page-level start anchor:
+            If a "Date & Time of starting" or equivalent header is present, its time
+            component must be ≤ the earliest "From" time on the page (using
+            midnight-aware comparison if the page spans midnight).
+
+          COMPLIANT: All consecutive step pairs satisfy (a) or (b) above, with at most
+          one valid midnight crossing (between rows or within a single row), and the
+          start anchor (if present) is ≤ the first "From" time. A page where only
+          one step has valid time data after excluding fully-N.A. placeholder rows
+          is COMPLIANT — there are no consecutive pairs to violate.
+
+          NON-COMPLIANT: Any step's "From" time is earlier than the "To" time of the
+          preceding step (overlap) without a midnight crossing explanation, or a time
+          decrease cannot be explained by a single midnight crossing, or the start
+          anchor is later than the first "From" time.
+        skip_conditions:
+          - "Page has no step-level time table with 'From' / 'To' columns or 'Time (Hr-Min)' header -> not_applicable"
+          - "All time cells on the page are blank, N.A., or '—' (no actual time values to evaluate) -> not_applicable"
+          - "A step row where From, To, Duration, and all operator fields (Done By, Checked By) are all N.A. is a placeholder or instruction-only row — exclude it from time sequence evaluation entirely -> not_applicable for that row"
+          - "Page is a cover_page, revision_summary, equipment_list, or material_dispensing section with no operation time table -> not_applicable"
+        notes: |
+          Reference exemplar for the AGGREGATED-WITHIN-A-DOCUMENT
+          pattern. The rule's verdict depends on relationships between
+          multiple values present on the same page. Overnight crossings
+          (e.g., 23-xx → 00-xx) are valid; overlapping step times are not.

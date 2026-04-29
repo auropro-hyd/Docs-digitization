@@ -1,0 +1,379 @@
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  evaluation_strategy: text
+  #applicable_document_types: [batch_record]
+  excluded_document_types: []
+  applicable_page_types: []
+  applicable_section_types: [cover_page]
+  cross_section_requirements: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Document Control and Approval ─────────────────────────────
+  document_control_and_approval:
+    severity: major
+    #applicable_section_types: [cover_page]
+    applicable_document_types: [cover_page]
+    rules:
+      1:
+        keywords: ["prepared by", "manufacturing initiator"]
+        pass_criteria: |
+          The cover page contains a "Prepared By" entry (or equivalent label such as
+          "Prepared by", "Initiated by") with:
+            (a) A non-empty name or employee identifier in the Name column, AND
+            (b) A title or role that includes "Manufacturing Initiator" or a
+                recognisably equivalent designation, AND
+            (c) A date associated with that entry.
+
+          OCR tolerance: name values may include employee codes in parentheses
+          (e.g., "Y, CHINNA KOTI REDDY (21977)"); these are valid.
+          The title field comparison is case-insensitive.
+        skip_conditions:
+          - "Page is not a cover_page (no preparation/review/approval table present) -> not_applicable"
+
+      2:
+        keywords: ["reviewed by", "manufacturing hod"]
+        applicable_document_types: [cover_page]
+        pass_criteria: |
+          The cover page contains a "Reviewed By" entry (or equivalent label) with:
+            (a) A non-empty name or employee identifier in the Name column, AND
+            (b) A title or role that includes "Manufacturing HOD" or a recognisably
+                equivalent designation (e.g., "Mfg. HOD", "Manufacturing Head"), AND
+            (c) A date associated with that entry.
+
+          OCR tolerance: name values may include employee codes in parentheses.
+          The title field comparison is case-insensitive.
+        skip_conditions:
+          - "Page is not a cover_page (no preparation/review/approval table present) -> not_applicable"
+
+      3:
+        keywords: ["reviewed by", "quality assurance", "qa"]
+        applicable_document_types: [batch_record]
+        applicable_section_types: [cover_page]
+        pass_criteria: |
+          The cover page contains a review entry with:
+            (a) A non-empty name or employee identifier in the Name column, AND
+            (b) A title or role that includes "Quality Assurance" or "QA" in a
+                review capacity (e.g., "Quality Assurance Review", "QA Reviewer",
+                "Quality Assurance"), AND
+            (c) A date associated with that entry.
+
+          The entry need not carry a separate "Reviewed By" row label — it may appear
+          as a continuation row within the Reviewed By block (i.e., no label in the
+          first column) as long as the title column contains a QA review designation.
+
+          OCR tolerance: name values may include employee codes in parentheses.
+          The title field comparison is case-insensitive.
+        skip_conditions:
+          - "Page is not a cover_page (no preparation/review/approval table present) -> not_applicable"
+
+      4:
+        keywords: ["approved by", "quality assurance hod"]
+        pass_criteria: |
+          The cover page contains an "Approved By" entry (or equivalent label) with:
+            (a) A non-empty name or employee identifier in the Name column, AND
+            (b) A title or role that includes "Quality Assurance HOD" or a
+                recognisably equivalent designation (e.g., "QA HOD", "Quality
+                Assurance Head"), AND
+            (c) A date associated with that entry.
+
+          OCR tolerance: name values may include employee codes in parentheses.
+          The title field comparison is case-insensitive.
+        skip_conditions:
+          - "Page is not a cover_page (no preparation/review/approval table present) -> not_applicable"
+
+  # ── Pre-Manufacturing Checks ──────────────────────────────────
+  pre_manufacturing_checks:
+    severity: major
+    applicable_document_types: []
+    applicable_section_types: []
+    rules:
+      5:
+        keywords: ["check list before starting", "before starting the batch", "before starting batch"]
+        pass_criteria: |
+          APPLICABILITY CHECK (evaluate this first):
+          This rule applies ONLY to pages whose title or heading contains
+          "Check List Before Starting the Batch" or "Checklist Before Starting Batch"
+          or an equivalent pre-start checklist heading.
+          If the page heading is "Check List for Cross Contamination", "Check List for
+          Reactor Operations", or any other checklist title, return NOT_APPLICABLE
+          immediately — do not evaluate further.
+
+          For pages that are the pre-start checklist:
+
+          Every inspection row in the YES/NO table must have a non-blank entry in
+          BOTH the YES column AND the NO column.
+
+          IMPORTANT — what counts as non-blank:
+            - A tick or checkmark: ✓, √, v, or any OCR equivalent
+            - A dash or hyphen: -, —, --, --- (a dash IS a valid entry, NOT blank)
+            - The text "NA", "N.A.", "N/A", or "not applicable"
+            - Any other written character, initial, or number
+
+          A cell is blank ONLY if it contains absolutely nothing — no character
+          at all. A dash (-) or (—) is NOT blank.
+
+          A completely empty cell (zero characters) in the YES or NO column of any
+          inspection row is NON-COMPLIANT.
+
+          If a sign-off row or signature line appears at the bottom of the form
+          (e.g., "Performed By", "Checked By", "Signature", "Date"), it must also
+          contain a non-blank entry — a completely empty sign-off cell is NON-COMPLIANT.
+        skip_conditions:
+          - "Page heading or title is not 'Check List Before Starting the Batch' (e.g., page is cross contamination checklist or reactor operations checklist) -> not_applicable"
+
+      6:
+        keywords: ["cross contamination", "cross-contamination"]
+        pass_criteria: |
+          APPLICABILITY CHECK (evaluate this first):
+          This rule applies ONLY to pages whose title or heading contains
+          "Check List for Cross Contamination" or equivalent.
+          If the page heading is "Check List Before Starting the Batch", "Check List
+          for Reactor Operations", or any other checklist title, return NOT_APPLICABLE
+          immediately — do not evaluate further.
+
+          For pages that are the cross-contamination checklist:
+
+          IMPORTANT — what counts as non-blank:
+            - A tick or checkmark: ✓, √, v, or any OCR equivalent
+            - A dash or hyphen: -, —, --, --- (a dash IS a valid entry, NOT blank)
+            - The text "NA", "N.A.", "N/A", or "not applicable"
+            - Any other written character, initial, signature, or number
+          A cell is blank ONLY if it contains absolutely nothing — zero characters.
+
+          For every inspection row:
+            (a) Yes, No, and N.A. columns: each cell must be non-blank.
+                A completely empty cell in Yes, No, or N.A. is NON-COMPLIANT.
+
+            (b) Done By column: must contain a non-blank entry — an initial, employee
+                number, or signature (including "[Signature]", "[Signature: X]",
+                a name, or a code) AND a date.
+                EXCEPTION: If the entire row has N.A. ticked (all three Yes/No/N.A.
+                cells indicate not applicable), the Done By column may contain a
+                dash or equivalent instead of a signature.
+
+            (c) Checked By column: same requirement as Done By.
+
+          A completely empty Done By or Checked By cell on an active (non-NA) row
+          is NON-COMPLIANT.
+        skip_conditions:
+          - "Page heading or title is not 'Check List for Cross Contamination' (e.g., page is pre-start checklist or reactor operations checklist) -> not_applicable"
+
+      7:
+        keywords: ["reactor operations", "check list for reactor", "checklist for reactor"]
+
+        pass_criteria: |
+          APPLICABILITY CHECK (evaluate this first):
+          This rule applies to pages that are part of the "Check List for Reactor
+          Operations" form. Apply the following logic in order:
+
+          STEP 1 — Exclusion by heading text (when heading is visible in OCR):
+            If the OCR text contains a visible heading that is clearly a DIFFERENT
+            checklist type — such as "Check List Before Starting the Batch" or
+            "Check List for Cross Contamination" — return NOT_APPLICABLE immediately.
+
+          STEP 2 — Inclusion by heading text:
+            If the OCR text contains "Check List for Reactor Operations" (or
+            equivalent), the page is APPLICABLE — proceed to evaluate.
+
+          STEP 3 — Inclusion by table structure (when heading is in an image):
+            Some pages render the form header as an embedded image, so no heading
+            text appears in the OCR. For these pages, apply this rule if the page
+            contains a multi-equipment inspection table with ALL of the following:
+              - Multiple sets of YES / NO / NA sub-columns (typically 3 equipment
+                columns × 3 sub-columns = 9 data columns per inspection row)
+              - Numbered inspection rows with reactor-related check items (earthing,
+                agitator, equipment cleanliness, SS bins, sign-off rows, etc.)
+              - No conflicting checklist heading visible in OCR text
+            If the table structure matches, treat the page as a reactor checklist
+            continuation page and proceed to evaluate.
+
+          For pages that are the reactor operations checklist:
+
+          IMPORTANT — what counts as non-blank:
+            - A tick or checkmark: ✓, √, v, or any OCR equivalent
+            - A dash or hyphen: -, —, --, --- (a dash IS a valid entry, NOT blank)
+            - The text "NA", "N.A.", "N/A", or "not applicable"
+            - Any other written character, initial, or number
+          A cell is blank ONLY if it contains absolutely nothing — zero characters.
+          Do NOT treat a dash (- or —) as blank under any circumstances.
+
+          The form has multiple equipment columns per page (typically 3), each with
+          YES, NO, NA sub-columns for every inspection row.
+
+          For EVERY equipment column (active or inactive), every YES/NO/NA cell of
+          every inspection row must be non-blank. A dash (-) in a cell means "not
+          applicable for this equipment" and IS compliant. A truly empty cell (no
+          character at all) is NON-COMPLIANT.
+
+          Sign-off rows ("Performed By Signature & Date", "Checked By Signature &
+          Date") at the bottom of the form: each cell must be non-blank for equipment
+          columns that have an Equipment No. or Date entry in their header. A dash
+          counts as compliant. A completely empty sign-off cell is NON-COMPLIANT.
+          If no sign-off rows appear on this page (multi-page forms have sign-offs
+          only on the last page), that is acceptable — not a violation.
+        skip_conditions:
+          - "Page heading or title is not 'Check List for Reactor Operations' (e.g., page is pre-start checklist or cross contamination checklist) -> not_applicable"
+
+  # ── Raw Material Dispensing and Weighing ──────────────────────────────────
+  raw_material_dispensing_and_weighing:
+    severity: major
+    applicable_document_types: [batch_record]
+    applicable_section_types: [material_dispensing]
+    rules:
+      8:
+        keywords: ["net quantity", "net wt", "net weight", "done by", "checked by", "dispensed"]
+        pass_criteria: |
+          For each raw material row in the dispensing/weighing table:
+
+          STEP 1 — Identify N/A rows (skip entirely):
+            If ALL of the following columns for a row contain only dashes (-, --, ---,
+            ----) or are blank — Net Qty, Done By, and Checked By — treat that row as
+            "not applicable / not used in this batch step" and do NOT flag it as
+            non-compliant.
+
+          STEP 2 — Evaluate active rows:
+            An active row is any row where at least one of Net Qty, Done By, or Checked
+            By contains a non-dash value. For every active row:
+            (a) Net quantity (Net Wt., Net Weight, Net Qty, or equivalent): must contain
+                a non-blank, non-dash numeric value, AND
+            (b) "Done By" (or equivalent: "Performed By", "Dispensed By"): must contain
+                a non-blank entry — a name, initial, employee code, or the OCR
+                placeholder "[Signature]" / "[Signature: X]" counts as valid, AND
+            (c) "Checked By" (or equivalent: "Verified By"): same requirement as Done
+                By — "[Signature]" in OCR text is valid evidence of a signature, AND
+            (d) A date associated with the Done By / Checked By entries.
+
+          OCR tolerance:
+            - "[Signature]" or "[Signature: X]" placeholders in OCR text are valid
+              signature evidence. Do NOT rely on structured metadata signature counts
+              to override OCR text evidence.
+            - Handwritten entries and employee codes in parentheses are valid.
+            - Net Qty abbreviations include "Net Wt.", "Net Weight", "Net Qty.", etc.
+
+          If the dispensing table spans multiple pages, evaluate all visible active rows
+          on this page independently.
+        skip_conditions:
+          - "Page has no raw material dispensing or weighing table -> not_applicable"
+          - "Page is a cover page, revision summary, or administrative section with no dispensing records -> not_applicable"
+
+  # ── Equipment Cleaning and Final Release ─────────────────────────────────
+  equipment_cleaning_and_final_release:
+    severity: major
+    applicable_document_types: [batch_record]
+    applicable_section_types: [cleaning_log]
+    rules:
+      9:
+        applicable_section_types: [cleaning_log]
+        keywords: ["equipment cleaning", "cleaning details", "previous batch", "cleaned by", "checked by"]
+        pass_criteria: |
+          The equipment cleaning log contains a cleaning record for each major piece of
+          equipment used in the batch. For each equipment row or entry:
+            (a) Equipment name or identifier is present (e.g., reactor, centrifuge, drier, mill),
+            (b) Previous batch number or "Prev. B.No." entry is present and non-blank,
+            (c) Cleaning date and/or cleaning time is recorded,
+            (d) A "Cleaned By" or "Done By" entry with a non-blank name, initial, or
+                employee code (including OCR placeholders like "[Signature]"), AND
+            (e) A "Checked By" or "Verified By" entry with a non-blank name, initial,
+                or employee code.
+
+          OCR tolerance: handwritten entries, employee codes in parentheses, and
+          "[Signature]" placeholders are all valid evidence of a signature.
+        skip_conditions:
+          - "Page has no equipment cleaning table or cleaning log entries -> not_applicable"
+          - "Page is a cover page, checklist, or manufacturing operation with no cleaning records -> not_applicable"
+
+      10:
+        applicable_section_types: [deviation, cleaning_log]
+        keywords: ["deviation", "deviations", "description of deviations"]
+        pass_criteria: |
+          The deviation section is either:
+            (a) Explicitly completed with at least one recorded deviation entry containing
+                a description, date, and personnel signature/initials, OR
+            (b) Blank, with no entries, indicating no deviations were observed during
+                batch processing. A blank deviation section is compliant — it is
+                interpreted as "no deviations reported."
+
+          A section that contains only dashes, "NIL", "None", "N/A", or similar
+          nil-indicators is also compliant.
+
+          Do NOT flag a blank deviation section as non-compliant. The absence of
+          entries is the expected state when no deviations occurred.
+        skip_conditions:
+          - "Page has no deviation section or deviation log heading -> not_applicable"
+
+      11:
+        applicable_section_types: [cleaning_log, deviation]
+        keywords: ["approved manufacturing chemist", "approved quality control chemist", "qa person", "sign off", "final release", "manufacturing chemist"]
+        evaluation_strategy: text_and_vision
+        pass_criteria: |
+          The final sign-off section must contain complete entries from all three
+          required personnel roles:
+            (a) Manufacturing Chemist (or "Approved Manufacturing Chemist"): a non-blank
+                name or signature AND a legible date entry,
+            (b) Quality Control Chemist (or "Approved Quality Control Chemist"): a
+                non-blank name or signature AND a legible date entry,
+            (c) QA Person (or "Quality Assurance Person"): a non-blank name or signature
+                AND a legible date entry.
+
+          LEGIBILITY REQUIREMENT for dates:
+            A date is compliant if it contains recognisable day/month/year components
+            (e.g., "10/10/2025", "10-10-2025"). A date entry that is illegible,
+            overwritten with printed text, or cannot be read is NON-COMPLIANT and
+            must be flagged as "Attention Required."
+
+          OCR tolerance: names may include employee codes; "[Signature]" in OCR text
+          is valid evidence of a signature but does NOT substitute for a date entry.
+        skip_conditions:
+          - "Page has no final sign-off table with Manufacturing, QC, and QA personnel rows -> not_applicable"
+
+      12:
+        applicable_section_types: [bpcr_review_checklist]
+        applicable_document_types: [batch_record, batch_closure]
+        keywords: ["bpcr review", "batch record review", "review checklist", "manufacturing", "quality assurance"]
+        pass_criteria: |
+          For each BPCR Review Checklist page, evaluate only what is visible on this page:
+
+          STEP 1 — Identify header rows vs. checklist rows:
+            A header row is a row whose left-most column contains a section title (e.g.,
+            "Manufacturing BPCR Review", "QA BPCR Review", "S.No.", "Particulars") rather
+            than a numbered item or checkbox. Header rows are NOT checklist items and must
+            NOT be evaluated for tick/check compliance.
+
+          STEP 2 — Checklist items (required on every page):
+            For each numbered checklist row (i.e., rows with S.No. 01, 02, 03, etc.):
+              The tick/check column must be non-blank (ticks ✓, crosses X, "Yes", "No",
+              dashes -, or any other non-empty character). A blank cell in a numbered
+              checklist row is NON-COMPLIANT.
+            The remarks/comments column may contain dashes (-) or "N/A" — these are valid.
+
+          STEP 3 — Signatures:
+            CRITICAL SIGNATURE RULE:
+              "[Signature]" or "[Signature: X]" in the OCR text IS a valid handwritten
+              signature. This is how the OCR system renders handwritten content.
+              DO NOT use structured metadata "Signatures detected: N" to override OCR
+              text evidence. If the OCR text shows "[Signature]" with an associated date
+              (e.g., "[Signature] 10/10/2025"), treat this as a fully compliant sign-off.
+
+            WHEN signatures are required:
+              Signatures are required ONLY on pages where a Sign/Date field is present
+              AND at least one of the following is true:
+                (a) The page contains NO numbered checklist rows (it is a sign-off-only page), OR
+                (b) At least one "[Signature]" or date entry is already present in the
+                    sign-off area (indicating the sign-off was attempted on this page).
+              If a Sign/Date line is present but blank AND the page also contains numbered
+              checklist rows, treat the blank Sign/Date as an intermediate form footer —
+              NOT a compliance failure. Sign-offs for multi-page checklists appear only
+              on the last page.
+
+          OCR tolerance: employee codes, initials, and handwritten entries are valid.
+        skip_conditions:
+          - "Page has no BPCR review checklist items or review table -> not_applicable"
