@@ -99,9 +99,21 @@ class BPCRSectionMap(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     def section_for_page(self, page_index: int) -> str | None:
+        span = self.span_for_page(page_index)
+        return span.section_id if span is not None else None
+
+    def span_for_page(self, page_index: int) -> SectionSpan | None:
+        """Return the full :class:`SectionSpan` covering ``page_index``.
+
+        Like :meth:`section_for_page` but returns the entire span so
+        callers (the tagger, the report stage) can read confidence,
+        detection_method, and display_name without re-running the
+        detector or threading the spec around.
+        """
+
         for span in self.spans:
             if span.start_page <= page_index <= span.end_page:
-                return span.section_id
+                return span
         return None
 
 

@@ -181,6 +181,16 @@ def test_markdown_fallback_runs_detector_without_ocr_sidecar(
     assert by_page[2]["section_id"] == "yield_calculation"
     assert by_page[2]["doc_id"] == bpcr_doc_id
 
+    # The row carries the reviewer-facing metadata stamped by the
+    # tagger so the frontend doesn't need a second round-trip to
+    # render the section name or its confidence. Confidence floors
+    # at the alias-only threshold (0.4); a primary-regex hit on a
+    # top-of-page band returns 1.0, so anything in [0.4, 1.0] is
+    # acceptable here without coupling to the exact heuristic.
+    assert by_page[2]["display_name"] == "Yield Calculation"
+    assert 0.4 <= by_page[2]["confidence"] <= 1.0
+    assert by_page[2]["detection_method"].startswith("heuristic_")
+
     # 2. The section-aware rule must have something to evaluate now —
     # the markdown-fallback path is the *only* thing standing between
     # "detection didn't run" and "rule sees a section_id". This is the

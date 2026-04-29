@@ -52,7 +52,6 @@ def tag_bpcr_pages(
         return package
 
     started = time.perf_counter()
-    n_bpcr_docs = 0
     n_pages_tagged = 0
 
     new_pages: list[ExtractedPage] = []
@@ -62,10 +61,26 @@ def tag_bpcr_pages(
             new_pages.append(page)
             continue
 
-        n_bpcr_docs += 1 if page.page_index == 1 else 0  # crude per-doc counter
-        section_id = section_map.section_for_page(page.page_index) or UNSECTIONED_ID
-        new_page = page.model_copy(update={"section_id": section_id})
-        new_pages.append(new_page)
+        span = section_map.span_for_page(page.page_index)
+        if span is not None:
+            update: dict[str, object] = {
+                "section_id": span.section_id,
+                "section_display_name": span.display_name,
+                "section_confidence": span.confidence,
+                "section_detection_method": span.detection_method,
+            }
+        else:
+            # Page outside every span — the tagger fails open by stamping
+            # ``unsectioned`` so downstream rules can still filter on the
+            # field without a None-check. No span means no confidence
+            # signal to surface.
+            update = {
+                "section_id": UNSECTIONED_ID,
+                "section_display_name": None,
+                "section_confidence": None,
+                "section_detection_method": None,
+            }
+        new_pages.append(page.model_copy(update=update))
         n_pages_tagged += 1
 
     duration_ms = int((time.perf_counter() - started) * 1000)

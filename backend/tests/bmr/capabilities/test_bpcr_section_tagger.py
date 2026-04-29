@@ -161,6 +161,59 @@ def test_tagger_is_idempotent() -> None:
     assert once.model_dump_json() == twice.model_dump_json()
 
 
+def test_tagger_stamps_section_metadata_alongside_section_id() -> None:
+    """Reviewers see the assignment's *why*, not just the *what*.
+
+    Spec 007 follow-up: the tagger now reads the matching
+    :class:`SectionSpan` and stamps display_name, confidence, and
+    detection_method onto the page so downstream surfaces (the
+    report stage's per-page summary, in particular) can show
+    reviewers the detector's signal without a spec lookup or
+    re-running the detector.
+    """
+
+    package = ExtractedPackage(
+        package_id="pkg",
+        pages=[_bpcr_page(1), _bpcr_page(3)],
+    )
+    tagged = tag_bpcr_pages(package, section_maps={"bpcr": _two_section_map()})
+
+    # Page 1 → primary top-of-page hit on the first span.
+    p1 = tagged.pages[0]
+    assert p1.section_id == "material_dispensing"
+    assert p1.section_display_name == "Material Dispensing"
+    assert p1.section_confidence == 1.0
+    assert p1.section_detection_method == "heuristic_top_of_page"
+
+    # Page 3 → the lower-confidence yield_calculation span.
+    p3 = tagged.pages[1]
+    assert p3.section_id == "yield_calculation"
+    assert p3.section_display_name == "Yield Calculation"
+    assert p3.section_confidence == 0.85
+    assert p3.section_detection_method == "heuristic_top_of_table"
+
+
+def test_tagger_clears_metadata_on_unsectioned_pages() -> None:
+    """Pages outside every span get ``unsectioned`` and no metadata.
+
+    There's no detector signal to show on a page the detector
+    couldn't place — surfacing a stale display_name or a fabricated
+    confidence would mislead a reviewer. The fields are explicitly
+    ``None`` so the report-row builder can drop them from the JSON.
+    """
+
+    package = ExtractedPackage(
+        package_id="pkg",
+        pages=[_bpcr_page(99)],  # outside every span in _two_section_map
+    )
+    tagged = tag_bpcr_pages(package, section_maps={"bpcr": _two_section_map()})
+    p = tagged.pages[0]
+    assert p.section_id == UNSECTIONED_ID
+    assert p.section_display_name is None
+    assert p.section_confidence is None
+    assert p.section_detection_method is None
+
+
 def test_empty_section_maps_returns_input_unchanged() -> None:
     package = ExtractedPackage(
         package_id="pkg",
