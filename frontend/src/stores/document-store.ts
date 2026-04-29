@@ -64,6 +64,12 @@ function persistDoc(docId: string | null, filename: string | null) {
   } catch {}
 }
 
+// Backend mirrors this enum in app/workflow/nodes.py — stays in sync via the
+// WS payload's ``phase`` field. ``submit`` is the brief pre-analysis window;
+// ``analyzing`` is the long middle (where the heartbeat label is the
+// user's signal that the engine is still working); ``done`` is 100%.
+export type OcrPhase = "submit" | "analyzing" | "done" | null;
+
 interface DocumentState {
   docId: string | null;
   filename: string | null;
@@ -71,13 +77,14 @@ interface DocumentState {
   processingStatus: ProcessingStatus;
   ocrProgress: number;
   ocrProgressLabel: string;
+  ocrPhase: OcrPhase;
   timeline: TimelineEvent[];
   pages: Map<number, PageData>;
   error: string | null;
 
   setDocId: (docId: string, filename: string) => void;
   setProcessingStatus: (status: ProcessingStatus) => void;
-  setOcrProgress: (percent: number, label: string) => void;
+  setOcrProgress: (percent: number, label: string, phase?: OcrPhase) => void;
   addTimelineEvent: (text: string) => void;
   setTotalPages: (count: number) => void;
   updatePage: (pageNum: number, data: Partial<PageData>) => void;
@@ -94,6 +101,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
   processingStatus: persisted.docId ? "ingested" : "idle",
   ocrProgress: 0,
   ocrProgressLabel: "",
+  ocrPhase: null,
   timeline: [],
   pages: new Map(),
   error: null,
@@ -110,6 +118,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       totalPages: 0,
       ocrProgress: 0,
       ocrProgressLabel: "",
+      ocrPhase: null,
       timeline: [{ id: `${now}-upload`, ts: now, text: "File selected for secure upload" }],
     });
   },
@@ -129,15 +138,25 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       return { processingStatus: status, timeline: [...state.timeline.slice(-7), event] };
     }),
 
-  setOcrProgress: (percent, label) =>
-    set((state) => ({
-      ocrProgress: percent,
-      ocrProgressLabel: normalizeEngineTerms(label),
-      timeline:
-        percent === 0 || percent === 100
-          ? [...state.timeline.slice(-7), { id: `${Date.now()}-ocr`, ts: Date.now(), text: normalizeEngineTerms(label) }]
-          : state.timeline,
-    })),
+  setOcrProgress: (percent, label, phase) =>
+    set((state) => {
+      // Backend re-emits the same baseline percent on heartbeat ticks
+      // (so the bar doesn't snap backwards mid-chunk). Mirror that
+      // monotone-only invariant on the client too — a brief network
+      // reorder must not cause a flicker. The boundary cases (0, 100)
+      // are always honoured so a fresh run can reset the bar.
+      const nextProgress =
+        percent === 0 || percent >= state.ocrProgress ? percent : state.ocrProgress;
+      return {
+        ocrProgress: nextProgress,
+        ocrProgressLabel: normalizeEngineTerms(label),
+        ocrPhase: phase ?? state.ocrPhase,
+        timeline:
+          percent === 0 || percent === 100
+            ? [...state.timeline.slice(-7), { id: `${Date.now()}-ocr`, ts: Date.now(), text: normalizeEngineTerms(label) }]
+            : state.timeline,
+      };
+    }),
 
   addTimelineEvent: (text) =>
     set((state) => ({
@@ -177,6 +196,7 @@ export const useDocumentStore = create<DocumentState>((set) => ({
       processingStatus: "idle",
       ocrProgress: 0,
       ocrProgressLabel: "",
+      ocrPhase: null,
       timeline: [],
       pages: new Map(),
       error: null,

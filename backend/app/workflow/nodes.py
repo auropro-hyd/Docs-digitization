@@ -11,13 +11,83 @@ Two merge paths exist:
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
+from typing import Any, Callable
 
 from app.config.container import get_container
 from app.config.settings import get_settings
 from app.workflow.state import DocumentState
 
 logger = logging.getLogger(__name__)
+
+
+# ── progress payload shaping (testable seam) ────────────────────────────────
+
+
+PROGRESS_MIN_INTERVAL_S = 1.0
+"""Minimum seconds between progress broadcasts. Adapter heartbeats arrive
+at the SDK's poll interval (1–2s) so this rarely drops a tick in practice;
+the throttle's job is preventing pathological floods, not down-sampling
+healthy traffic."""
+
+
+def _phase_for_percent(percent: int) -> str:
+    """Tag the OCR progress with a coarse phase the UI can style on.
+
+    Mirrors the ``OcrPhase`` enum on the frontend store. ``submit`` is
+    the brief pre-analysis window; ``analyzing`` is the long middle
+    where the heartbeat *label* is the user's signal that the engine
+    is still working (the bar may not move); ``done`` is 100%.
+    """
+
+    if percent <= 10:
+        return "submit"
+    if percent >= 100:
+        return "done"
+    return "analyzing"
+
+
+def make_progress_payload_builder(
+    *,
+    min_interval_s: float = PROGRESS_MIN_INTERVAL_S,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> Callable[[int, str], dict[str, Any] | None]:
+    """Return a stateful builder that turns ``(percent, label)`` into a
+    WS payload dict — or ``None`` when the throttle drops the tick.
+
+    A tick is broadcast when:
+      - ≥``min_interval_s`` elapsed since the last broadcast, OR
+      - ``percent`` is a boundary (``0`` or ``100``), OR
+      - ``percent`` jumped ≥5 since the last broadcast.
+
+    Heartbeats from the OCR adapters re-emit the same baseline percent
+    on each poll (so the bar doesn't snap backwards mid-chunk); they
+    pass the time-elapsed test but fail the percent-jump test, which
+    is exactly the throttling we want — a steady once-per-second
+    label refresh, not a per-poll flood.
+    """
+
+    state = {"last_broadcast_at": 0.0, "last_broadcast_percent": -1}
+
+    def build(percent: int, label: str) -> dict[str, Any] | None:
+        now = monotonic()
+        elapsed = now - state["last_broadcast_at"]
+        is_boundary = percent in (0, 100)
+        is_significant_jump = percent >= state["last_broadcast_percent"] + 5
+        if not is_boundary and not is_significant_jump and elapsed < min_interval_s:
+            return None
+        state["last_broadcast_at"] = now
+        state["last_broadcast_percent"] = max(state["last_broadcast_percent"], percent)
+        return {
+            "type": "progress",
+            "status": "azure_di_running",
+            "phase": _phase_for_percent(percent),
+            "percent": percent,
+            "label": label,
+        }
+
+    return build
 
 
 async def ingest_document(state: DocumentState) -> dict:
@@ -63,22 +133,24 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
 
     loop = asyncio.get_event_loop()
 
+    build_payload = make_progress_payload_builder()
     last_logged_percent = -1
 
     def _on_ocr_progress(percent: int, label: str) -> None:
         """Thread-safe bridge: schedule the async WS broadcast from the executor thread."""
         nonlocal last_logged_percent
+
+        payload = build_payload(percent, label)
+        if payload is None:
+            return
+
         if percent >= last_logged_percent + 5 or percent in (0, 100):
             last_logged_percent = percent
             logger.info("[%s] OCR progress %s%% - %s", doc_id, percent, label)
+
         try:
             future = asyncio.run_coroutine_threadsafe(
-                container.notification.send_update(doc_id, {
-                    "type": "progress",
-                    "status": "azure_di_running",
-                    "percent": percent,
-                    "label": label,
-                }),
+                container.notification.send_update(doc_id, payload),
                 loop,
             )
             # Do not block OCR polling thread on WS broadcast completion.

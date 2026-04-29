@@ -57,9 +57,36 @@ class MarkerOCRAdapter:
         return self._converter
 
     async def extract(self, pdf_path: str, pages: list[int] | None = None, progress_callback=None) -> OCRResult:
+        # Marker's PdfConverter is a single blocking call with no
+        # native progress hooks. Emit synthetic milestones so the
+        # frontend doesn't sit at the same percent for the whole run:
+        # 5% on submit, then a 1Hz heartbeat with elapsed time, then
+        # 100% on completion. The percent never moves backwards;
+        # the heartbeat label is the user's signal that the engine
+        # is still working.
+        if progress_callback:
+            progress_callback(5, "Marker: loading models")
+
         converter = self._get_converter()
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, converter, pdf_path)
+        convert_task = loop.run_in_executor(None, converter, pdf_path)
+
+        if progress_callback:
+            progress_callback(10, "Marker: converting PDF")
+
+        elapsed_s = 0.0
+        while True:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.shield(convert_task), timeout=1.0,
+                )
+                break
+            except asyncio.TimeoutError:
+                elapsed_s += 1.0
+                if progress_callback:
+                    # Stay at 10% for the duration; the whole point of
+                    # the heartbeat is the *label*, not the bar.
+                    progress_callback(10, f"Marker: converting PDF ({elapsed_s:.0f}s)")
 
         rendered = result.markdown
         all_images: dict[str, bytes] = getattr(result, "images", {}) or {}
@@ -86,6 +113,9 @@ class MarkerOCRAdapter:
                     images=page_images,
                 )
             )
+
+        if progress_callback:
+            progress_callback(100, "Marker: extraction complete")
 
         return OCRResult(
             pages=ocr_pages,
