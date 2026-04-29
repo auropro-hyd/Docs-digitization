@@ -31,7 +31,9 @@ from app.api.deps import require_actor
 from app.bmr.events import get_event_bus
 from app.bmr.ingest.package_store import PackageStore
 from app.bmr.workflow import BMRRunService, RunReport, RunStore, StartRunSpec
+from app.bmr.workflow.section_enrichment import build_default_section_enricher
 from app.bmr.workflow.service import LegibilityDecisionError
+from app.bmr.workflow.stages import bpcr_sections_enabled
 from app.config.settings import get_settings
 
 router = APIRouter()
@@ -103,10 +105,21 @@ def _default_aliases_dir() -> Path:
 def _service() -> BMRRunService:
     package_store = PackageStore(_bmr_base_dir())
     run_store = RunStore(_runs_base_dir())
+
+    # Spec 007 — wire the BPCR section enricher unless the operator
+    # has switched it off via env. ``build_default_section_enricher``
+    # may return None (e.g. malformed spec YAML); the workflow stage
+    # treats that as "no enricher wired", which is the same behaviour
+    # as today's pre-Spec-007 path.
+    section_enricher = (
+        build_default_section_enricher() if bpcr_sections_enabled() else None
+    )
+
     return BMRRunService(
         package_store=package_store,
         run_store=run_store,
         repo_root=_repo_root(),
+        section_enricher=section_enricher,
         event_bus=get_event_bus(),
     )
 

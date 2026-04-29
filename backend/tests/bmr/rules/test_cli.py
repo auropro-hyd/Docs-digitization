@@ -260,3 +260,75 @@ def test_cli_diff_missing_file_exits_2(monkeypatch, tmp_path: Path):
     )
     assert code == 2
     assert "right rule file not found" in err
+
+
+# ── detect-sections subcommand (Spec 007) ────────────────────────────────────
+
+
+def _write_minimal_ocr_json(tmp_path: Path) -> Path:
+    """Markdown-only OCR result with a plaintext ``Yield Calculation`` header.
+
+    The v0 regexes anchor at ``^\\s*`` and don't strip markdown
+    emphasis, so we keep the header line free of ``#`` or ``**``
+    decoration to make it match the canonical section spec.
+    """
+
+    payload = {
+        "pages": [
+            {
+                "page_num": 1,
+                "markdown": "Yield Calculation\n\nDispensed weight 10.0 kg",
+            }
+        ]
+    }
+    path = tmp_path / "ocr.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_cli_detect_sections_human_output(monkeypatch, tmp_path: Path):
+    ocr_path = _write_minimal_ocr_json(tmp_path)
+    code, out, _ = _run_cli(
+        [
+            "detect-sections",
+            "--ocr",
+            str(ocr_path),
+            "--doc-id",
+            "test-bpcr",
+            "--color",
+            "never",
+        ],
+        monkeypatch,
+    )
+    assert code == 0, out
+    assert "yield_calculation" in out
+    assert "test-bpcr" in out
+
+
+def test_cli_detect_sections_json_output(monkeypatch, tmp_path: Path):
+    ocr_path = _write_minimal_ocr_json(tmp_path)
+    code, out, _ = _run_cli(
+        [
+            "detect-sections",
+            "--ocr",
+            str(ocr_path),
+            "--doc-id",
+            "test-bpcr",
+            "--format",
+            "json",
+        ],
+        monkeypatch,
+    )
+    assert code == 0
+    payload = json.loads(out)
+    assert payload["doc_id"] == "test-bpcr"
+    section_ids = {span["section_id"] for span in payload["spans"]}
+    assert "yield_calculation" in section_ids
+
+
+def test_cli_detect_sections_missing_ocr_exits_2(monkeypatch, tmp_path: Path):
+    code, _, err = _run_cli(
+        ["detect-sections", "--ocr", str(tmp_path / "nope.json")], monkeypatch
+    )
+    assert code == 2
+    assert "OCR JSON not found" in err

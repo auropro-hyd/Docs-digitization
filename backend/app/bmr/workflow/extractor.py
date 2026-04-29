@@ -162,6 +162,15 @@ class OCRBackedExtractor:
             )
             pages.extend(_project_result_to_pages(doc, role_cfg, ocr_result))
 
+            # Spec 007 — drop a per-doc OCR sidecar alongside extraction.json
+            # so the section enricher can re-read the raw layout (words,
+            # bounding boxes, markdown) without re-running OCR. We only
+            # need the layout for BPCR documents in v0, but we drop one
+            # for every classified doc — disk is cheap and a future spec
+            # may want sections on other roles.
+            if self._write_sidecar:
+                _write_ocr_sidecar(package_dir, doc.doc_id, ocr_result)
+
         extracted = ExtractedPackage(package_id=package.package_id, pages=pages)
 
         if self._write_sidecar:
@@ -254,6 +263,66 @@ def _match_field(
     return None
 
 
+OCR_SIDECAR_DIR = "ocr"
+"""Subdirectory under each package_dir holding per-doc OCR sidecars."""
+
+
+def _ocr_sidecar_path(package_dir: Path, doc_id: str) -> Path:
+    """Where the per-doc OCR sidecar lives.
+
+    Path: ``<package_dir>/ocr/<doc_id>.json``. Centralised so the
+    writer (here) and the reader (section enricher) agree without
+    constants duplicating in two modules.
+    """
+
+    return package_dir / OCR_SIDECAR_DIR / f"{doc_id}.json"
+
+
+def _write_ocr_sidecar(
+    package_dir: Path, doc_id: str, ocr_result: OCRResult
+) -> None:
+    """Persist the raw OCR layout next to extraction.json (Spec 007).
+
+    Atomic .tmp -> rename so a crash mid-write never leaves a
+    half-formed JSON file. The downstream section enricher needs the
+    full layout (words + bounding regions + markdown) to detect
+    section headers; the field-projection in extraction.json is too
+    lossy for that.
+    """
+
+    target = _ocr_sidecar_path(package_dir, doc_id)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(ocr_result.model_dump(mode="json"), indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(target)
+
+
+def load_ocr_sidecar(package_dir: Path, doc_id: str) -> OCRResult | None:
+    """Read a per-doc OCR sidecar back into an :class:`OCRResult`.
+
+    Returns ``None`` when the sidecar is missing or unreadable. The
+    section enricher uses this signal to skip detection for that doc
+    rather than re-run OCR — re-running can be expensive (real-doc
+    Azure DI runs are tens of seconds) and the whole point of the
+    sidecar is to not pay that cost twice.
+    """
+
+    target = _ocr_sidecar_path(package_dir, doc_id)
+    if not target.is_file():
+        return None
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    try:
+        return OCRResult.model_validate(raw)
+    except Exception:  # noqa: BLE001 — corrupt sidecar must not crash a run
+        return None
+
+
 def _run_async(coro: Any) -> Any:
     """Run an awaitable from a sync context.
 
@@ -275,10 +344,12 @@ def _run_async(coro: Any) -> Any:
 
 
 __all__ = [
+    "OCR_SIDECAR_DIR",
     "ExtractorPort",
     "FieldMap",
     "OCRBackedExtractor",
     "OCRRoleExtraction",
     "RoleExtraction",
     "SidecarExtractor",
+    "load_ocr_sidecar",
 ]

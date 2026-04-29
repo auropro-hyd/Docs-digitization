@@ -190,11 +190,20 @@ on every BPCR page that the detector could place. Default is a no-op
 so existing runs are unaffected (FR-012)."""
 
 
-def _bpcr_sections_enabled() -> bool:
-    """Read ``AT_BMR__BPCR_SECTIONS_ENABLED`` (defaults to true)."""
+def bpcr_sections_enabled() -> bool:
+    """Read ``AT_BMR__BPCR_SECTIONS_ENABLED`` (defaults to true).
+
+    Public Spec 007 helper — the workflow stage and the API service
+    factory both read the same flag, so they share this helper rather
+    than re-deriving the truthiness rules in two places.
+    """
 
     raw = os.environ.get("AT_BMR__BPCR_SECTIONS_ENABLED", "true").strip().lower()
     return raw not in {"0", "false", "no", "off"}
+
+
+# Backwards-compat alias — older code imported the underscored name.
+_bpcr_sections_enabled = bpcr_sections_enabled
 
 
 def make_extraction_stage(
@@ -230,7 +239,7 @@ def make_extraction_stage(
         # Spec 007 — post-extract BPCR section enrichment. Runs only
         # when wired AND the env flag is on; on any failure the run
         # continues with the un-enriched package (FR-013 fail-open).
-        if section_enricher is not None and _bpcr_sections_enabled():
+        if section_enricher is not None and bpcr_sections_enabled():
             try:
                 extracted = section_enricher(extracted, package, package_dir)
             except Exception:  # noqa: BLE001 — fail-open per FR-013
