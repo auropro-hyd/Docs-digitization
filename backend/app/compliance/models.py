@@ -166,6 +166,7 @@ class DocumentSection(BaseModel):
     section_id: str = ""
     name: str = ""
     section_type: str = ""
+    document_type: str = ""  # sub-document classifier; normalized in build_page_to_section
     start_page: int = 0
     end_page: int = 0
     description: str = ""
