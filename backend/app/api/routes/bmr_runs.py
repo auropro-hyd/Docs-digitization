@@ -57,7 +57,25 @@ class StartRunRequest(BaseModel):
 
 
 class RunListItem(BaseModel):
+    """Lightweight summary row for the run-list endpoint.
+
+    The detail endpoint already returns the full :class:`RunReport`;
+    this row carries only what a list UI needs to render and decide
+    which run to drill into. Populated by re-reading each persisted
+    report — cheap given a v0 run store backed by per-run JSON files.
+    Fields beyond ``run_id`` are optional so an unreadable / corrupt
+    report row degrades to "we know the id, nothing else" instead of
+    failing the whole list response.
+    """
+
     run_id: str
+    package_id: str | None = None
+    status: str | None = None
+    stage: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    total_findings: int | None = None
+    bpcr_section_count: int | None = None
 
 
 class RunListResponse(BaseModel):
@@ -201,8 +219,44 @@ async def get_run(run_id: str, _actor: str = Depends(require_actor)) -> RunRepor
 
 @router.get("/runs", response_model=RunListResponse)
 async def list_runs(_actor: str = Depends(require_actor)) -> RunListResponse:
-    ids = _service().list_run_ids()
-    return RunListResponse(runs=[RunListItem(run_id=i) for i in ids])
+    """List BMR runs with enough metadata for a list UI to render.
+
+    Reads each persisted report once. The list is small in v0
+    (single-tenant, low run volume) so we accept the I/O cost over
+    a separate index file that would need to stay in sync with
+    the run store.
+    """
+
+    service = _service()
+    ids = service.list_run_ids()
+    items: list[RunListItem] = []
+    for run_id in ids:
+        report = service.get_report(run_id)
+        if report is None:
+            # Report file vanished between list and load — still surface
+            # the id so the operator can see something is wrong rather
+            # than silently dropping the row.
+            items.append(RunListItem(run_id=run_id))
+            continue
+        items.append(
+            RunListItem(
+                run_id=report.run_id,
+                package_id=report.package_id,
+                status=report.status.value,
+                stage=report.stage.value,
+                started_at=report.started_at.isoformat() if report.started_at else None,
+                finished_at=report.finished_at.isoformat() if report.finished_at else None,
+                total_findings=report.summary.total,
+                bpcr_section_count=len(report.bpcr_sections),
+            )
+        )
+    # Newest runs first so the list is useful by default; ``started_at``
+    # is the truthful sort key (run_id is a uuid hex with no time order).
+    items.sort(
+        key=lambda i: i.started_at or "",
+        reverse=True,
+    )
+    return RunListResponse(runs=items)
 
 
 # ── Legibility HITL interrupt (follow-up #2) ────────────────────────────────

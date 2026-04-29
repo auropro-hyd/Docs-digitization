@@ -444,7 +444,7 @@ export async function getConfusionMatrix() {
 
 // ── BMR audit pipeline (Spec 001+) ──────────────────────────────────────────
 
-import type { RunReport } from "@/types/bmr";
+import type { RunListResponse, RunReport } from "@/types/bmr";
 
 // Every BMR endpoint requires an X-Actor-Id (see
 // backend/app/api/deps/bmr_auth.py). Real SSO integration replaces this
@@ -466,6 +466,16 @@ export async function getBmrRun(runId: string): Promise<RunReport> {
   });
   if (!response.ok) {
     throw new Error(`Failed to fetch BMR run ${runId}: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function listBmrRuns(): Promise<RunListResponse> {
+  const response = await fetch(`${API_BASE}/api/bmr/runs`, {
+    headers: bmrAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to list BMR runs: ${response.statusText}`);
   }
   return response.json();
 }

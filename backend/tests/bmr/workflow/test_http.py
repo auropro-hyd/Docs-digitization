@@ -146,6 +146,52 @@ def test_list_runs_is_sorted_and_empty_by_default(client: TestClient):
     assert resp.json() == {"runs": []}
 
 
+def test_list_runs_returns_metadata_for_each_run(client: TestClient):
+    """The list endpoint must surface enough fields to drive a UI list.
+
+    Without status/package_id/finding counts the frontend would need to
+    fan out N detail-fetches just to render a useful row — that's an
+    N+1 the API should pre-empt at the source. New runs come first
+    (sorted by ``started_at`` desc) so the most recent activity is
+    the first thing a reviewer sees.
+    """
+
+    pkg_a = _upload_and_seed_extraction(
+        client, bpcr_weight=10.0, rm_weight=10.0, operator_signature="op"
+    )
+    a = client.post(
+        "/api/bmr/runs",
+        json={"package_id": pkg_a, "rules_dir": str(PILOT_RULES_DIR)},
+    ).json()
+    pkg_b = _upload_and_seed_extraction(
+        client, bpcr_weight=10.0, rm_weight=10.0, operator_signature="op"
+    )
+    b = client.post(
+        "/api/bmr/runs",
+        json={"package_id": pkg_b, "rules_dir": str(PILOT_RULES_DIR)},
+    ).json()
+
+    resp = client.get("/api/bmr/runs")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["runs"]) == 2
+
+    by_id = {row["run_id"]: row for row in body["runs"]}
+    for ran in (a, b):
+        row = by_id[ran["run_id"]]
+        assert row["package_id"] == ran["package_id"]
+        assert row["status"] == "completed"
+        assert row["stage"] == "report"
+        assert row["total_findings"] == ran["summary"]["total"]
+        assert row["bpcr_section_count"] == len(ran.get("bpcr_sections", []))
+        assert row["started_at"] is not None
+        assert row["finished_at"] is not None
+
+    # Newest first — b was created after a.
+    assert body["runs"][0]["run_id"] == b["run_id"]
+    assert body["runs"][1]["run_id"] == a["run_id"]
+
+
 def _force_needs_review(client: TestClient, package_id: str) -> None:
     from app.bmr.ingest.models import PackageIssue, PackageIssueKind, PackageStatus
 
