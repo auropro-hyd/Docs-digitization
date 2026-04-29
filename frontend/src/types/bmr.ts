@@ -78,6 +78,21 @@ export interface BpcrSectionRow {
   detection_method?: string;
 }
 
+export interface RunListItem {
+  run_id: string;
+  package_id?: string | null;
+  status?: RunStatus | null;
+  stage?: RunStage | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  total_findings?: number | null;
+  bpcr_section_count?: number | null;
+}
+
+export interface RunListResponse {
+  runs: RunListItem[];
+}
+
 export interface RunReport {
   run_id: string;
   package_id: string;
