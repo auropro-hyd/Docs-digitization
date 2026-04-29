@@ -339,11 +339,12 @@ async def run_agent_evaluation(
                 nonlocal pages_done
                 page_num = ext.get("page_num", 0)
                 sec_info = section_map.get(page_num) if section_map else None
+                effective_doc_type = (sec_info or {}).get("document_type") or document_type
                 page_type = classify_page_type(ext)
                 try:
                     candidate_rules, _, _ = await gate.filter_rules_hybrid(
                         all_agent_rules,
-                        document_type=document_type,
+                        document_type=effective_doc_type,
                         page_type=page_type,
                         extraction=ext,
                         page_num=page_num,
@@ -417,6 +418,7 @@ async def run_agent_evaluation(
         nonlocal completed
         page_num = ext.get("page_num", 0)
         sec_info = section_map.get(page_num) if section_map else None
+        effective_doc_type = (sec_info or {}).get("document_type") or document_type
 
         if mode == "llm":
             if page_num not in page_type_cache:
@@ -424,7 +426,7 @@ async def run_agent_evaluation(
             page_type = page_type_cache[page_num]
             applicable_rules, gate_evals, gate_trace_map = await gate.filter_rules_hybrid(
                 batch.rules,
-                document_type=document_type,
+                document_type=effective_doc_type,
                 page_type=page_type,
                 extraction=ext,
                 page_num=page_num,
@@ -437,7 +439,7 @@ async def run_agent_evaluation(
                 page_type_cache[page_num] = classify_page_type(ext)
             page_type = page_type_cache[page_num]
             applicable_rules, gate_evals, gate_trace_map = gate.filter_rules(
-                batch.rules, document_type, page_type, sec_info, ext,
+                batch.rules, effective_doc_type, page_type, sec_info, ext,
             )
 
         if not applicable_rules:
