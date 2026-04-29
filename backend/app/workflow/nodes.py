@@ -57,25 +57,39 @@ def make_progress_payload_builder(
     WS payload dict — or ``None`` when the throttle drops the tick.
 
     A tick is broadcast when:
+      - this is the first tick the builder has ever seen, OR
       - ≥``min_interval_s`` elapsed since the last broadcast, OR
-      - ``percent`` is a boundary (``0`` or ``100``), OR
-      - ``percent`` jumped ≥5 since the last broadcast.
+      - ``percent`` is the terminal boundary (``100``), OR
+      - ``percent`` jumped ≥5 since the last *peak* broadcast.
 
     Heartbeats from the OCR adapters re-emit the same baseline percent
     on each poll (so the bar doesn't snap backwards mid-chunk); they
     pass the time-elapsed test but fail the percent-jump test, which
     is exactly the throttling we want — a steady once-per-second
     label refresh, not a per-poll flood.
+
+    Note ``0`` is **not** in the always-fire boundary set. Concurrent
+    OCR chunks each baseline-emit 0 in their heartbeat label payload;
+    treating 0 as a boundary would let those heartbeats bypass the
+    percent-jump gate after a higher chunk-completion percent had
+    already landed. The "first tick passes" rule covers the legitimate
+    run-start case without needing a 0-as-boundary special case.
     """
 
     state = {"last_broadcast_at": 0.0, "last_broadcast_percent": -1}
 
     def build(percent: int, label: str) -> dict[str, Any] | None:
         now = monotonic()
+        first_tick = state["last_broadcast_percent"] < 0
         elapsed = now - state["last_broadcast_at"]
-        is_boundary = percent in (0, 100)
+        is_boundary = percent == 100
         is_significant_jump = percent >= state["last_broadcast_percent"] + 5
-        if not is_boundary and not is_significant_jump and elapsed < min_interval_s:
+        if (
+            not first_tick
+            and not is_boundary
+            and not is_significant_jump
+            and elapsed < min_interval_s
+        ):
             return None
         state["last_broadcast_at"] = now
         state["last_broadcast_percent"] = max(state["last_broadcast_percent"], percent)

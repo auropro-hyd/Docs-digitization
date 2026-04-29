@@ -86,12 +86,13 @@ def test_throttle_drops_intra_second_floods_but_keeps_label_heartbeats() -> None
 
 
 def test_boundary_and_significant_jump_bypass_throttle() -> None:
-    """Start / completion / big jumps must always pass through."""
+    """First tick / completion / big jumps must always pass through."""
 
     clock = _FakeClock()
     build = make_progress_payload_builder(monotonic=clock, min_interval_s=1.0)
 
-    # Submit boundary.
+    # First tick at percent=0: covered by the "first tick passes" rule
+    # (not by a "0 is a boundary" special case — see the test below).
     assert build(0, "starting")["percent"] == 0  # type: ignore[index]
 
     # 0.1s later — big jump (≥5). Even inside the throttle window the
@@ -106,6 +107,39 @@ def test_boundary_and_significant_jump_bypass_throttle() -> None:
     payload = build(100, "done")
     assert payload is not None
     assert payload["phase"] == "done"
+
+
+def test_zero_percent_heartbeat_after_higher_value_is_throttled() -> None:
+    """Zero must not bypass the throttle just for being zero.
+
+    The original throttle treated ``percent in (0, 100)`` as an
+    always-fire boundary. With concurrent OCR chunks, that meant a
+    still-running chunk's 0% heartbeat could hammer through after a
+    chunk-completion broadcast had already raised the bar to 11/22/…
+    Combined with the frontend's old "percent === 0 ||" reducer
+    escape hatch, the bar visibly snapped backwards on every poll.
+    The fix is that 0 is just a percent like any other once the run
+    has started; the only true always-fire is the terminal 100.
+    """
+
+    clock = _FakeClock()
+    build = make_progress_payload_builder(monotonic=clock, min_interval_s=1.0)
+
+    # Run starts; first heartbeat at 0% gets through (first-tick rule).
+    assert build(0, "warming up") is not None
+
+    # 0.3s later — a chunk completes, triggering a +11% jump that
+    # bypasses the throttle on its own merit (significant_jump).
+    clock.advance(0.3)
+    payload = build(11, "Completed chunk 1/8")
+    assert payload is not None and payload["percent"] == 11
+
+    # 0.1s later — a still-running chunk fires its periodic 0%
+    # heartbeat. Inside the 1s throttle window, not a boundary
+    # (after the fix), and 0 is not a forward jump from 11 — so it
+    # MUST be dropped.
+    clock.advance(0.1)
+    assert build(0, "Chunk 4/8 — analyzing (130s)") is None
 
 
 def test_throttle_remembers_the_max_percent_for_jump_detection() -> None:

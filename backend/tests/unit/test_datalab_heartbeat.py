@@ -88,6 +88,59 @@ async def test_heartbeat_ticks_while_convert_blocks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_baseline_is_read_live_per_tick() -> None:
+    """``baseline_provider`` is called fresh each poll, not captured once.
+
+    With ``max_concurrent_chunks > 1`` the still-running chunks must
+    have their heartbeat percent advance as their siblings complete —
+    otherwise the bar visibly freezes at the lowest baseline for the
+    duration of the longest chunk. This test pins the contract by
+    flipping the provider's return value mid-flight and asserting
+    the next tick reflects it.
+    """
+
+    cfg = DatalabConfig(
+        api_key="test",
+        max_polls=100,
+        poll_interval=1,
+        submit_max_retries=1,
+        submit_retry_base_delay=0.1,
+        chunk_pages=10,
+        max_concurrent_chunks=4,
+    )
+    adapter = DatalabOCRAdapter(cfg)
+    client = _SlowConvertClient(finish_after=3.5)
+
+    # Mutable cell mimicking the ``completed_counter["n"]`` in the
+    # production call site. We bump it after the first tick lands.
+    counter = {"v": 0}
+
+    def baseline() -> int:
+        return counter["v"] * 11  # 0, 11, 22, …
+
+    ticks: list[int] = []
+
+    async def runner():
+        await adapter._convert_with_heartbeat(
+            client=client,
+            pdf_path="/tmp/fake.pdf",
+            opts=None,
+            on_tick=lambda elapsed: ticks.append(baseline()),
+        )
+
+    task = asyncio.create_task(runner())
+    # Wait for the first heartbeat to land, then "complete a sibling".
+    await asyncio.sleep(1.5)
+    counter["v"] = 1
+    await task
+
+    assert any(t == 0 for t in ticks), f"expected an initial 0%, got {ticks}"
+    assert any(t == 11 for t in ticks), (
+        f"expected a heartbeat to reflect the bumped baseline (11%), got {ticks}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_does_not_fire_when_convert_finishes_within_one_poll() -> None:
     """A fast chunk shouldn't emit any heartbeats — only the chunk-complete
     progress entry (handled by the caller, not us). This guards against

@@ -140,13 +140,23 @@ export const useDocumentStore = create<DocumentState>((set) => ({
 
   setOcrProgress: (percent, label, phase) =>
     set((state) => {
-      // Backend re-emits the same baseline percent on heartbeat ticks
-      // (so the bar doesn't snap backwards mid-chunk). Mirror that
-      // monotone-only invariant on the client too — a brief network
-      // reorder must not cause a flicker. The boundary cases (0, 100)
-      // are always honoured so a fresh run can reset the bar.
+      // Strict monotone-only invariant — the bar never snaps backwards
+      // within a single run. Concurrent OCR chunks emit a heartbeat
+      // every poll interval whose percent is the chunk's baseline
+      // (often 0 while the first chunk is still in flight); without
+      // this gate, those heartbeats would clobber an established
+      // higher percent (e.g. an already-broadcast "Completed chunk
+      // 1/8 → 11%") back to 0 once a still-running chunk's heartbeat
+      // landed in the next tick. Resetting the bar on a fresh upload
+      // is handled explicitly by ``setDocId`` / ``reset``; the
+      // reducer doesn't need to second-guess them with a ``percent
+      // === 0`` escape hatch.
+      //
+      // The label always refreshes — that's the whole point of a
+      // heartbeat: keep the user informed even when the bar can't
+      // honestly move. Phase tag follows the same liberal rule.
       const nextProgress =
-        percent === 0 || percent >= state.ocrProgress ? percent : state.ocrProgress;
+        percent >= state.ocrProgress ? percent : state.ocrProgress;
       return {
         ocrProgress: nextProgress,
         ocrProgressLabel: normalizeEngineTerms(label),
