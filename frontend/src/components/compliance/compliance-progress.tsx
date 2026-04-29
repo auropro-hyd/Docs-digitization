@@ -477,7 +477,7 @@ export function ComplianceProgress({
   reportReady?: boolean;
 }) {
   const {
-    phase, overallPercent, label, agents, totalFindings, startedAt, endedAt, finalDurationSec,
+    phase, overallPercent, agents, startedAt, endedAt, finalDurationSec,
     segmentationLabel, segmentationSections, applicableAgents, skippedAgents,
   } = useComplianceStore();
   const visibleAgentIds = new Set([

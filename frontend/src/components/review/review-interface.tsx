@@ -363,7 +363,7 @@ export function ReviewInterface({
   initialPage,
   vlmPages,
   onApprove,
-  onEdit,
+  onEdit: _onEdit,
   onFlag,
 }: ReviewInterfaceProps) {
   const startIndex = initialPage

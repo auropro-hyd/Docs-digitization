@@ -27,7 +27,7 @@ import {
   deleteRule as apiDeleteRule,
   updateAgent as apiUpdateAgent,
 } from "@/lib/api";
-import type { AgentRulesResponse, Rule, RuleCategory } from "@/types/compliance";
+import type { AgentRulesResponse, Rule } from "@/types/compliance";
 import { toast } from "sonner";
 import {
   Search,
