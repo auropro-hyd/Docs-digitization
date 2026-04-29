@@ -7,6 +7,7 @@ using ``generate_structured()`` with the ``RuleBatchResult`` schema.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 
@@ -717,6 +718,134 @@ def _merge_text_primary(
             recommendation=text_ev.recommendation or vision_ev.recommendation,
             applicability_trace=list(text_ev.applicability_trace),
         )
+
+
+async def _call_arbitrator(
+    rule: AuditRule,
+    text_ev: RuleEvaluation,
+    vision_ev: RuleEvaluation,
+    llm: LLMProvider,
+    ocr_text: str,
+) -> RuleEvaluation:
+    """Ask the LLM to resolve a text-vs-vision conflict for a single rule.
+
+    Called only when text_ev.status != vision_ev.status. Returns a new
+    RuleEvaluation whose status and reasoning come from the LLM verdict.
+    Raises on LLM failure so the caller can apply its fallback.
+    """
+    truncated_ocr = ocr_text[:3000]
+    prompt = (
+        f"You are resolving a conflict between two compliance evaluators for Rule {rule.number}.\n\n"
+        f"RULE TEXT: {rule.text}\n"
+        f"PASS CRITERIA: {rule.pass_criteria or '(none specified)'}\n\n"
+        f"OCR CONTENT (may be truncated to 3000 chars):\n{truncated_ocr}\n\n"
+        f"TEXT EVALUATOR VERDICT: {text_ev.status}\n"
+        f"TEXT EVALUATOR REASONING: {text_ev.reasoning}\n\n"
+        f"VISION EVALUATOR VERDICT: {vision_ev.status}\n"
+        f"VISION EVALUATOR REASONING: {vision_ev.reasoning}\n\n"
+        f"GUIDANCE: OCR often garbles or misses handwritten entries. When the vision evaluator "
+        f"confirms that a handwritten entry is present, prefer the vision verdict over the text "
+        f"evaluator's complaint about missing or garbled content.\n\n"
+        f"Return ONLY a JSON object with these fields:\n"
+        f'  "status": one of "compliant", "non_compliant", "not_applicable", "uncertain", "error"\n'
+        f'  "confidence": float between 0.0 and 1.0\n'
+        f'  "reasoning": string explaining your decision\n'
+        f'  "evidence": string referencing specific content\n'
+    )
+
+    raw = await llm.generate(prompt)
+
+    # Parse JSON from the response (handle markdown code fences if present)
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    data = json.loads(text)
+    status = data.get("status", "uncertain")
+    if status not in _VALID_STATUSES:
+        status = "uncertain"
+
+    return RuleEvaluation(
+        rule_id=rule.id,
+        status=status,
+        confidence=float(data.get("confidence", 0.5)),
+        reasoning=str(data.get("reasoning", "")),
+        evidence=str(data.get("evidence", "")),
+    )
+
+
+async def _merge_llm_arbitrated(
+    rule: AuditRule,
+    text_ev: RuleEvaluation | None,
+    vision_ev: RuleEvaluation | None,
+    llm: LLMProvider | None,
+    ocr_text: str,
+) -> RuleEvaluation:
+    """Merge for llm_arbitrated strategy.
+
+    When text and vision agree (same status), return immediately — no LLM call.
+    When they conflict, call _call_arbitrator. Falls back to higher-severity
+    result if arbitration fails or llm is None.
+    """
+    if text_ev is None and vision_ev is None:
+        return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
+    if text_ev is None:
+        return vision_ev  # type: ignore[return-value]
+    if vision_ev is None:
+        return text_ev
+
+    # Agreement — no LLM call needed
+    if text_ev.status == vision_ev.status:
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=text_ev.status,
+            severity=text_ev.severity or vision_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Agreed] {text_ev.reasoning}",
+            evidence=text_ev.evidence or vision_ev.evidence,
+            description=text_ev.description or vision_ev.description,
+            recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+
+    # Conflict — attempt LLM arbitration
+    if llm is not None:
+        try:
+            arbitrated = await _call_arbitrator(rule, text_ev, vision_ev, llm, ocr_text)
+            return RuleEvaluation(
+                rule_id=rule.id,
+                status=arbitrated.status,
+                severity=arbitrated.severity or text_ev.severity or vision_ev.severity,
+                confidence=arbitrated.confidence,
+                reasoning=(
+                    f"[Arbitrated] {arbitrated.reasoning} "
+                    f"| Text: {text_ev.reasoning} "
+                    f"| Vision: {vision_ev.reasoning}"
+                ),
+                evidence=arbitrated.evidence or text_ev.evidence or vision_ev.evidence,
+                description=arbitrated.description or text_ev.description or vision_ev.description,
+                recommendation=arbitrated.recommendation or text_ev.recommendation or vision_ev.recommendation,
+                applicability_trace=list(text_ev.applicability_trace),
+            )
+        except Exception as exc:
+            logger.warning("LLM arbitration failed for rule %s: %s — falling back to higher severity", rule.id, exc)
+
+    # Fallback — higher severity wins
+    text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
+    vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
+    winner = text_ev if text_sev >= vision_sev else vision_ev
+    return RuleEvaluation(
+        rule_id=rule.id,
+        status=winner.status,
+        severity=winner.severity or (vision_ev if winner is text_ev else text_ev).severity,
+        confidence=min(text_ev.confidence, vision_ev.confidence),
+        reasoning=f"[Fallback-higher-sev] {winner.reasoning}",
+        evidence=winner.evidence,
+        description=winner.description,
+        recommendation=winner.recommendation,
+        applicability_trace=list(text_ev.applicability_trace),
+    )
 
 
 def _build_document_scope_prompt(
