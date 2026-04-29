@@ -207,3 +207,23 @@ class TestMergeLLMArbitrated:
 
         result = asyncio.run(_merge_llm_arbitrated(rule, text, None, llm=None, ocr_text=""))
         assert result.status == "uncertain"
+
+
+# ── routing integration ───────────────────────────────────────────────────────
+
+class TestRoutingStrategy:
+    def test_text_primary_reasoning_prefix(self):
+        from app.compliance.evaluator import _merge_text_primary
+        rule = _rule("text_primary")
+        text = _ev(rule.id, "non_compliant")
+        vision = _ev(rule.id, "compliant")
+        result = _merge_text_primary(rule, text, vision)
+        assert "[Text]" in result.reasoning or "[Text primary]" in result.reasoning
+
+    def test_llm_arbitrated_agreement_prefix(self):
+        from app.compliance.evaluator import _merge_llm_arbitrated
+        rule = _rule("llm_arbitrated")
+        text = _ev(rule.id, "compliant")
+        vision = _ev(rule.id, "compliant")
+        result = asyncio.run(_merge_llm_arbitrated(rule, text, vision, llm=None, ocr_text=""))
+        assert "[Agreed]" in result.reasoning
