@@ -1015,15 +1015,42 @@ class AzureDIOCRAdapter:
                     pct, f"Chunk {chunk_idx}/{num_chunks} (pages {chunk_label})",
                 )
 
+            # Map the inner-chunk percent (0..100 within this chunk) into
+            # the chunk's allocated band. Without this wrapper the
+            # multi-chunk path went silent for the duration of each
+            # chunk's analysis (only the start-of-chunk pings reached
+            # the user). The wrapper preserves the chunk-relative
+            # heartbeat detail emitted by ``_analyze_chunk`` and the
+            # heartbeat from the LRO poller.
+            chunk_progress: ProgressCallback | None
+            if progress_callback is None:
+                chunk_progress = None
+            elif num_chunks == 1:
+                chunk_progress = progress_callback
+            else:
+                def _chunk_progress(
+                    inner_pct: int,
+                    inner_label: str,
+                    *,
+                    _ci: int = chunk_idx,
+                    _nc: int = num_chunks,
+                    _label: str = chunk_label,
+                    _cb: ProgressCallback = progress_callback,
+                ) -> None:
+                    inner = max(0, min(100, inner_pct))
+                    band_pct = int(((_ci - 1) + inner / 100.0) / _nc * 100)
+                    _cb(band_pct, f"Chunk {_ci}/{_nc} (pages {_label}): {inner_label}")
+                chunk_progress = _chunk_progress
+
             logger.info(
                 "Azure DI chunk %d/%d: pages=%s", chunk_idx, num_chunks, chunk_label,
             )
             result = await loop.run_in_executor(
                 None,
-                lambda pr=page_range: self._analyze_chunk(
+                lambda pr=page_range, cp=chunk_progress: self._analyze_chunk(
                     client, pdf_bytes, pr,
                     timeout_seconds, poll_interval, heartbeat_seconds,
-                    progress_callback if num_chunks == 1 else None,
+                    cp,
                 ),
             )
 

@@ -491,13 +491,75 @@ class DatalabOCRAdapter:
             opts.save_checkpoint = True
         return opts
 
+    async def _convert_with_heartbeat(
+        self,
+        client: Any,
+        pdf_path: str,
+        opts: Any,
+        on_tick: Any,
+    ) -> Any:
+        """Run ``client.convert`` and tick a heartbeat once per poll interval.
+
+        The Datalab SDK's ``convert()`` blocks until the request reaches
+        ``status=complete``; the SDK polls internally on
+        ``poll_interval`` seconds but does not surface those polls to
+        callers. To keep the user-visible progress alive during a long
+        chunk, we run ``convert`` on a background task and emit a
+        heartbeat tick every ``poll_interval`` while it's still
+        running. The percent stays under our control (only advances on
+        chunk completion, see ``_process_single_chunk``); the tick
+        carries an elapsed-time label so the user sees activity even
+        when the percent doesn't move.
+
+        Doing it this way (rather than reimplementing submit + poll
+        against the SDK's private ``_submit_with_retry`` /
+        ``_poll_result`` methods) keeps us SDK-version-tolerant: an
+        upstream rename can't silently break the heartbeat.
+        """
+
+        convert_task = asyncio.create_task(
+            client.convert(
+                file_path=pdf_path,
+                options=opts,
+                max_polls=self._config.max_polls,
+                poll_interval=self._config.poll_interval,
+            )
+        )
+        elapsed_s = 0.0
+        try:
+            while True:
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(convert_task),
+                        timeout=self._config.poll_interval,
+                    )
+                except asyncio.TimeoutError:
+                    elapsed_s += self._config.poll_interval
+                    on_tick(elapsed_s)
+        except Exception:
+            # Surface SDK exceptions verbatim — caller already wraps
+            # them in retry logic.
+            if not convert_task.done():
+                convert_task.cancel()
+            raise
+
     async def _submit_with_retry(
         self,
         pdf_path: str,
         page_range: str | None,
         progress_callback: ProgressCallback | None,
+        chunk_label: str | None = None,
+        baseline_percent: int = 5,
     ) -> Any:
-        """Submit to Data Lab with exponential-backoff retry."""
+        """Submit to Data Lab with exponential-backoff retry.
+
+        ``chunk_label`` (e.g. ``"Chunk 3/5 (pages 21-30)"``) shows up
+        in the heartbeat tick so multi-chunk batches can identify
+        which chunk is currently in flight. ``baseline_percent`` is
+        the floor we re-emit on every heartbeat so the bar doesn't
+        snap backwards while the SDK polls — the actual percent only
+        advances on chunk-completion in the caller.
+        """
         from datalab_sdk.exceptions import DatalabAPIError, DatalabTimeoutError
 
         opts = self._build_convert_options(page_range)
@@ -508,14 +570,32 @@ class DatalabOCRAdapter:
             try:
                 if progress_callback:
                     progress_callback(
-                        min(5 + attempt * 2, 15),
-                        f"Submitting to Data Lab (attempt {attempt + 1})",
+                        max(baseline_percent, min(5 + attempt * 2, 15)),
+                        (
+                            f"Submitting {chunk_label} (attempt {attempt + 1})"
+                            if chunk_label
+                            else f"Submitting to Data Lab (attempt {attempt + 1})"
+                        ),
                     )
-                result = await client.convert(
-                    file_path=pdf_path,
-                    options=opts,
-                    max_polls=self._config.max_polls,
-                    poll_interval=self._config.poll_interval,
+
+                def _heartbeat(elapsed: float) -> None:
+                    if progress_callback is None:
+                        return
+                    label = (
+                        f"{chunk_label} — analyzing ({elapsed:.0f}s)"
+                        if chunk_label
+                        else f"Data Lab analyzing ({elapsed:.0f}s)"
+                    )
+                    # Re-emit the baseline percent so any upstream
+                    # consumer that snaps to monotone-increasing input
+                    # (a UI smoother, a percent-delta throttle) treats
+                    # this as a heartbeat, not a regression. The
+                    # chunk-completion path (in the caller) is the
+                    # only place that actually moves the bar.
+                    progress_callback(baseline_percent, label)
+
+                result = await self._convert_with_heartbeat(
+                    client, pdf_path, opts, _heartbeat,
                 )
                 if not getattr(result, "success", True):
                     err = getattr(result, "error", "Unknown error")
@@ -721,7 +801,20 @@ class DatalabOCRAdapter:
                 chunk_idx + 1, total_chunks, page_range,
             )
 
-            result = await self._submit_with_retry(pdf_path, page_range, None)
+            # Baseline percent for this chunk's heartbeat: pin to the
+            # progress already earned by completed chunks. A heartbeat
+            # never moves backwards, and the bar still advances by the
+            # familiar 90/total_chunks step on chunk completion below.
+            baseline_pct = int((completed_counter["n"] / total_chunks) * 90)
+            chunk_label = f"Chunk {chunk_idx + 1}/{total_chunks} (pages {page_range})"
+
+            result = await self._submit_with_retry(
+                pdf_path,
+                page_range,
+                progress_callback,
+                chunk_label=chunk_label,
+                baseline_percent=baseline_pct,
+            )
 
             pqs = getattr(result, "parse_quality_score", None)
             quality = float(pqs) if pqs is not None else None

@@ -104,7 +104,11 @@ export function useDocumentWebSocket(docId: string | null): void {
       if (msg.type === "progress") {
         const pct = typeof msg.percent === "number" ? msg.percent : 0;
         const label = typeof msg.label === "string" ? msg.label : "";
-        setOcrProgress(pct, normalizeEngineTerms(label));
+        const phase =
+          msg.phase === "submit" || msg.phase === "analyzing" || msg.phase === "done"
+            ? msg.phase
+            : null;
+        setOcrProgress(pct, normalizeEngineTerms(label), phase);
       }
 
       if (msg.type === "page_update" && msg.page_num) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useDocumentStore, type PageData } from "@/stores/document-store";
@@ -51,8 +51,10 @@ function useElapsedTime(active: boolean) {
 
 export function ProcessingDashboard() {
   const router = useRouter();
-  const { docId, filename, totalPages, processingStatus, ocrProgress, ocrProgressLabel, timeline, pages, error } =
-    useDocumentStore();
+  const {
+    docId, filename, totalPages, processingStatus, ocrProgress, ocrProgressLabel,
+    ocrPhase, timeline, pages, error,
+  } = useDocumentStore();
   useDocumentWebSocket(docId);
   useProcessingPollFallback(docId);
   const [selectedPage, setSelectedPage] = useState<PageData | null>(null);
@@ -65,38 +67,6 @@ export function ProcessingDashboard() {
 
   const isOcrPhase = processingStatus === "azure_di_running" || processingStatus === "marker_ocr_running";
 
-  // Smooth the OCR phase so progress feels continuous between server ticks.
-  // All hooks must run before any conditional early return so React's
-  // hook ordering stays stable across renders — the early return sits
-  // below this block. The hooks themselves no-op when not in an OCR
-  // phase, so their cost is bounded.
-  const [smoothedOcrProgress, setSmoothedOcrProgress] = useState(0);
-  useEffect(() => {
-    if (!isOcrPhase) {
-      setSmoothedOcrProgress(0);
-      return;
-    }
-    setSmoothedOcrProgress((prev) => Math.max(prev, ocrProgress));
-  }, [isOcrPhase, ocrProgress]);
-
-  useEffect(() => {
-    if (!isOcrPhase || isComplete || isError) return;
-    const timer = setInterval(() => {
-      setSmoothedOcrProgress((prev) => {
-        // Keep gently advancing until close to completion, but never fake 100%.
-        const floor = Math.max(ocrProgress, 6);
-        const nudged = prev < floor ? floor : prev + 0.35;
-        return Math.min(97, nudged);
-      });
-    }, 700);
-    return () => clearInterval(timer);
-  }, [isOcrPhase, isComplete, isError, ocrProgress]);
-
-  const liveOcrProgress = useMemo(
-    () => (isOcrPhase ? Math.max(ocrProgress, smoothedOcrProgress) : 0),
-    [isOcrPhase, ocrProgress, smoothedOcrProgress],
-  );
-
   if (!docId) return null;
 
   const pageArray = Array.from(pages.values());
@@ -107,12 +77,19 @@ export function ProcessingDashboard() {
   const displayPages = totalPages || pageArray.length;
   const hasRealProgress = isOcrPhase && ocrProgress > 0;
 
+  // Backend now emits a real heartbeat from the OCR adapters every
+  // poll_interval seconds (Datalab heartbeat task / Azure LRO poller
+  // tick / Marker timeout loop). The label tells the user what's
+  // happening; the percent only moves at chunk boundaries. We render
+  // both directly without client-side fake easing — synthetic nudging
+  // would just decouple the UI from the real engine state and make a
+  // genuinely-stuck run look like it's still progressing.
   const statusLabel = hasRealProgress && ocrProgressLabel
     ? ocrProgressLabel
     : displayProcessingStatus(processingStatus);
 
   const pipelinePercent = hasRealProgress
-    ? Math.round(20 + (liveOcrProgress / 100) * 50)
+    ? Math.round(20 + (ocrProgress / 100) * 50)
     : pipelineProgressFromStatus(processingStatus);
 
   const stageIndexByStatus: Record<string, number> = {
@@ -217,10 +194,23 @@ export function ProcessingDashboard() {
               {isOcrPhase && (
                 <div className="rounded-md border border-primary/20 bg-primary/5 p-2">
                   <div className="flex items-center justify-between text-[11px] text-primary/90 mb-1">
-                    <span>Intake progress</span>
-                    <span className="tabular-nums">{Math.round(liveOcrProgress)}%</span>
+                    <span>
+                      Intake progress
+                      {ocrPhase === "submit" && (
+                        <span className="ml-1.5 opacity-70">· submitting</span>
+                      )}
+                      {ocrPhase === "analyzing" && (
+                        <span className="ml-1.5 opacity-70">· analyzing</span>
+                      )}
+                    </span>
+                    <span className="tabular-nums">{ocrProgress}%</span>
                   </div>
-                  <Progress value={liveOcrProgress} className="h-1.5" />
+                  <Progress value={ocrProgress} className="h-1.5" />
+                  {ocrProgressLabel && (
+                    <div className="mt-1 text-[10px] text-primary/70 truncate">
+                      {ocrProgressLabel}
+                    </div>
+                  )}
                 </div>
               )}
 
