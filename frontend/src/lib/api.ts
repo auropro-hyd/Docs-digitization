@@ -441,3 +441,31 @@ export async function getConfusionMatrix() {
   if (!response.ok) throw new Error(`Failed to fetch confusion matrix: ${response.statusText}`);
   return response.json();
 }
+
+// ── BMR audit pipeline (Spec 001+) ──────────────────────────────────────────
+
+import type { RunReport } from "@/types/bmr";
+
+// Every BMR endpoint requires an X-Actor-Id (see
+// backend/app/api/deps/bmr_auth.py). Real SSO integration replaces this
+// helper wholesale; until then we read an actor id from
+// NEXT_PUBLIC_BMR_ACTOR with a conservative fallback so dev runs don't
+// 401, and forward NEXT_PUBLIC_BMR_API_TOKEN when present so deployments
+// that enable AT_BMR__API_TOKEN can talk to the API from the UI.
+function bmrAuthHeaders(): HeadersInit {
+  const actor = process.env.NEXT_PUBLIC_BMR_ACTOR ?? "ui-user";
+  const headers: Record<string, string> = { "X-Actor-Id": actor };
+  const token = process.env.NEXT_PUBLIC_BMR_API_TOKEN;
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+export async function getBmrRun(runId: string): Promise<RunReport> {
+  const response = await fetch(`${API_BASE}/api/bmr/runs/${runId}`, {
+    headers: bmrAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch BMR run ${runId}: ${response.statusText}`);
+  }
+  return response.json();
+}
