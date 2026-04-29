@@ -21,6 +21,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from app.bmr.capabilities.bpcr_section_detect import detect_bpcr_sections
+from app.bmr.capabilities.bpcr_sections_spec import (
+    BPCRSectionsSpecError,
+    default_spec_path,
+    load_spec,
+)
 from app.bmr.rules.diff import (
     ChangeKind,
     RuleDiffReport,
@@ -34,6 +40,7 @@ from app.bmr.rules.fixture_run import (
 from app.bmr.rules.loader import load_rule_bank
 from app.bmr.rules.schema import available_schema_versions, default_schema_dir
 from app.bmr.rules.validator import RuleValidationReport
+from app.core.ports.ocr import OCRResult
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -103,6 +110,43 @@ def _build_parser() -> argparse.ArgumentParser:
         help="output format (default: human)",
     )
     fixture.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help="colorize human output (default: auto)",
+    )
+
+    detect = sub.add_parser(
+        "detect-sections",
+        help="run BPCR layout-aware section detection against an OCR JSON",
+    )
+    detect.add_argument(
+        "--ocr",
+        type=Path,
+        required=True,
+        help="OCR result JSON (the same shape as OCRResult.model_dump_json()).",
+    )
+    detect.add_argument(
+        "--spec",
+        type=Path,
+        default=None,
+        help=(
+            "BPCR section spec YAML. Defaults to "
+            "AT_BMR__BPCR_SECTIONS_SPEC env var or the shipped pilot spec."
+        ),
+    )
+    detect.add_argument(
+        "--doc-id",
+        default="bpcr",
+        help="document id stamped onto the resulting BPCRSectionMap.",
+    )
+    detect.add_argument(
+        "--format",
+        choices=("human", "json"),
+        default="human",
+        help="output format (default: human)",
+    )
+    detect.add_argument(
         "--color",
         choices=("auto", "always", "never"),
         default="auto",
@@ -412,6 +456,79 @@ def _run_diff(args: argparse.Namespace) -> int:
     return code
 
 
+# ── Subcommand: detect-sections ──────────────────────────────────────────────
+
+
+def _format_detect_sections_human(report, *, color: bool, stream) -> int:
+    outcome_color = {
+        "ok": _Style.GREEN,
+        "partial": _Style.YELLOW,
+        "failed": _Style.RED,
+    }.get(report.outcome, _Style.DIM)
+    header = (
+        f"doc_id={report.doc_id} method={report.method} "
+        f"spec_version={report.spec_version} detector={report.detector_version}"
+    )
+    stream.write(header + "\n")
+    stream.write(
+        "outcome: "
+        + _color(report.outcome, outcome_color, color)
+        + f"  ({len(report.spans)} span"
+        + ("s" if len(report.spans) != 1 else "")
+        + ")\n"
+    )
+    if report.notes:
+        stream.write(_color("notes: " + ", ".join(report.notes) + "\n", _Style.DIM, color))
+    stream.write("\n")
+    for span in report.spans:
+        glyph = _color("●", _Style.GREEN, color) if span.section_id != "unsectioned" \
+            else _color("○", _Style.DIM, color)
+        line = (
+            f"  {glyph} pages {span.start_page:>3}–{span.end_page:<3}  "
+            f"{span.section_id}"
+        )
+        if span.display_name:
+            line += f"  ({span.display_name})"
+        line += f"  conf={span.confidence:.2f}  via={span.detection_method}"
+        stream.write(line + "\n")
+        if span.matched_text:
+            preview = _color(f"      matched: “{span.matched_text}”\n", _Style.DIM, color)
+            stream.write(preview)
+    stream.write("\n")
+    return 0 if report.outcome != "failed" else 1
+
+
+def _format_detect_sections_json(report, stream) -> int:
+    stream.write(json.dumps(report.model_dump(mode="json"), indent=2) + "\n")
+    return 0 if report.outcome != "failed" else 1
+
+
+def _run_detect_sections(args: argparse.Namespace) -> int:
+    ocr_path: Path = args.ocr
+    if not ocr_path.is_file():
+        sys.stderr.write(f"bmr-rules: OCR JSON not found: {ocr_path}\n")
+        return 2
+    try:
+        ocr = OCRResult.model_validate_json(ocr_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — surface the parse error verbatim
+        sys.stderr.write(f"bmr-rules: failed to parse OCR JSON: {exc}\n")
+        return 2
+
+    spec_path = args.spec or default_spec_path()
+    try:
+        spec = load_spec(spec_path)
+    except BPCRSectionsSpecError as exc:
+        sys.stderr.write(f"bmr-rules: bad section spec: {exc}\n")
+        return 2
+
+    report = detect_bpcr_sections(doc_id=args.doc_id, ocr=ocr, sections_spec=spec)
+
+    if args.format == "json":
+        return _format_detect_sections_json(report, sys.stdout)
+    color = _use_color(sys.stdout, args.color)
+    return _format_detect_sections_human(report, color=color, stream=sys.stdout)
+
+
 # ── Entry ────────────────────────────────────────────────────────────────────
 
 
@@ -444,6 +561,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_fixture_run(args)
     if args.command == "diff":
         return _run_diff(args)
+    if args.command == "detect-sections":
+        return _run_detect_sections(args)
 
     parser.print_help()
     return 2
