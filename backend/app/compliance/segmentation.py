@@ -11,7 +11,11 @@ import logging
 from pathlib import Path
 
 from app.compliance.models import DocumentSection, DocumentSegmentation
-from app.compliance.rules.profiles import normalize_section_type
+from app.compliance.rules.profiles import (
+    load_profiles,
+    normalize_document_type,
+    normalize_section_type,
+)
 from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -27,7 +31,6 @@ _CHARS_PER_PAGE = 500
 
 def _build_segmentation_prompt(
     extractions: list[dict],
-    key_value_pairs: list[dict] | None = None,
     filename: str = "",
 ) -> str:
     page_summaries = []
@@ -36,24 +39,22 @@ def _build_segmentation_prompt(
         md = ext.get("markdown", "")
         page_summaries.append(f"Page {page_num}: {md[:_CHARS_PER_PAGE]}")
 
-    kv_text = "None extracted"
-    if key_value_pairs:
-        kv_text = "\n".join(
-            f"- {kv.get('key', '?')}: {kv.get('value', '?')}"
-            for kv in key_value_pairs[:30]
-        )
+    profiles = load_profiles()
+    allowed_doc_types = ", ".join(sorted(profiles.document_profiles.keys()))
 
     return (
         f"Analyze this multi-part document and identify each distinct sub-document/section.\n\n"
         f"Look for: page numbering restarts, document titles, headers that change, "
         f"form layout shifts, and content topic changes.\n\n"
         f"FILENAME: {filename}\n\n"
-        f"KEY-VALUE PAIRS:\n{kv_text}\n\n"
         f"PAGE SUMMARIES:\n" + "\n\n".join(page_summaries) + "\n\n"
         f"For each section return:\n"
         f"- section_id: short lowercase_snake_case slug\n"
         f"- name: descriptive human-readable name\n"
         f"- section_type: descriptive type in lowercase_snake_case (be specific)\n"
+        f"- document_type: one of: {allowed_doc_types}\n"
+        f"  If this section is a sub-section of a larger document already classified above, "
+        f"repeat that document's type.\n"
         f"- start_page / end_page: inclusive page range\n"
         f"- description: brief description of the section content\n\n"
         f"Also return the overall document_type and your confidence (0.0-1.0)."
@@ -73,7 +74,7 @@ class DocumentSegmenter:
         filename: str = "",
         total_pages: int = 0,
     ) -> DocumentSegmentation:
-        prompt = _build_segmentation_prompt(extractions, key_value_pairs, filename)
+        prompt = _build_segmentation_prompt(extractions, filename)
         try:
             result = await self._llm.generate_structured(
                 prompt, DocumentSegmentation, system=_SYSTEM,
@@ -124,6 +125,7 @@ def build_page_to_section(seg: DocumentSegmentation) -> dict[int, dict]:
             "section_id": sec.section_id,
             "section_name": sec.name,
             "section_type": normalize_section_type(sec.section_type),
+            "document_type": normalize_document_type(sec.document_type) if sec.document_type else "",
             "start_page": sec.start_page,
             "end_page": sec.end_page,
         }
