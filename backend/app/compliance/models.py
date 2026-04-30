@@ -160,6 +160,24 @@ class OrchestratorResult(BaseModel):
     skipped_categories: list[SkippedCategory] = Field(default_factory=list)
 
 
+class BpcrSubSection(BaseModel):
+    """One of the 13 canonical BPCR sub-sections (Spec 007).
+
+    Populated by the BPCR section detector when a parent
+    :class:`DocumentSection` is classified as a batch_record. Mirrors
+    the wire shape used by the BMR pipeline's ``RunReport.bpcr_sections``
+    rows so frontends can render either pipeline's output through one
+    component. Empty when the parent section isn't a BPCR or detection
+    couldn't run for some reason (no markdown, malformed spec, etc.).
+    """
+
+    section_id: str = ""
+    display_name: str = ""
+    page_index: int = 0
+    confidence: float = 0.0
+    detection_method: str = ""
+
+
 class DocumentSection(BaseModel):
     """A distinct sub-document identified during segmentation."""
 
@@ -169,6 +187,14 @@ class DocumentSection(BaseModel):
     start_page: int = 0
     end_page: int = 0
     description: str = ""
+    # Spec 007 — populated only when this section is a BPCR
+    # (``section_type`` matches one of the BPCR aliases). The legacy
+    # compliance pipeline uses LLM-driven segmentation that returns
+    # one entry per sub-document; this nested field carries the
+    # within-BPCR sub-section breakdown (cover_page,
+    # material_dispensing, yield_calculation, …) without changing
+    # the parent shape.
+    sub_sections: list[BpcrSubSection] = Field(default_factory=list)
 
 
 class DocumentSegmentation(BaseModel):

@@ -133,6 +133,50 @@ class _PageCandidate(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+# Patterns used by ``_normalise_markdown_line`` to strip presentation
+# markers before regex/alias matching. Compiled once at module load
+# rather than per call. The detector regexes are anchored at ``^\s*``
+# and the alias matcher uses ``re.escape`` on the human-readable
+# alias (e.g. ``"Material Dispensing"``); without normalisation a
+# real-world heading like ``**LIST OF MAJOR EQUIPMENTS**`` or
+# ``# **MANUFACTURING INSTRUCTIONS**`` never matches because the
+# leading ``**`` / ``#`` block the anchor. Stripping these is purely
+# a presentation concern and doesn't change which sections can match
+# — only which lines are visible to the matcher in the first place.
+_HEADING_PREFIX_RE = re.compile(r"^\s*#{1,6}\s+")
+_BOLD_WRAP_RE = re.compile(r"^\*\*\s*(.+?)\s*\*\*\s*[:.;,]?\s*$")
+
+
+def _normalise_markdown_line(line: str) -> str:
+    """Strip leading heading / bold markers so the matcher can see the
+    actual section name underneath.
+
+    Returns the original line untouched when no markup is present —
+    this path is hot enough (every line × every section × every alias)
+    that an unconditional regex substitution would be measurable.
+
+    Examples (all map to ``LIST OF MAJOR EQUIPMENTS & SOP DETAILS``):
+      ``# **LIST OF MAJOR EQUIPMENTS & SOP DETAILS**``
+      ``**LIST OF MAJOR EQUIPMENTS & SOP DETAILS**``
+      ``###### LIST OF MAJOR EQUIPMENTS & SOP DETAILS``
+    """
+
+    text = line
+    # Drop a leading markdown heading marker (``#`` through ``######``).
+    # Multiple loops are unnecessary — the regex matches at most one
+    # heading prefix, and Pandoc-style markdown doesn't nest them.
+    if text.startswith("#"):
+        text = _HEADING_PREFIX_RE.sub("", text, count=1)
+    # Unwrap a single ``**…**`` bold span if it covers the whole line
+    # (with an optional trailing ``:``/``.``). This pattern is the one
+    # the layout sanitiser preserves around document section headers
+    # in real BPCR scans.
+    bold_match = _BOLD_WRAP_RE.match(text.strip())
+    if bold_match:
+        text = bold_match.group(1)
+    return text
+
+
 def _page_lines(page: OCRPageResult) -> list[tuple[str, float]]:
     """Return ``(line_text, y_fraction)`` for every line on the page.
 
@@ -141,6 +185,10 @@ def _page_lines(page: OCRPageResult) -> list[tuple[str, float]]:
     bounding regions we fall back to evenly-spaced lines from the
     markdown so ``mid_page`` detection stays meaningful for fixtures
     that don't ship layout coordinates.
+
+    Every emitted line is run through :func:`_normalise_markdown_line`
+    so heading and bold markup don't block the anchored regex/alias
+    matchers downstream.
     """
 
     page_height = page.page_height or 0.0
@@ -158,7 +206,9 @@ def _page_lines(page: OCRPageResult) -> list[tuple[str, float]]:
         lines: list[tuple[str, float]] = []
         for y_key, items in sorted(rows.items()):
             items.sort(key=lambda pair: pair[0])
-            text = " ".join(text for _, text in items).strip()
+            text = _normalise_markdown_line(
+                " ".join(text for _, text in items).strip()
+            )
             if not text:
                 continue
             y_fraction = min(max(y_key / page_height, 0.0), 1.0)
@@ -167,7 +217,12 @@ def _page_lines(page: OCRPageResult) -> list[tuple[str, float]]:
             return lines
 
     # Fallback path — markdown-only fixtures (most of the test suite).
-    md_lines = [line.strip() for line in page.markdown.splitlines() if line.strip()]
+    md_lines = [
+        _normalise_markdown_line(line.strip())
+        for line in page.markdown.splitlines()
+        if line.strip()
+    ]
+    md_lines = [line for line in md_lines if line]
     if not md_lines:
         return []
     step = 1.0 / max(len(md_lines), 1)
@@ -232,12 +287,32 @@ def _evaluate_page(
     if not lines:
         return _PageCandidate(page_num=page.page_num)
 
+    # Markdown-only mode (no word-level layout coordinates): synthetic
+    # y_fractions from line indexes are too unreliable a proxy for
+    # real spatial position to gate on bands. A real BPCR has its
+    # section headers mid-page (e.g. "MICRONIZATION OPERATION" on
+    # page 24 between two tables), but markdown-line position depends
+    # on how dense each preceding line is. Drop the band check in
+    # this mode so the regex/alias matchers can do their job; the
+    # confidence weighting still differentiates strong vs weak hits
+    # via the matched-band assignment below.
+    has_real_layout = bool(page.words) and (page.page_height or 0.0) > 0
+
     best = _PageCandidate(page_num=page.page_num)
     for section in spec.sections:
         primary, aliases = _patterns_for(section)
+        # ``cover_page`` claims to be page 1 by definition. The
+        # canonical regex matches the document title which repeats on
+        # every BPCR page header — without this guard, every page
+        # gets matched as cover_page and the assemble-spans pass
+        # inherits it forward across the whole document. Pin the
+        # constraint here rather than in the spec so a future spec
+        # change can't accidentally weaken it.
+        if section.section_id == "cover_page" and page.page_num != 1:
+            continue
         for line_text, y_fraction in lines:
             band = _band_for_y(y_fraction)
-            if band not in section.bands:
+            if has_real_layout and band not in section.bands:
                 continue
             primary_hit = any(p.search(line_text) for p in primary)
             alias_hit = False if primary_hit else any(
@@ -246,7 +321,8 @@ def _evaluate_page(
             if not (primary_hit or alias_hit):
                 continue
             if (
-                band == "mid_page"
+                has_real_layout
+                and band == "mid_page"
                 and section.requires_emphasis_for_mid_page
                 and not _is_emphasised(line_text)
             ):

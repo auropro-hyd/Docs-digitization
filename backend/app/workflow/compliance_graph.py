@@ -37,6 +37,7 @@ from app.compliance.rules.registry import get_registry
 from app.compliance.segmentation import (
     DocumentSegmenter,
     build_page_to_section,
+    enrich_with_bpcr_sub_sections,
     load_segmentation,
     store_segmentation,
 )
@@ -153,6 +154,12 @@ async def run_compliance_pipeline(
             segmentation = await segmenter.segment(
                 extractions, key_value_pairs, filename, total_pages,
             )
+            # Spec 007 — drill BPCR-classified sections into their
+            # 13 canonical sub-sections (cover_page, material_dispensing,
+            # yield_calculation, …). Pure post-processing; no extra
+            # LLM call. Empty sub_sections on a non-BPCR section is
+            # the expected pass-through.
+            segmentation = enrich_with_bpcr_sub_sections(segmentation, extractions)
             store_segmentation(doc_dir, segmentation)
             llm_call_count += 1
 
