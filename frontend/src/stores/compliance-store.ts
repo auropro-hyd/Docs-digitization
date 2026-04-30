@@ -332,6 +332,24 @@ export const useComplianceStore = create<ComplianceStore>((set, get) => ({
     if (phase === "error") {
       set({ phase: "error", label: (data.label as string) || "Audit failed", endedAt: Date.now() });
     }
+
+    if (phase === "cancelled") {
+      // Distinct from "error" so a future UI can show a different
+      // copy ("interrupted, please re-run") vs ("audit failed,
+      // contact support"). The backend emits this when the
+      // compliance task is cancelled by an external trigger
+      // (uvicorn ``--reload``, explicit ``DELETE /run``, lifespan
+      // shutdown). The phase enum and label are identical to
+      // "error" for the dashboard banner; we just preserve the
+      // semantic difference in the store so it's available to any
+      // surface that needs it.
+      set({
+        phase: "error",
+        label:
+          (data.label as string) || "Compliance audit was interrupted. Please re-run.",
+        endedAt: Date.now(),
+      });
+    }
   },
 
   hydrateFromReport: (report) => {
