@@ -148,20 +148,43 @@ async def run_compliance_pipeline(
         })
 
         segmentation = load_segmentation(doc_dir)
+        cache_was_used = segmentation is not None
         if segmentation is None:
             cross_llm = container.compliance_cross_page_llm
             segmenter = DocumentSegmenter(cross_llm)
             segmentation = await segmenter.segment(
                 extractions, key_value_pairs, filename, total_pages,
             )
-            # Spec 007 — drill BPCR-classified sections into their
-            # 13 canonical sub-sections (cover_page, material_dispensing,
-            # yield_calculation, …). Pure post-processing; no extra
-            # LLM call. Empty sub_sections on a non-BPCR section is
-            # the expected pass-through.
-            segmentation = enrich_with_bpcr_sub_sections(segmentation, extractions)
-            store_segmentation(doc_dir, segmentation)
             llm_call_count += 1
+
+        # Spec 007 — drill BPCR-classified sections into their 13
+        # canonical sub-sections (cover_page, material_dispensing,
+        # yield_calculation, …). Pure post-processing; no extra LLM
+        # call. Idempotent: re-running on an already-enriched seg
+        # regenerates the same rows from the same input, so it's
+        # safe to apply on every load. Without this, a doc whose
+        # segmentation.json was cached before this feature shipped
+        # would silently keep its empty ``sub_sections`` arrays
+        # forever — exactly the symptom Akhilesh hit on his re-run.
+        needs_enrichment = any(
+            not section.sub_sections
+            for section in segmentation.sections
+            if section.section_type
+            and any(
+                hint in section.section_type.lower()
+                for hint in ("batch_record", "bpcr", "batch_production")
+            )
+        )
+        if needs_enrichment:
+            segmentation = enrich_with_bpcr_sub_sections(segmentation, extractions)
+            # Re-persist so subsequent loads see the enriched form
+            # even if the rest of the pipeline doesn't trigger a write.
+            store_segmentation(doc_dir, segmentation)
+        elif not cache_was_used:
+            # Fresh segmentation that already had no BPCR sections to
+            # enrich — still persist so the run produces a stable
+            # cache file.
+            store_segmentation(doc_dir, segmentation)
 
         section_map = build_page_to_section(segmentation)
 

@@ -140,6 +140,46 @@ def test_enrichment_drills_bpcr_section_into_sub_sections() -> None:
     assert by_page.get(5) == "micronization"
 
 
+def test_enrichment_is_idempotent_so_cache_upgrade_is_safe() -> None:
+    """The compliance graph runs enrichment on cached segmentations
+    that lack ``sub_sections`` (i.e. cached before this feature
+    shipped). Pinning idempotency here protects that upgrade path —
+    re-running on an already-enriched seg must produce equivalent
+    output, not duplicate or shift entries.
+
+    The user's symptom was the failure mode this prevents: a
+    pre-existing ``segmentation.json`` from before PR #22 caused
+    ``load_segmentation`` to return non-None, the original code
+    skipped the enrichment block, and the BPCR section came back
+    with empty ``sub_sections`` even on a fresh compliance run.
+    """
+
+    seg = DocumentSegmentation(
+        sections=[
+            DocumentSection(
+                section_id="bpcr",
+                name="BPCR",
+                section_type="batch_record",
+                start_page=1, end_page=2,
+            ),
+        ],
+    )
+    extractions = [
+        {"page_num": 1, "markdown": "Batch Production and Control Record\n\nCover."},
+        {"page_num": 2, "markdown": "**REVISION SUMMARY**\n| change |"},
+    ]
+
+    once = enrich_with_bpcr_sub_sections(seg, extractions)
+    twice = enrich_with_bpcr_sub_sections(once, extractions)
+
+    # Same row count, same shape — second pass doesn't compound.
+    assert len(twice.sections[0].sub_sections) == len(once.sections[0].sub_sections)
+    assert (
+        [(ss.section_id, ss.page_index) for ss in twice.sections[0].sub_sections]
+        == [(ss.section_id, ss.page_index) for ss in once.sections[0].sub_sections]
+    )
+
+
 def test_enrichment_fails_open_when_no_markdown_for_bpcr_pages() -> None:
     """If the extractions lack markdown for the BPCR's page range
     (rare but possible — a doc with image-only pages), the section
