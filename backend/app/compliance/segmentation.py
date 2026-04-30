@@ -2,6 +2,17 @@
 
 Identifies distinct sub-documents within a multi-part document packet using
 a single LLM call.  Section types are free-form (LLM-generated), not enums.
+
+A second pass — :func:`enrich_with_bpcr_sub_sections` — drills into any
+section the LLM classified as a batch_record / BPCR and runs the
+heuristic BPCR section detector (Spec 007) over the per-page markdown
+to populate the 13 canonical sub-sections (cover_page,
+material_dispensing, yield_calculation, …). The legacy compliance
+pipeline previously stopped at the document-boundary level and treated
+the whole BPCR as one opaque 35-page block; this enrichment closes the
+gap that Akhilesh flagged on 2026-04-28 ("still not returning the
+sections within batch_record") for the legacy pipeline, mirroring what
+PR #9 already did for the new BMR pipeline.
 """
 
 from __future__ import annotations
@@ -10,11 +21,165 @@ import json
 import logging
 from pathlib import Path
 
-from app.compliance.models import DocumentSection, DocumentSegmentation
+from app.compliance.models import (
+    BpcrSubSection,
+    DocumentSection,
+    DocumentSegmentation,
+)
 from app.compliance.rules.profiles import normalize_section_type
 from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
+
+
+# Section-type substrings that flag a document section as a BPCR.
+# The compliance LLM emits free-form snake_case section_types so we
+# match by substring rather than equality. Kept narrow on purpose —
+# only types that explicitly mention "batch_record",
+# "batch_production_and_control", or the well-known abbreviation
+# "bpcr" are treated as BPCRs. Adjacent types
+# ("batch_packaging_record", "batch_release_record") are NOT
+# auto-detected to avoid running the wrong section spec on the wrong
+# document.
+_BPCR_SECTION_TYPE_HINTS: tuple[str, ...] = (
+    "batch_record",
+    "batch_production_and_control_record",
+    "batch_production_record",
+    "bpcr",
+)
+
+
+def _looks_like_bpcr(section_type: str) -> bool:
+    """True when ``section_type`` matches one of the BPCR hints.
+
+    Pulled into a helper so the test suite can pin the exact
+    inclusion / exclusion set.
+    """
+
+    if not section_type:
+        return False
+    needle = section_type.lower()
+    return any(hint in needle for hint in _BPCR_SECTION_TYPE_HINTS)
+
+
+def enrich_with_bpcr_sub_sections(
+    seg: DocumentSegmentation,
+    extractions: list[dict],
+) -> DocumentSegmentation:
+    """Drill BPCR-classified sections into their 13 canonical sub-sections.
+
+    Runs the heuristic detector (Spec 007) against the per-page
+    markdown carried in ``extractions``. The detector lives in
+    :mod:`app.bmr.capabilities.bpcr_section_detect`; it's pure and
+    has no service dependencies, so we can call it from the legacy
+    compliance pipeline without touching the BMR run plumbing.
+
+    Returns a NEW :class:`DocumentSegmentation` with ``sub_sections``
+    populated on any section whose ``section_type`` matches the
+    BPCR hints. Other sections are passed through unchanged. Empty
+    output (no detector hits) leaves ``sub_sections`` empty rather
+    than synthesising fake entries — empty is the operator signal
+    that detection didn't fire and the section should be reviewed
+    as a single block (the prior behaviour).
+
+    Fail-open: any exception in the detector or spec loader is
+    logged and the original segmentation is returned unchanged.
+    Compliance must never fail because section detection failed.
+    """
+
+    try:
+        from app.bmr.capabilities.bpcr_section_detect import (
+            detect_bpcr_sections,
+        )
+        from app.bmr.capabilities.bpcr_sections_spec import load_spec
+        from app.core.ports.ocr import OCRPageResult, OCRResult
+    except Exception:  # pragma: no cover — defensive
+        logger.exception("BPCR detector imports failed; skipping enrichment")
+        return seg
+
+    bpcr_sections = [s for s in seg.sections if _looks_like_bpcr(s.section_type)]
+    if not bpcr_sections:
+        return seg
+
+    try:
+        spec = load_spec()
+    except Exception:
+        logger.warning(
+            "BPCR sections spec failed to load; legacy compliance "
+            "segmentation will not include sub_sections this run",
+            exc_info=True,
+        )
+        return seg
+
+    # Build a page_num → markdown lookup once for the whole doc.
+    md_by_page: dict[int, str] = {}
+    for ext in extractions:
+        page_num = int(ext.get("page_num", 0) or 0)
+        md = ext.get("markdown") or ""
+        if page_num and md:
+            md_by_page[page_num] = md
+
+    enriched_sections: list[DocumentSection] = []
+    for section in seg.sections:
+        if not _looks_like_bpcr(section.section_type):
+            enriched_sections.append(section)
+            continue
+
+        # Synthesise an OCRResult covering only this section's pages.
+        # The detector consumes ``OCRPageResult.markdown`` plus
+        # word-level layout (we don't have that on the legacy pipeline
+        # so the heuristic falls back to the markdown-only path).
+        page_results: list[OCRPageResult] = []
+        for p in range(section.start_page, section.end_page + 1):
+            md = md_by_page.get(p, "")
+            if md.strip():
+                page_results.append(OCRPageResult(page_num=p, markdown=md))
+
+        if not page_results:
+            logger.info(
+                "BPCR section %s has no markdown for pages %d–%d; "
+                "skipping sub-section detection",
+                section.section_id, section.start_page, section.end_page,
+            )
+            enriched_sections.append(section)
+            continue
+
+        ocr = OCRResult(pages=page_results)
+        try:
+            section_map = detect_bpcr_sections(
+                doc_id=section.section_id,
+                ocr=ocr,
+                sections_spec=spec,
+                mode="heuristic",
+            )
+        except Exception:
+            logger.exception(
+                "BPCR detector raised on section %s; falling back to "
+                "single-section view for this run",
+                section.section_id,
+            )
+            enriched_sections.append(section)
+            continue
+
+        # Walk the section_map's spans and emit one BpcrSubSection per
+        # page. The wire shape mirrors the BMR pipeline's row format
+        # so a future shared frontend component can render either.
+        sub_sections: list[BpcrSubSection] = []
+        for span in section_map.spans:
+            for page_index in range(span.start_page, span.end_page + 1):
+                sub_sections.append(BpcrSubSection(
+                    section_id=span.section_id,
+                    display_name=span.display_name,
+                    page_index=page_index,
+                    confidence=span.confidence,
+                    detection_method=span.detection_method,
+                ))
+
+        enriched_sections.append(
+            section.model_copy(update={"sub_sections": sub_sections})
+        )
+
+    return seg.model_copy(update={"sections": enriched_sections})
 
 _SYSTEM = (
     "You are a document structure analyst for pharmaceutical regulatory documents. "
