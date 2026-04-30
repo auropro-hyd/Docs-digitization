@@ -532,25 +532,20 @@ class DatalabOCRAdapter:
         client: Any,
         pdf_path: str,
         opts: Any,
-        on_tick: Any,
+        on_tick: Any | None = None,
     ) -> Any:
-        """Run ``client.convert`` and tick a heartbeat once per poll interval.
+        """Run ``client.convert`` to completion.
 
-        The Datalab SDK's ``convert()`` blocks until the request reaches
-        ``status=complete``; the SDK polls internally on
-        ``poll_interval`` seconds but does not surface those polls to
-        callers. To keep the user-visible progress alive during a long
-        chunk, we run ``convert`` on a background task and emit a
-        heartbeat tick every ``poll_interval`` while it's still
-        running. The percent stays under our control (only advances on
-        chunk completion, see ``_process_single_chunk``); the tick
-        carries an elapsed-time label so the user sees activity even
-        when the percent doesn't move.
-
-        Doing it this way (rather than reimplementing submit + poll
-        against the SDK's private ``_submit_with_retry`` /
-        ``_poll_result`` methods) keeps us SDK-version-tolerant: an
-        upstream rename can't silently break the heartbeat.
+        Originally this method emitted per-chunk heartbeats via
+        ``on_tick`` while the SDK polled internally. Concurrent chunks
+        each running their own heartbeat raced against the upstream
+        WS throttle (1 broadcast/second/doc), producing a UX where
+        only one chunk's label ever showed — making it look like the
+        other chunks were stuck. The aggregate heartbeat now lives at
+        the ``extract()`` level (see ``_run_aggregate_heartbeat``);
+        ``on_tick`` is kept for backwards compatibility with tests
+        that exercised the per-tick callback in isolation, but the
+        production path no longer passes it.
         """
 
         convert_task = asyncio.create_task(
@@ -561,6 +556,10 @@ class DatalabOCRAdapter:
                 poll_interval=self._config.poll_interval,
             )
         )
+        if on_tick is None:
+            return await convert_task
+
+        # Backwards-compatible per-tick path retained for unit tests.
         elapsed_s = 0.0
         try:
             while True:
@@ -573,11 +572,60 @@ class DatalabOCRAdapter:
                     elapsed_s += self._config.poll_interval
                     on_tick(elapsed_s)
         except Exception:
-            # Surface SDK exceptions verbatim — caller already wraps
-            # them in retry logic.
             if not convert_task.done():
                 convert_task.cancel()
             raise
+
+    async def _run_aggregate_heartbeat(
+        self,
+        *,
+        in_flight: dict[int, tuple[str, float]],
+        completed_counter: dict[str, int],
+        total_chunks: int,
+        progress_callback: ProgressCallback | None,
+    ) -> None:
+        """Single coordinating heartbeat — one broadcast per poll interval.
+
+        Replaces the previous per-chunk heartbeat where N concurrent
+        chunks each fired their own tick and only one survived the
+        downstream WS throttle. By aggregating here, every tick
+        carries the full picture (chunks active / oldest age / newest
+        age / completed count) so a reviewer can tell the system is
+        working even when the percent hasn't moved yet.
+
+        Stops when cancelled (``extract()`` cancels it once
+        ``asyncio.gather`` over all chunks resolves).
+        """
+
+        if progress_callback is None:
+            return
+
+        loop = asyncio.get_running_loop()
+
+        try:
+            while True:
+                await asyncio.sleep(self._config.poll_interval)
+                snapshot = list(in_flight.values())
+                if not snapshot:
+                    # All chunks done; nothing to report. We don't
+                    # emit a 100% here — chunk-completion path owns
+                    # the percent floor.
+                    continue
+
+                now = loop.time()
+                ages = sorted(now - start for _, start in snapshot)
+                completed = completed_counter["n"]
+                baseline = int((completed / total_chunks) * 90)
+                label = (
+                    f"Datalab • {len(snapshot)}/{total_chunks} chunks analyzing"
+                    f" • oldest {ages[-1]:.0f}s, newest {ages[0]:.0f}s"
+                )
+                if completed:
+                    label += f" • {completed} completed"
+                progress_callback(baseline, label)
+        except asyncio.CancelledError:
+            # Normal shutdown when extract() finishes.
+            return
 
     async def _submit_with_retry(
         self,
@@ -863,61 +911,68 @@ class DatalabOCRAdapter:
         sem: asyncio.Semaphore,
         completed_counter: dict,
         progress_callback: ProgressCallback | None,
+        in_flight: dict[int, tuple[str, float]] | None = None,
     ) -> tuple[
         list[OCRPageResult], str, list[dict], list[SignatureRegion],
         list[KeyValuePair], float | None, int,
     ]:
-        """Process a single chunk: convert -> extract+bboxes -> parse. Semaphore-gated."""
+        """Process a single chunk: convert -> extract+bboxes -> parse. Semaphore-gated.
+
+        Registers the chunk in the shared ``in_flight`` map on entry
+        and removes it on exit. The aggregate heartbeat
+        (``_run_aggregate_heartbeat``) reads this map every poll
+        interval to emit one combined progress label for all
+        concurrent chunks; per-chunk heartbeats are no longer
+        emitted here so the upstream WS throttle isn't flooded.
+        """
         async with sem:
             logger.info(
                 "Chunk %d/%d (pages %s) — acquired semaphore slot",
                 chunk_idx + 1, total_chunks, page_range,
             )
 
-            # Baseline for this chunk's heartbeat: pinned to the
-            # progress already earned by *currently completed* chunks,
-            # read fresh on every tick. With ``max_concurrent_chunks``
-            # > 1 this matters — chunk A's heartbeat keeps firing while
-            # chunks B and C complete, and reading the counter live
-            # lets A's heartbeat reflect the running total instead of
-            # freezing at A's start-of-chunk reading. The frontend
-            # store enforces a strict monotone-only invariant so even
-            # a stale read can never cause a backwards snap.
             chunk_label = f"Chunk {chunk_idx + 1}/{total_chunks} (pages {page_range})"
+            loop = asyncio.get_running_loop()
+            if in_flight is not None:
+                in_flight[chunk_idx] = (chunk_label, loop.time())
 
-            def _baseline_pct(
-                _counter: dict = completed_counter,
-                _total: int = total_chunks,
-            ) -> int:
-                return int((_counter["n"] / _total) * 90)
+            try:
+                result = await self._submit_with_retry(
+                    pdf_path,
+                    page_range,
+                    None,  # per-chunk heartbeat is gone; aggregate covers it
+                    chunk_label=chunk_label,
+                )
 
-            result = await self._submit_with_retry(
-                pdf_path,
-                page_range,
-                progress_callback,
-                chunk_label=chunk_label,
-                baseline_provider=_baseline_pct,
-            )
+                pqs = getattr(result, "parse_quality_score", None)
+                quality = float(pqs) if pqs is not None else None
 
-            pqs = getattr(result, "parse_quality_score", None)
-            quality = float(pqs) if pqs is not None else None
+                checkpoint_id = getattr(result, "checkpoint_id", None)
 
-            checkpoint_id = getattr(result, "checkpoint_id", None)
+                extraction_data, bbox_data = await asyncio.gather(
+                    self._run_extraction(pdf_path, checkpoint_id, page_range),
+                    self._fetch_json_bboxes(pdf_path, checkpoint_id, page_range),
+                )
 
-            extraction_data, bbox_data = await asyncio.gather(
-                self._run_extraction(pdf_path, checkpoint_id, page_range),
-                self._fetch_json_bboxes(pdf_path, checkpoint_id, page_range),
-            )
-
-            first_page_0 = int(page_range.split(",")[0].split("-")[0]) if page_range else 0
-            chunk_pages, chunk_md, t_meta, sigs, kv_pairs = self._process_result(
-                result, first_page_0, bbox_data, extraction_data,
-            )
+                first_page_0 = int(page_range.split(",")[0].split("-")[0]) if page_range else 0
+                chunk_pages, chunk_md, t_meta, sigs, kv_pairs = self._process_result(
+                    result, first_page_0, bbox_data, extraction_data,
+                )
+            finally:
+                if in_flight is not None:
+                    in_flight.pop(chunk_idx, None)
 
             completed_counter["n"] += 1
             if progress_callback:
                 pct = int((completed_counter["n"] / total_chunks) * 90)
-                progress_callback(pct, f"Completed chunk {completed_counter['n']}/{total_chunks}")
+                if in_flight is not None and len(in_flight) > 0:
+                    suffix = f" • {len(in_flight)} chunk(s) still analyzing"
+                else:
+                    suffix = ""
+                progress_callback(
+                    pct,
+                    f"Completed chunk {completed_counter['n']}/{total_chunks}{suffix}",
+                )
 
             return chunk_pages, chunk_md, t_meta, sigs, kv_pairs, quality, chunk_idx
 
@@ -946,16 +1001,44 @@ class DatalabOCRAdapter:
 
         sem = asyncio.Semaphore(self._config.max_concurrent_chunks)
         completed_counter: dict[str, int] = {"n": 0}
+        # Shared map of currently-in-flight chunks. The aggregate
+        # heartbeat reads this every poll interval and emits a
+        # single combined label so a reviewer watching the bar can
+        # tell how many chunks are running, the oldest age, and how
+        # many have finished — without the throttle having to pick
+        # one chunk's per-tick label to surface and dropping the
+        # rest.
+        in_flight: dict[int, tuple[str, float]] = {}
 
-        chunk_results = await asyncio.gather(
-            *(
-                self._process_single_chunk(
-                    idx, pr, total_chunks, pdf_path,
-                    sem, completed_counter, progress_callback,
-                )
-                for idx, pr in enumerate(page_ranges)
+        heartbeat_task = asyncio.create_task(
+            self._run_aggregate_heartbeat(
+                in_flight=in_flight,
+                completed_counter=completed_counter,
+                total_chunks=total_chunks,
+                progress_callback=progress_callback,
             )
         )
+
+        try:
+            chunk_results = await asyncio.gather(
+                *(
+                    self._process_single_chunk(
+                        idx, pr, total_chunks, pdf_path,
+                        sem, completed_counter, progress_callback,
+                        in_flight=in_flight,
+                    )
+                    for idx, pr in enumerate(page_ranges)
+                )
+            )
+        finally:
+            heartbeat_task.cancel()
+            # Suppress the CancelledError that ``cancel()`` raises;
+            # we don't care about its return value, only that it
+            # stops before the function returns.
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
 
         all_pages: list[OCRPageResult] = []
         full_markdowns: list[tuple[int, str]] = []
