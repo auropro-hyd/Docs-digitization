@@ -47,7 +47,7 @@ async def test_heartbeat_ticks_while_convert_blocks() -> None:
     """
 
     cfg = DatalabConfig(
-        api_key="test",
+        api_key="test-key-1234567890abcdef",
         max_polls=100,
         poll_interval=1,
         submit_max_retries=1,
@@ -100,7 +100,7 @@ async def test_heartbeat_baseline_is_read_live_per_tick() -> None:
     """
 
     cfg = DatalabConfig(
-        api_key="test",
+        api_key="test-key-1234567890abcdef",
         max_polls=100,
         poll_interval=1,
         submit_max_retries=1,
@@ -147,7 +147,7 @@ async def test_heartbeat_does_not_fire_when_convert_finishes_within_one_poll() -
     a flooded callback on small documents."""
 
     cfg = DatalabConfig(
-        api_key="test",
+        api_key="test-key-1234567890abcdef",
         max_polls=100,
         poll_interval=1,
         submit_max_retries=1,
