@@ -320,6 +320,34 @@ async def _run_compliance_pipeline(doc_id: str, doc_dir: Path, selected_agents: 
 
     except asyncio.CancelledError:
         logger.info("Compliance pipeline cancelled for %s", doc_id)
+        # Notify the frontend that the run was killed mid-flight so
+        # the UI can show an actionable "interrupted" state instead
+        # of going silent forever. Common triggers: an uvicorn
+        # ``--reload`` rewriting the worker process while a long
+        # audit is running, an explicit ``DELETE /run``, or a task-
+        # manager shutdown during graceful drain. Broadcast happens
+        # before the shutdown drain completes — the WS adapter's
+        # ``send_update`` is non-blocking, and the lifespan waits for
+        # in-flight tasks before closing the loop.
+        from app.api.websocket import manager as ws_manager
+
+        try:
+            await ws_manager.broadcast(doc_id, {
+                "type": "compliance_progress",
+                "phase": "cancelled",
+                "status": "cancelled",
+                "label": "Compliance audit was interrupted. Please re-run.",
+            })
+        except Exception:  # pragma: no cover — broadcast is best-effort
+            # If the WS connection is also being torn down (likely on
+            # a reload), the broadcast may fail. The lock-file cleanup
+            # in ``finally`` is what matters; the UI will reconcile
+            # next time it polls ``/status``.
+            pass
+        # Re-raise so asyncio's task-cancellation contract is honoured —
+        # callers waiting on the task see CancelledError, not a normal
+        # return that would mask the cancel.
+        raise
     except Exception:
         logger.exception("Compliance pipeline failed for %s", doc_id)
         from app.api.websocket import manager as ws_manager
