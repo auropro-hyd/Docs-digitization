@@ -271,6 +271,9 @@ class ComplianceConfig(BaseModel):
 
     rule_batch_size: int = 15
     max_concurrent_batches: int = 25
+    agentic_page_cap: int = 50
+    agentic_worker_page_limit: int = 12
+    agentic_max_tool_calls: int = 5
     batch_by_category: bool = True
     llm_timeout: int = 120
 

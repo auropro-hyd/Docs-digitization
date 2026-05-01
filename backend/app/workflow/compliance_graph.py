@@ -158,6 +158,21 @@ async def run_compliance_pipeline(
 
         section_map = build_page_to_section(segmentation)
 
+        # Phase 1.5b: Page summarization (load-then-generate-then-store)
+        from app.compliance.summarizer import summarize_pages_in_batches  # noqa: PLC0415
+        await _ws_progress(doc_id, {
+            "phase": "summarization",
+            "status": "running",
+            "label": f"Generating page summaries ({len(extractions)} pages)...",
+        })
+        summ_llm = container.compliance_cross_page_llm
+        await summarize_pages_in_batches(extractions, section_map, doc_id, summ_llm)
+        await _ws_progress(doc_id, {
+            "phase": "summarization",
+            "status": "complete",
+            "label": "Page summaries ready",
+        })
+
         await _ws_progress(doc_id, {
             "phase": "segmentation",
             "status": "complete",

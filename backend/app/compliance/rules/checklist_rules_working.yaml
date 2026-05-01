@@ -1,0 +1,105 @@
+# ═══════════════════════════════════════════════════════════════
+#  Checklist Review Rule Configuration
+#  Rule text lives in checklist_rules.md — only behavior here.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  applicable_document_types: []
+  excluded_document_types: []
+  applicable_page_types: []
+  applicable_section_types: []
+  cross_section_requirements: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── BPCR Review Completeness (rules 1-19) ─────────────────────
+  check_for_all_attachments_available_in_the_document_packet:
+    severity: major
+    rules:
+      1:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        context_sources:
+        - document_type: batch_record
+          section_types: [manufacturing_operations]
+        pass_criteria: >
+          TARGET: This page is from the "Raw Material Weighing and Dispensing" table
+          of the batch record. Columns: S.No. | Raw Material Name | Batch No./Lot No. |
+          Used at Step No's | UOM | Standard Quantity | Gross Qty | Tare Qty | Net Qty |
+          Done by | Checked by. Ignore any sub-tables titled "LIST OF RAW MATERIALS FOR
+          EQUIPMENT CLEANING" — those are not part of this check.
+          Note: Done by / Checked by cells often contain embedded signature images
+          (shown as <img .../>) rather than plain text — treat any non-empty cell
+          (image or text) as "signed".
+
+          CONTEXT: The pre-loaded context contains the manufacturing operations steps
+          from the batch record (the numbered step table with Done by / Checked by /
+          Date columns). In those context pages, Done by and Checked by cells often
+          contain embedded signature images (shown as <img .../>) rather than plain
+          text — treat any non-empty cell (image or text, including a date alone) as
+          "executed/signed". Only blank cells or cells containing solely dashes ("—"
+          or "-") should be treated as unsigned/not executed.
+
+          ROW STRUCTURE: Each material in the weighing table has a multi-row structure:
+          - Summary header row: lists ALL step numbers in "Used at Step No's", total Qty,
+            and a final Done by / Checked by sign-off for the overall dispensing.
+          - Individual step sub-rows (indented below): one row per step number with its
+            own Qty, Done by, and Checked by. These sub-rows represent dispensing for
+            that SPECIFIC step.
+          When sub-rows exist, use the SUB-ROW's Done by / Checked by to determine
+          whether material was dispensed for THAT step — do not use the summary header's
+          signature to infer dispensing for all steps. The summary header sign-off is a
+          final totalling sign-off, not per-step confirmation.
+
+          WHAT TO CHECK: For each individual step sub-row where Done by OR Checked by
+          is filled (meaning material was dispensed for that specific step):
+          (1) Note the step number from that sub-row's "Used at Step No's" cell.
+          (2) In the manufacturing operations context, find that step number.
+          (3) Verify the step was actually executed: its Done by and/or Checked by
+              columns must be non-empty (signature image or text). A step row showing
+              only dashes/blanks in Time, Done by, and Checked by means it was NOT
+              executed.
+          (4) Verify the step involves using/charging/dissolving the same raw material
+              (or a recognisable abbreviation/synonym — minor OCR spelling differences
+              are acceptable).
+
+          SKIP sub-rows where Done by AND Checked by are both empty/dashes — those
+          represent conditional steps not executed (e.g. pH re-wash steps that were
+          skipped because the test passed) and do not need verification.
+          If a material has NO sub-rows (only a summary header row), use the header
+          row's Done by / Checked by to determine dispensing status.
+
+          VERDICT:
+          - COMPLIANT if every dispensed raw material row on this page has its
+            step number(s) executed and linked to the correct material in manufacturing ops.
+          - NON-COMPLIANT if any dispensed row's step number is missing from
+            manufacturing ops, was not executed, or does not match the material;
+            cite the specific S.No., material name, and step number.
+          - NOT_APPLICABLE if this page contains no weighing/dispensing rows (e.g.
+            it is a raw material requisition form, equipment cleaning table, or cover page).
+        skip_conditions:
+          - "Page is a raw material requisition form (no 'Used at Step No\\'s' column) -> not_applicable"
+          - "Page has no dispensing rows at all -> not_applicable"
+      2:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        context_sources:
+        - document_type: raw_material_request
+          section_types: [] 
+        pass_criteria: >
+          check the material dispensing section, for each raw material used (row has done by or checked by filled), check the corresponding raw material request form to see if the material name, quantity, and container details are mentioned. if it is mentioned then it is compliant.
+        skip_conditions:
+          - "Page has no material dispensing section -> not_applicable"
+
+     

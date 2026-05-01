@@ -25,6 +25,8 @@ categories:
     rules:
       1:
         keywords: ["prepared by", "manufacturing initiator"]
+        applicable_document_types: [batch_record]
+        applicable_section_types: [cover_page]
         pass_criteria: |
           The cover page contains a "Prepared By" entry (or equivalent label such as
           "Prepared by", "Initiated by") with:
@@ -41,7 +43,8 @@ categories:
 
       2:
         keywords: ["reviewed by", "manufacturing hod"]
-        applicable_document_types: [cover_page]
+        applicable_document_types: [batch_record]
+        applicable_section_types: [cover_page]
         pass_criteria: |
           The cover page contains a "Reviewed By" entry (or equivalent label) with:
             (a) A non-empty name or employee identifier in the Name column, AND
@@ -320,7 +323,8 @@ categories:
       11:
         applicable_section_types: [cleaning_log, deviation]
         keywords: ["approved manufacturing chemist", "approved quality control chemist", "qa person", "sign off", "final release", "manufacturing chemist"]
-        evaluation_strategy: text_and_vision
+        evaluation_strategy: llm_arbitrated
+        visual_checks: [VC-SIGNATURE]
         pass_criteria: |
           The final sign-off section must contain complete entries from all three
           required personnel roles:

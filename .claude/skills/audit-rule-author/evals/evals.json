@@ -1,0 +1,26 @@
+{
+  "skill_name": "audit-rule-author",
+  "evals": [
+    {
+      "id": 0,
+      "name": "update-existing-rule",
+      "prompt": "Rule 27 in the ALCOA framework keeps flagging pages as non-compliant because OCR is misreading handwritten times — things like '14:30' being read as '14;30' or '1430'. Can you update the pass criteria to handle these OCR artifacts properly?",
+      "expected_output": "Updated pass_criteria for rule 27 in alcoa_rules.yaml that explicitly handles OCR time-reading artifacts, validator passes.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "add-to-gmp",
+      "prompt": "I need to add a rule to the GMP framework: equipment calibration due dates must be recorded alongside each equipment usage entry in manufacturing operations. If the calibration is expired or not recorded, that's a major finding.",
+      "expected_output": "New rule added to gmp_rules.md with rule text and gmp_rules.yaml with proper YAML config (applicable_section_types, pass_criteria, skip_conditions, severity), validator passes.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "new-framework",
+      "prompt": "We need a brand-new audit framework called 'lab_notebook' for laboratory notebooks. It should cover three things: (1) raw data entries are not altered or overwritten, (2) each entry has a date and the researcher's signature, (3) any corrections use proper strikethrough with initials and date. Set severity to major for all rules.",
+      "expected_output": "agents_meta.json updated with lab_notebook entry, lab_notebook_rules.md created with 3 rules, lab_notebook_rules.yaml created with proper config for all 3 rules.",
+      "files": []
+    }
+  ]
+}

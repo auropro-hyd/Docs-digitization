@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from app.compliance.agentic.postpass import run_agentic_postpass
 from app.compliance.evaluator import (
     assemble_agent_report,
     run_agent_evaluation,
@@ -82,4 +83,11 @@ class ALCOAAgent:
         ) if doc_batches else []
 
         all_results = page_results + doc_results
+        agentic_results = await run_agentic_postpass(
+            AGENT_NAME, self._registry, extractions,
+            section_map or {}, self._llm, self._config,
+            doc_id=doc_id or "",
+            progress_callback=progress_callback,
+        )
+        all_results = all_results + agentic_results
         return assemble_agent_report(AGENT_NAME, all_rules, all_results, pages)

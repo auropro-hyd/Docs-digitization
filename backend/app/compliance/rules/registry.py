@@ -100,6 +100,7 @@ class AuditRule:
     requires_external_data: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     notes: str = ""
+    context_sources: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +122,7 @@ _YAML_STR_FIELDS = frozenset({
     "scope", "severity", "evaluation_mode", "evaluation_strategy",
     "cannot_evaluate_reason", "pass_criteria", "notes",
 })
+_YAML_DICT_LIST_FIELDS = frozenset({"context_sources"})
 
 
 def _rule_config_path(agent_id: str) -> Path:
@@ -162,6 +164,15 @@ def _resolve_rule_config(
         if val is not None:
             merged[key] = val
 
+    for key in _YAML_DICT_LIST_FIELDS:
+        val = rule_config.get(key)
+        if val is None:
+            val = cat_config.get(key)
+        if val is None:
+            val = defaults.get(key)
+        if val is not None:
+            merged[key] = val
+
     return merged
 
 
@@ -189,7 +200,7 @@ def _finalise_rule(
     category_display: str,
     severity: str,
     yaml_overrides: dict[str, Any] | None = None,
-) -> AuditRule:
+) -> AuditRule | None:
     """Build an AuditRule from accumulated text, extracting [sections: ...] if present.
 
     yaml_overrides are merged last — they can override severity, scope, and
@@ -209,7 +220,7 @@ def _finalise_rule(
 
     ov = yaml_overrides or {}
 
-    return AuditRule(
+    rule = AuditRule(
         id=rule_id,
         number=num,
         category=category,
@@ -233,7 +244,15 @@ def _finalise_rule(
         requires_external_data=_as_str_list(ov.get("requires_external_data", [])),
         keywords=_as_str_list(ov.get("keywords", [])),
         notes=str(ov.get("notes", "") or "").strip(),
+        context_sources=list(ov.get("context_sources") or []),
     )
+
+    if rule.evaluation_strategy == "agentic_audit" and not rule.applicable_document_types:
+        logger.error(
+            "Agentic rule %s has no applicable_document_types — skipping", rule.id
+        )
+        return None
+    return rule
 
 
 def _parse_rules_file(path: Path, agent: str, yaml_config: dict[str, Any] | None = None) -> list[AuditRule]:
@@ -255,11 +274,13 @@ def _parse_rules_file(path: Path, agent: str, yaml_config: dict[str, Any] | None
         if pending_num is not None and pending_text:
             severity = _SEVERITY_HINTS.get(current_display.lower(), "observation")
             overrides = _resolve_rule_config(yaml_config, current_category, pending_num) if yaml_config else None
-            rules.append(_finalise_rule(
+            result = _finalise_rule(
                 agent, pending_num, pending_text,
                 current_category, current_display, severity,
                 yaml_overrides=overrides,
-            ))
+            )
+            if result is not None:
+                rules.append(result)
         pending_num = None
         pending_text = ""
 
@@ -365,7 +386,7 @@ class RuleRegistry:
         self, agent: str, batch_size: int = 7, by_category: bool = True,
         scope_filter: str | None = None,
     ) -> list[RuleBatch]:
-        rules = self.get_rules(agent)
+        rules = [r for r in self.get_rules(agent) if r.evaluation_strategy != "agentic_audit"]
         if scope_filter:
             rules = [r for r in rules if r.scope == scope_filter]
         if not rules:
