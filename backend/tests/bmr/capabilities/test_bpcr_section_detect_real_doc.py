@@ -103,6 +103,104 @@ def test_detector_matches_real_bpcr_header_patterns() -> None:
     assert page_to_section.get(5) == "micronization", page_to_section
 
 
+def test_cover_page_matches_when_title_is_embedded_in_a_longer_header() -> None:
+    """Real BPCRs put the document title at the top of every page in
+    a long composite header alongside the company name and unit
+    block — e.g. ``# **APITORIA PHARMA PRIVATE LIMITED, UNIT-II
+    PRODUCTION BLOCK – E BATCH PRODUCTION AND CONTROL RECORD**``.
+    The original ``^\\s*<alias>\\b`` anchor never matched because the
+    title sat mid-line behind the company name. PR #25 relaxed the
+    anchor for cover_page only (the page=1 guard prevents
+    over-matching on subsequent pages). This test pins that behaviour
+    against regression.
+    """
+
+    pages = [
+        OCRPageResult(
+            page_num=1,
+            markdown=(
+                "![](logo.jpg)\n"
+                "# **APITORIA PHARMA PRIVATE LIMITED, UNIT-II PRODUCTION "
+                "BLOCK – E BATCH PRODUCTION AND CONTROL RECORD**\n"
+                "Page 1 of 35"
+            ),
+        ),
+        # Page 2 carries the same composite header line — without the
+        # page=1 guard, the relaxed anchor would inherit cover_page
+        # forward across the whole document. The guard prevents that.
+        OCRPageResult(
+            page_num=2,
+            markdown=(
+                "# **APITORIA PHARMA PRIVATE LIMITED, UNIT-II PRODUCTION "
+                "BLOCK – E BATCH PRODUCTION AND CONTROL RECORD**\n"
+                "Page 2 of 35\n\n**REVISION SUMMARY**"
+            ),
+        ),
+    ]
+    spec = load_spec()
+    result = detect_bpcr_sections(
+        doc_id="embedded-title-test",
+        ocr=OCRResult(pages=pages),
+        sections_spec=spec,
+        mode="heuristic",
+    )
+
+    page_to_section = {}
+    for span in result.spans:
+        for p in range(span.start_page, span.end_page + 1):
+            page_to_section[p] = span.section_id
+
+    assert page_to_section.get(1) == "cover_page", (
+        f"page 1's embedded title must match cover_page after the anchor "
+        f"relaxation; got {page_to_section.get(1)!r}"
+    )
+    assert page_to_section.get(2) == "revision_summary", (
+        f"page 2 must classify by its own marker (REVISION SUMMARY), "
+        f"not inherit cover_page from the repeating header line; "
+        f"got {page_to_section.get(2)!r}"
+    )
+
+
+def test_real_doc_alias_additions_cover_yield_cleaning_deviation() -> None:
+    """v1.2.0 spec adds three alias families that close gaps observed
+    on the Apitoria BPCR (2026-04-30 validation). This test exercises
+    each new alias in isolation against a synthetic page that mirrors
+    the real-doc heading wording.
+    """
+
+    pages = [
+        OCRPageResult(page_num=1, markdown="Cover content."),
+        OCRPageResult(page_num=2, markdown="**YIELD DETAILS**\nTheoretical: 100 kg"),
+        OCRPageResult(page_num=3, markdown="**EQUIPMENT CLEANING DETAILS**\n| equipment | status |"),
+        OCRPageResult(page_num=4, markdown="**DESCRIPTION OF DEVIATIONS OBSERVED DURING BATCH PROCESSING**"),
+    ]
+    spec = load_spec()
+    result = detect_bpcr_sections(
+        doc_id="alias-coverage-test",
+        ocr=OCRResult(pages=pages),
+        sections_spec=spec,
+        mode="heuristic",
+    )
+
+    page_to_section = {}
+    for span in result.spans:
+        for p in range(span.start_page, span.end_page + 1):
+            page_to_section[p] = span.section_id
+
+    assert page_to_section.get(2) == "yield_calculation", (
+        f"'YIELD DETAILS' should match the new yield_calculation alias; "
+        f"got {page_to_section.get(2)!r}"
+    )
+    assert page_to_section.get(3) == "cleaning_log", (
+        f"'EQUIPMENT CLEANING DETAILS' should match the new cleaning_log alias; "
+        f"got {page_to_section.get(3)!r}"
+    )
+    assert page_to_section.get(4) == "deviation", (
+        f"'DESCRIPTION OF DEVIATIONS OBSERVED' should match the new deviation alias; "
+        f"got {page_to_section.get(4)!r}"
+    )
+
+
 def test_cover_page_does_not_eat_every_page() -> None:
     """The cover_page regex matches ``Batch Production and Control
     Record`` as one of its aliases. That phrase repeats in EVERY
