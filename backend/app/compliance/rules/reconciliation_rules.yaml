@@ -1,13 +1,25 @@
 # ═══════════════════════════════════════════════════════════════
-#  Cross-Page / Cross-Document Reconciliation — REFERENCE EXEMPLAR
+#  Cross-Page / Cross-Document Reconciliation — REFERENCE EXEMPLARS
 #
-#  One rule, illustrating the CROSS-DOCUMENT evaluation pattern that
+#  Three rules, illustrating the CROSS-DOCUMENT evaluation pattern that
 #  Akhilesh's rule-author skill needs to repopulate. References resolve
-#  against the new document_profiles.yaml (batch_record +
-#  raw_material_request).
+#  against the new document_profiles.yaml (batch_record,
+#  raw_material_request, ipc_report).
 #
-#  The other two patterns live in alcoa_rules.yaml.
-#  Historical overlays preserved in reconciliation_rules.archived.yaml.
+#  Rule 1 (material_reconciliation): 2-way join — BPCR material_dispensing
+#          ↔ raw_material_request material_request. Quantity match.
+#  Rule 2 (manufacturing_step_traceability): 3-way join, anchored on a
+#          manufacturing step's raw-material reference. Joins the
+#          step's mention to the dispensing weighing AND the request/
+#          issue allotment. Akhilesh's 2026-04-30 ask, scenario A.
+#  Rule 3 (in_process_value_traceability): cross-document join from a
+#          BPCR manufacturing step's measured value (pH, temperature,
+#          assay, etc.) to the ipc_report's matching entry. Akhilesh's
+#          2026-04-30 ask, scenario B.
+#
+#  The same-page individual + aggregated-within-document patterns live
+#  in alcoa_rules.yaml. Historical overlays preserved in
+#  reconciliation_rules.archived.yaml.
 # ═══════════════════════════════════════════════════════════════
 
 defaults:
@@ -69,3 +81,198 @@ categories:
           + lot). When generating new cross-document rules, copy this
           shape and change the (source_section, target_section,
           join_keys, tolerance) tuple.
+
+  # ── Manufacturing Step → Material Three-Way Traceability ──────
+  manufacturing_step_traceability:
+    severity: major
+    # Three sections must be present on the package for this rule to
+    # run. The cross_section_requirements list is exhaustive — if any
+    # entry's section is missing, the runtime emits "cannot evaluate"
+    # rather than fabricating a verdict from a partial data set.
+    cross_section_requirements:
+      - section_type: manufacturing_operations
+        in_document_type: batch_record
+      - section_type: material_dispensing
+        in_document_type: batch_record
+      - section_type: material_request
+        in_document_type: raw_material_request
+    rules:
+      2:
+        # CROSS-DOCUMENT pattern, 3-way join.
+        # Akhilesh (2026-04-30, scenario A):
+        #   "in the manufacturing operations in step three a raw material
+        #    has been used. Check if the entry in the raw material weighing
+        #    and dispensing page has the matching entry to confirm the
+        #    manufacturing step is mapping back to the raw material being
+        #    used. Also check if the raw material request, issue, or
+        #    allotment have that entry and the net quantity weights are
+        #    matching. Step 3 is an example, for any step there is a raw
+        #    material use, the same checks should happen."
+        keywords:
+          - "step"
+          - "raw material"
+          - "added"
+          - "charged"
+          - "weighed"
+          - "dispensed"
+          - "lot"
+          - "quantity"
+          - "kg"
+        pass_criteria: |
+          For every manufacturing operations step that names a raw
+          material (e.g. "Step 3: Add Sodium Chloride 10.0 kg"), all
+          three of the following must hold:
+
+          (A) BATCH RECORD ↔ MANUFACTURING STEP TRACEABILITY
+              The same material name appears as a row in the
+              batch_record material_dispensing section.
+              Match key: material name (alias-normalised,
+              case-insensitive). Quantity in the dispensing row's
+              "Net Weight" / "Dispensed Weight" column must equal
+              the quantity referenced in the manufacturing step
+              within ±0.5%.
+
+          (B) BATCH RECORD ↔ RAW MATERIAL REQUEST TRACEABILITY
+              The same material appears in the raw_material_request
+              material_request section.
+              Match key: material name + (lot or batch number when
+              both rows carry one). Quantity in the request's
+              "Issued" / "Allotted" / "Quantity Issued" column must
+              be ≥ the manufacturing step's quantity (a request must
+              cover at least what was used).
+
+          (C) DISPENSING ↔ REQUEST QUANTITY ALIGNMENT
+              The dispensing quantity from (A) and the request
+              quantity from (B) agree within ±0.5% — the same
+              tolerance used for material_reconciliation.rule_1.
+
+          Surface each violation as a separate finding:
+            - missing dispensing entry for a step's material
+            - missing request entry for a step's material
+            - lot mismatch between dispensing and request
+            - quantity drift outside ±0.5% on any leg
+            - manufacturing step references a quantity higher than
+              the requested allotment (regulatory red flag)
+        skip_conditions:
+          - "manufacturing step is a non-material operation
+             (cleaning, equipment setup, sampling — no raw material
+             named)"
+          - "step references an in-process intermediate (named in a
+             prior step's output) rather than a raw material —
+             intermediates are not allotted from the raw material
+             store"
+        notes: |
+          Reference exemplar for the 3-WAY CROSS-DOCUMENT pattern,
+          anchored on a manufacturing step. Use this as the template
+          when a rule's verdict requires joining one source row
+          (manufacturing step) against two target sections in two
+          different documents (BPCR dispensing + raw_material_request).
+          Copy this shape and change the (source_section,
+          target_sections[], join_keys, tolerance, quantity_compare)
+          tuple. The anchored-on-step framing differs from rule_1
+          (which scans the dispensing list and walks outward); pick
+          rule_1 when "every dispensed material must be requested"
+          and rule_2 when "every step's material must be dispensed
+          AND requested."
+
+  # ── Manufacturing Step Value → IPC Report Cross-Check ─────────
+  in_process_value_traceability:
+    severity: major
+    cross_section_requirements:
+      - section_type: manufacturing_operations
+        in_document_type: batch_record
+      # ipc_report has no expected_sections in document_profiles.yaml
+      # (the whole document is treated as a single section by the
+      # cross-page resolver). The runtime resolves the document by
+      # in_document_type alone when section_type is empty.
+      - section_type: ""
+        in_document_type: ipc_report
+    rules:
+      3:
+        # CROSS-DOCUMENT pattern, value-match join.
+        # Akhilesh (2026-04-30, scenario B):
+        #   "Let's assume a manufacturing process step 43. There is a
+        #    remark where they are entering the pH value that is being
+        #    observed. It should match with the value that is present in
+        #    the in-process analysis report on pages 70 and 71. Similarly
+        #    there will be steps where these kinds of requirements are
+        #    there. There should be an associated entry in the in-process
+        #    analysis report."
+        keywords:
+          - "ph"
+          - "pH"
+          - "temperature"
+          - "moisture"
+          - "assay"
+          - "loss on drying"
+          - "lod"
+          - "in-process"
+          - "ipc"
+          - "remark"
+          - "observation"
+          - "result"
+        pass_criteria: |
+          Every manufacturing operations step row whose "Remarks" /
+          "Observation" / "Reading" / "Result" column carries a
+          numeric measurement (pH, temperature, moisture, assay, %
+          loss-on-drying, particle-size, etc.) must have a matching
+          entry in the ipc_report document.
+
+          Match by:
+            (a) parameter name — alias-normalised, case-insensitive
+                (pH = pH; "temp." = temperature; "LOD" = loss on
+                drying; etc.)
+            (b) batch identifier — the manufacturing step's batch
+                number must equal the ipc_report's batch identifier
+                (sanity check that we're looking at the right run)
+            (c) value — the manufacturing step's recorded value must
+                equal the ipc_report's recorded value within the
+                parameter's tolerance:
+                  pH                ±0.1
+                  temperature (°C)  ±0.5
+                  moisture / LOD    ±0.05% w/w (absolute)
+                  assay (% w/w)     ±0.5% (relative)
+                  particle size     per the SOP-defined window
+
+          Surface each violation as a separate finding:
+            - manufacturing step recorded a measurement with no
+              corresponding ipc_report entry (the SOP requires the
+              entry; missing one is a documentation gap)
+            - ipc_report value differs from the manufacturing step
+              value beyond the parameter's tolerance (data integrity
+              red flag — possible transcription error or
+              after-the-fact correction)
+            - ipc_report cites a batch number that doesn't match the
+              BPCR's batch number (cross-batch contamination of
+              data)
+
+          When the manufacturing step's "Remarks" column is empty or
+          carries non-numeric text only ("OK", "Satisfactory", "as
+          per SOP"), the rule does not apply for that step — the
+          cross-check is gated on a numeric measurement being
+          present in the source.
+        skip_conditions:
+          - "manufacturing step has no measurement column populated
+             — cross-check is conditional on a numeric value being
+             present"
+          - "ipc_report not present in the package — should produce
+             cannot_evaluate, not non_compliant. The cross_section_
+             requirements gate handles this case before the LLM
+             runs."
+        notes: |
+          Reference exemplar for VALUE-MATCH CROSS-DOCUMENT pattern.
+          The join is on (parameter_name, batch_id) and the verdict
+          is a numerical-tolerance comparison rather than a
+          presence/absence check. Use this template for any rule
+          that needs "every measurement recorded in document A has
+          a matching entry in document B with the value agreeing
+          within tolerance."
+
+          Common adaptations:
+            - swap (manufacturing_operations, ipc_report) for
+              (yield_calculation, certificate_of_analysis) to
+              cross-check final yield against COA
+            - swap parameter aliases per the SOP — extend the
+              keywords list when a new parameter type appears
+            - tighten or loosen the per-parameter tolerance based on
+              the SOP-defined acceptance window
