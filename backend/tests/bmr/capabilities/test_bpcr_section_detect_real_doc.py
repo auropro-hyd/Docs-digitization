@@ -161,6 +161,175 @@ def test_cover_page_matches_when_title_is_embedded_in_a_longer_header() -> None:
     )
 
 
+def test_transition_page_picks_new_section_over_continuation_header() -> None:
+    """A real BPCR transition page carries TWO markers: the previous
+    section's repeating bold header (continuation) + the next
+    section's first-time mention (transition). The pre-PR detector
+    picked the highest-confidence candidate per page, which always
+    favoured the bold continuation header — the new section was
+    invisible until a page where only it matched.
+
+    On the user's Apitoria BPCR (2026-04-30 validation), p29 has:
+
+      - ``**SIFTING RECORD (Ref SOP No: UIIMF052)**``  (continuation
+        of the sifting span that started on p21; primary regex hit
+        on bold top_of_page → confidence 1.0)
+      - ``Co-Mill operation``  (new section's introduction; primary
+        regex hit on plain mid_page → confidence 0.6)
+
+    Pre-fix, sifting won and co_mill_operation was missing entirely
+    from the output. Post-fix, the transition rule swaps to the
+    new candidate when:
+
+      1. The best candidate matches the previous page's section
+         (continuation), AND
+      2. A lower-ranked candidate names a different section, AND
+      3. That candidate's confidence ≥ 0.6 (mid_page primary or
+         stronger — protects against stray template mentions).
+
+    This test pins that behaviour against regression.
+    """
+
+    pages = [
+        # p1-3: a normal section run that establishes ``sifting_record``
+        # as the previous-section context for the transition page.
+        OCRPageResult(
+            page_num=1,
+            markdown="Cover page placeholder.",
+        ),
+        OCRPageResult(
+            page_num=2,
+            markdown="**SIFTING RECORD (Ref SOP No: UIIMF052)**\n| col |",
+        ),
+        OCRPageResult(
+            page_num=3,
+            # Real-world transition page: bold continuation header +
+            # plain new-section text. Pre-fix: sifting wins by
+            # confidence (1.0 vs 0.6). Post-fix: co_mill picked via
+            # transition rule.
+            markdown=(
+                "**SIFTING RECORD (Ref SOP No: UIIMF052)**\n"
+                "(table content)\n"
+                "Co-Mill operation"
+            ),
+        ),
+    ]
+    spec = load_spec()
+    result = detect_bpcr_sections(
+        doc_id="multi-section-page-test",
+        ocr=OCRResult(pages=pages),
+        sections_spec=spec,
+        mode="heuristic",
+    )
+
+    page_to_section = {}
+    for span in result.spans:
+        for p in range(span.start_page, span.end_page + 1):
+            page_to_section[p] = span.section_id
+
+    assert page_to_section.get(2) == "sifting_record", (
+        "p2 should anchor sifting_record as the prior context"
+    )
+    assert page_to_section.get(3) == "co_mill_operation", (
+        f"p3's transition rule must pick co_mill_operation over the "
+        f"sifting_record continuation header; got "
+        f"{page_to_section.get(3)!r}. This is the gap PR #28 closes — "
+        f"without it, the new section is invisible on transition pages."
+    )
+
+
+def test_continuation_header_alone_does_not_force_transition() -> None:
+    """The transition rule must not break section spans on pages that
+    carry ONLY the previous section's continuation header. If we
+    over-trigger transitions, multi-page sections fragment into
+    one-page spans (or disappear into ``unsectioned`` runs)."""
+
+    pages = [
+        OCRPageResult(page_num=1, markdown="Cover page."),
+        OCRPageResult(
+            page_num=2,
+            markdown="**SIFTING RECORD (Ref SOP No: UIIMF052)**\n| col |",
+        ),
+        # p3-5: continuation of sifting with the bold repeating header
+        # but NO other section's marker. Span must stay sifting_record
+        # all the way through.
+        OCRPageResult(
+            page_num=3,
+            markdown="**SIFTING RECORD (Ref SOP No: UIIMF052)**\n(table content)",
+        ),
+        OCRPageResult(
+            page_num=4,
+            markdown="**SIFTING RECORD (Ref SOP No: UIIMF052)**\n(more table)",
+        ),
+        OCRPageResult(
+            page_num=5,
+            markdown="**SIFTING RECORD (Ref SOP No: UIIMF052)**\n(footer)",
+        ),
+    ]
+    spec = load_spec()
+    result = detect_bpcr_sections(
+        doc_id="continuation-only-test",
+        ocr=OCRResult(pages=pages),
+        sections_spec=spec,
+        mode="heuristic",
+    )
+
+    page_to_section = {}
+    for span in result.spans:
+        for p in range(span.start_page, span.end_page + 1):
+            page_to_section[p] = span.section_id
+
+    for p in (2, 3, 4, 5):
+        assert page_to_section.get(p) == "sifting_record", (
+            f"p{p} should remain sifting_record (continuation); got "
+            f"{page_to_section.get(p)!r}. The transition rule must "
+            f"not trigger on pages with no new-section marker."
+        )
+
+
+def test_low_confidence_transition_candidate_does_not_force_transition() -> None:
+    """A faint mention of another section (e.g. \"yield\" appearing in
+    a manufacturing-operations page's narrative) must NOT be enough
+    to break the span. The 0.6 floor is the safety rail — anything
+    below it stays as continuation."""
+
+    pages = [
+        OCRPageResult(page_num=1, markdown="Cover."),
+        # Build a page where ``yield_calculation`` only matches via an
+        # alias far down the line list (low synthetic y_fraction).
+        # The alias-only confidence is 0.4, below the 0.6 transition
+        # floor, so the span must stay on manufacturing_operations.
+        OCRPageResult(
+            page_num=2,
+            markdown=(
+                "**MANUFACTURING INSTRUCTIONS**\n"
+                "Step 1: Add raw materials.\n"
+                "Step 2: Mix at 200 rpm.\n"
+                "Step 3: Verify final yield calculation matches "
+                "the batch target."
+            ),
+        ),
+    ]
+    spec = load_spec()
+    result = detect_bpcr_sections(
+        doc_id="low-conf-test",
+        ocr=OCRResult(pages=pages),
+        sections_spec=spec,
+        mode="heuristic",
+    )
+
+    page_to_section = {}
+    for span in result.spans:
+        for p in range(span.start_page, span.end_page + 1):
+            page_to_section[p] = span.section_id
+
+    assert page_to_section.get(2) == "manufacturing_operations", (
+        "p2 must stay on manufacturing_operations — the 'final yield "
+        "calculation' phrase is below the 0.6 transition floor and "
+        "must not break the span"
+    )
+
+
 def test_real_doc_alias_additions_cover_yield_cleaning_deviation() -> None:
     """v1.2.0 spec adds three alias families that close gaps observed
     on the Apitoria BPCR (2026-04-30 validation). This test exercises
