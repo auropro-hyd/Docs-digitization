@@ -320,12 +320,24 @@ def _relax_cover_anchor(pattern: str) -> str:
     return pattern
 
 
-def _evaluate_page(
+def _evaluate_page_candidates(
     page: OCRPageResult, *, spec: BPCRSectionsSpec
-) -> _PageCandidate:
+) -> list[_PageCandidate]:
+    """Return per-section best candidates for ``page``, sorted by
+    confidence descending.
+
+    Replaces the old ``_evaluate_page`` (which returned only the single
+    globally-best candidate). Real BPCR pages frequently carry markers
+    for two adjacent sections — a section's repeating header
+    (continuation of a span that started earlier) plus a new section's
+    initial header. With only the globally-best candidate, the new
+    section was lost; ``_pick_assigned_candidate`` in the assembly
+    phase now uses these per-section bests to detect transition pages.
+    """
+
     lines = _page_lines(page)
     if not lines:
-        return _PageCandidate(page_num=page.page_num)
+        return []
 
     # Markdown-only mode (no word-level layout coordinates): synthetic
     # y_fractions from line indexes are too unreliable a proxy for
@@ -338,7 +350,7 @@ def _evaluate_page(
     # via the matched-band assignment below.
     has_real_layout = bool(page.words) and (page.page_height or 0.0) > 0
 
-    best = _PageCandidate(page_num=page.page_num)
+    best_per_section: dict[str, _PageCandidate] = {}
     for section in spec.sections:
         primary, aliases = _patterns_for(section)
         # ``cover_page`` claims to be page 1 by definition. The
@@ -382,8 +394,9 @@ def _evaluate_page(
 
             method = f"heuristic_{band}"
 
-            if confidence > best.confidence:
-                best = _PageCandidate(
+            existing = best_per_section.get(section.section_id)
+            if existing is None or confidence > existing.confidence:
+                best_per_section[section.section_id] = _PageCandidate(
                     page_num=page.page_num,
                     section=section,
                     confidence=confidence,
@@ -391,6 +404,87 @@ def _evaluate_page(
                     matched_text=line_text[:120],
                     matched_band=band,
                 )
+
+    return sorted(
+        best_per_section.values(),
+        key=lambda c: c.confidence,
+        reverse=True,
+    )
+
+
+def _evaluate_page(
+    page: OCRPageResult, *, spec: BPCRSectionsSpec
+) -> _PageCandidate:
+    """Return the single best candidate for ``page`` (legacy shape).
+
+    Kept as a thin wrapper so existing tests / callers that only need
+    the top match keep working unchanged. The new
+    ``_evaluate_page_candidates`` exposes the full ranked list for
+    transition-aware assembly.
+    """
+
+    candidates = _evaluate_page_candidates(page, spec=spec)
+    if not candidates:
+        return _PageCandidate(page_num=page.page_num)
+    return candidates[0]
+
+
+# Confidence floor for accepting a transition candidate when the
+# best candidate represents a continuation of the previous page's
+# section. 0.6 corresponds to a primary-regex hit on a mid_page band
+# — strong enough that a stray template mention won't trigger a
+# spurious section break, but low enough that a plain-text new
+# section header (like \"Co-Mill operation\" on a page that also
+# carries the previous section's repeating bold header) wins the
+# pick. Tuned against the user's real Apitoria BPCR validation;
+# revisit if production docs show a different distribution.
+_TRANSITION_CONFIDENCE_FLOOR: float = 0.6
+
+
+def _pick_assigned_candidate(
+    candidates: list[_PageCandidate],
+    *,
+    prev_section_id: str,
+) -> _PageCandidate | None:
+    """Choose which candidate becomes the page's assignment.
+
+    Default: the highest-confidence candidate (preserves the legacy
+    behaviour for pages with a single dominant marker).
+
+    Transition rule: when the best candidate represents a
+    continuation of the previous page's section, scan lower-ranked
+    candidates for one whose section_id is *different* from the
+    previous page. If such a candidate has confidence ≥
+    :data:`_TRANSITION_CONFIDENCE_FLOOR`, return it instead. This
+    captures the real-world case where a BPCR page carries both a
+    repeating bold header for the section that's ending AND a less
+    emphasised marker for the section that's starting — without
+    this rule, the repeating header always wins by confidence and
+    the new section is missed entirely until a page that mentions
+    only the new section.
+
+    Returns ``None`` when no candidate matched at all (caller falls
+    back to inheritance / unsectioned).
+    """
+
+    if not candidates:
+        return None
+    best = candidates[0]
+    if best.section is None:
+        return None
+    if best.section.section_id != prev_section_id:
+        # Best is a natural transition (or first match in the run);
+        # accept it as-is. Nothing the rule can do better here.
+        return best
+    # Best is a continuation. Look for a transition candidate.
+    for cand in candidates[1:]:
+        if cand.section is None:
+            continue
+        if cand.section.section_id == prev_section_id:
+            continue
+        if cand.confidence >= _TRANSITION_CONFIDENCE_FLOOR:
+            return cand
+    # No qualifying transition; stay on the continuation.
     return best
 
 
@@ -555,9 +649,29 @@ def detect_bpcr_sections(
         return result
 
     try:
-        candidates = [_evaluate_page(page, spec=sections_spec) for page in ocr.pages]
-        spans = _assemble_spans(candidates, total_pages=total_pages)
-        any_matched = any(c.section is not None for c in candidates)
+        # Per-page evaluation now returns the FULL ranked candidate
+        # list so the picker downstream can apply the transition rule.
+        # Walk pages in document order, threading the previous page's
+        # section_id forward — that lets a transition page (which
+        # carries both a continuation header for the section that's
+        # ending and a new-section header) emit the new section.
+        all_candidates = [
+            _evaluate_page_candidates(page, spec=sections_spec)
+            for page in ocr.pages
+        ]
+        prev_section_id = UNSECTIONED_ID
+        chosen: list[_PageCandidate] = []
+        for page_candidates in all_candidates:
+            pick = _pick_assigned_candidate(
+                page_candidates, prev_section_id=prev_section_id,
+            )
+            if pick is None or pick.section is None:
+                continue
+            chosen.append(pick)
+            prev_section_id = pick.section.section_id
+
+        spans = _assemble_spans(chosen, total_pages=total_pages)
+        any_matched = any(c.section is not None for c in chosen)
         outcome: Literal["ok", "partial", "failed"]
         notes: list[str] = []
         if not any_matched:
