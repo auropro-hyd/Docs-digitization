@@ -26,7 +26,10 @@ from app.compliance.models import (
     DocumentSection,
     DocumentSegmentation,
 )
-from app.compliance.rules.profiles import normalize_section_type
+from app.compliance.rules.profiles import (
+    infer_document_type_for_section_type,
+    normalize_section_type,
+)
 from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,52 @@ def _looks_like_bpcr(section_type: str) -> bool:
         return False
     needle = section_type.lower()
     return any(hint in needle for hint in _BPCR_SECTION_TYPE_HINTS)
+
+
+def stamp_document_types(seg: DocumentSegmentation) -> DocumentSegmentation:
+    """Fill empty ``DocumentSection.document_type`` fields deterministically.
+
+    Inputs may arrive with ``document_type`` already populated (the
+    LLM-driven segmentation prompt asks for it) or empty (legacy
+    runs, fallback paths, BPCR enrichment). For each section whose
+    field is empty we apply two rules in order:
+
+    1. **BPCR hint**: a section whose ``section_type`` looks like a
+       BPCR (matches ``_BPCR_SECTION_TYPE_HINTS``) is stamped
+       ``"batch_record"`` — the BPCR detector and the legacy
+       enrichment block both treat batch_record as the implicit
+       owner of that section, so making it explicit costs nothing
+       and lights up cross-document filters.
+    2. **Profile inference**: otherwise look the section_type up in
+       ``document_profiles.yaml`` (single-owner expected_sections)
+       via :func:`infer_document_type_for_section_type`. If the
+       section_type is listed under exactly one profile, stamp that.
+       If listed under multiple (or none), leave the field empty —
+       the cross-document filter will degrade to section-type-only
+       matching, which is the safe default.
+
+    Pure: returns a new ``DocumentSegmentation`` instance, never
+    mutates the input. Idempotent: running it twice produces the
+    same result.
+    """
+
+    updated: list[DocumentSection] = []
+    for section in seg.sections:
+        if section.document_type:
+            updated.append(section)
+            continue
+
+        if _looks_like_bpcr(section.section_type):
+            updated.append(section.model_copy(update={"document_type": "batch_record"}))
+            continue
+
+        inferred = infer_document_type_for_section_type(section.section_type)
+        if inferred:
+            updated.append(section.model_copy(update={"document_type": inferred}))
+        else:
+            updated.append(section)
+
+    return seg.model_copy(update={"sections": updated})
 
 
 def enrich_with_bpcr_sub_sections(
@@ -179,7 +228,9 @@ def enrich_with_bpcr_sub_sections(
             section.model_copy(update={"sub_sections": sub_sections})
         )
 
-    return seg.model_copy(update={"sections": enriched_sections})
+    return stamp_document_types(
+        seg.model_copy(update={"sections": enriched_sections})
+    )
 
 _SYSTEM = (
     "You are a document structure analyst for pharmaceutical regulatory documents. "
@@ -245,7 +296,7 @@ class DocumentSegmenter:
             )
             if not isinstance(result, DocumentSegmentation):
                 result = DocumentSegmentation.model_validate(result)
-            return result
+            return stamp_document_types(result)
         except Exception:
             logger.exception("Segmentation failed, returning single-section fallback")
             return DocumentSegmentation(

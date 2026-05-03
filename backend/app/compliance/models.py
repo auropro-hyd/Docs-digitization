@@ -184,6 +184,13 @@ class DocumentSection(BaseModel):
     section_id: str = ""
     name: str = ""
     section_type: str = ""
+    # Sub-document classifier (e.g. ``batch_record``,
+    # ``raw_material_request``, ``ipc_report``). Empty until
+    # populated by a segmentation post-processor; cross-document
+    # rules with an ``in_document_type`` filter degrade gracefully
+    # to section-type-only matching when this is empty, so adding
+    # the field is non-breaking for legacy single-document packages.
+    document_type: str = ""
     start_page: int = 0
     end_page: int = 0
     description: str = ""

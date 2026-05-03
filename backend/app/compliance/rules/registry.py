@@ -90,7 +90,12 @@ class AuditRule:
     applicable_section_types: list[str] = field(default_factory=list)
     applicable_document_types: list[str] = field(default_factory=list)
     excluded_document_types: list[str] = field(default_factory=list)
-    cross_section_requirements: list[str] = field(default_factory=list)
+    # Either a registered requirement-ID string (looked up against
+    # ``cross_page.interface._REQUIREMENTS``) or an inline
+    # ``{section_type, in_document_type}`` dict resolved against the
+    # current segmentation. The cross-page resolver dispatches on
+    # shape — see ``cross_page.interface.resolve_requirement``.
+    cross_section_requirements: list[Any] = field(default_factory=list)
     skip_conditions: list[str] = field(default_factory=list)
     pass_criteria: str = ""
     evaluation_mode: str = "llm"  # "llm" | "cannot_evaluate"
@@ -181,6 +186,43 @@ def _as_str_list(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def _as_csr_list(value: Any) -> list[Any]:
+    """Preserve heterogeneous shape of ``cross_section_requirements``.
+
+    Two valid entry shapes — a registered requirement-ID string or
+    an inline ``{section_type, in_document_type}`` dict — must
+    survive this normalization untouched. The legacy ``_as_str_list``
+    stringifies dicts to ``"{'section_type': ...}"`` which the
+    cross-page resolver can never look up, silently neutering every
+    inline requirement on every rule.
+
+    Returns:
+      * ``[]`` when value is None or not a list
+      * dicts pass through (after a coarse type guard)
+      * strings stripped, empties dropped
+      * anything else logged once and dropped
+    """
+
+    if not isinstance(value, list):
+        return []
+
+    out: list[Any] = []
+    for entry in value:
+        if isinstance(entry, dict):
+            out.append(entry)
+        elif isinstance(entry, str):
+            stripped = entry.strip()
+            if stripped:
+                out.append(stripped)
+        else:
+            logger.warning(
+                "cross_section_requirements entry has unsupported type %s; "
+                "expected str or dict — entry dropped",
+                type(entry).__name__,
+            )
+    return out
+
+
 def _finalise_rule(
     agent: str,
     num: int,
@@ -223,7 +265,7 @@ def _finalise_rule(
         applicable_section_types=_as_str_list(ov.get("applicable_section_types", [])),
         applicable_document_types=_as_str_list(ov.get("applicable_document_types", [])),
         excluded_document_types=_as_str_list(ov.get("excluded_document_types", [])),
-        cross_section_requirements=_as_str_list(ov.get("cross_section_requirements", [])),
+        cross_section_requirements=_as_csr_list(ov.get("cross_section_requirements", [])),
         skip_conditions=_as_str_list(ov.get("skip_conditions", [])),
         pass_criteria=str(ov.get("pass_criteria", "") or "").strip(),
         evaluation_mode=ov.get("evaluation_mode", "llm"),

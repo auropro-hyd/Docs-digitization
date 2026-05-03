@@ -103,6 +103,55 @@ def normalize_section_type(section_type: str) -> str:
     return value
 
 
+def infer_document_type_for_section_type(section_type: str) -> str | None:
+    """Return the canonical ``document_type`` for a given ``section_type``.
+
+    Two inference paths are attempted, in order:
+
+    1. **Sub-section ownership** — the section_type appears in exactly
+       one document profile's ``expected_sections`` list. This covers
+       the common case where the LLM emits a fine-grained section_type
+       like ``manufacturing_operations`` or ``material_request``.
+    2. **Whole-document-as-section** — the section_type equals a
+       document_type slug or one of its aliases. This covers the
+       "the entire IPC report is a single section" case, where the
+       segmentation LLM emits ``section_type="in_process_report"``
+       for a document whose profile has empty ``expected_sections``.
+
+    Returns ``None`` when the section_type is ambiguous (listed under
+    multiple profiles) or unknown — callers are expected to leave the
+    field empty so the downstream cross-document filter degrades to
+    section-type-only matching rather than guessing the wrong owner.
+    """
+
+    canonical = normalize_section_type(section_type)
+    if not canonical:
+        return None
+
+    profiles = load_profiles()
+
+    # Path 1: sub-section ownership.
+    matches: list[str] = []
+    for doc_type, profile in profiles.document_profiles.items():
+        for sec in profile.expected_sections:
+            if canonical == sec.section_type or canonical in sec.aliases:
+                matches.append(doc_type)
+                break
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        return None
+
+    # Path 2: whole-document-as-section. The section_type itself names
+    # a document_type — the whole document is being treated as a
+    # single section (typical for ipc_report, scada_report).
+    doc_via_norm = normalize_document_type(canonical)
+    if doc_via_norm in profiles.document_profiles:
+        return doc_via_norm
+
+    return None
+
+
 def validate_compliance_configs(
     registry: RuleRegistry, *, strict: bool | None = None
 ) -> None:
@@ -130,6 +179,13 @@ def validate_compliance_configs(
     known_docs = profiles.known_document_types()
     known_sections = profiles.known_section_types()
 
+    # Lazy import keeps profiles.py free of a runtime dep on cross_page;
+    # the registered requirement IDs are the only string-shape values
+    # that resolve at runtime, so they're the only ones validated here.
+    from app.compliance.cross_page.interface import _REQUIREMENTS
+
+    known_requirement_ids = set(_REQUIREMENTS.keys())
+
     errors: list[str] = []
 
     for agent in registry.agents:
@@ -143,6 +199,41 @@ def validate_compliance_configs(
             for sec in rule.applicable_section_types:
                 if _slug(sec) not in known_sections:
                     errors.append(f"{rule.id}: unknown applicable_section_type '{sec}'")
+
+            for csr in rule.cross_section_requirements:
+                # Two valid shapes: a registered requirement-ID string,
+                # or an inline ``{section_type, in_document_type}``
+                # dict. Anything else means the rule loader saw a
+                # malformed YAML entry.
+                if isinstance(csr, str):
+                    if csr not in known_requirement_ids:
+                        errors.append(
+                            f"{rule.id}: cross_section_requirements references "
+                            f"unknown requirement_id '{csr}'"
+                        )
+                elif isinstance(csr, dict):
+                    sec = _slug(str(csr.get("section_type") or ""))
+                    doc = _slug(str(csr.get("in_document_type") or ""))
+                    if not sec and not doc:
+                        errors.append(
+                            f"{rule.id}: inline cross_section_requirement is "
+                            f"empty (needs section_type and/or in_document_type)"
+                        )
+                    if sec and sec not in known_sections:
+                        errors.append(
+                            f"{rule.id}: inline cross_section_requirement "
+                            f"section_type '{csr.get('section_type')}' is unknown"
+                        )
+                    if doc and doc not in known_docs:
+                        errors.append(
+                            f"{rule.id}: inline cross_section_requirement "
+                            f"in_document_type '{csr.get('in_document_type')}' is unknown"
+                        )
+                else:
+                    errors.append(
+                        f"{rule.id}: cross_section_requirements entry has "
+                        f"unsupported shape {type(csr).__name__}"
+                    )
 
     if not errors:
         return
