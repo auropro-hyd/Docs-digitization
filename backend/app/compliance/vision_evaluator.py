@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Sequence
 
+from app.compliance.image_color_check import image_has_meaningful_colour
 from app.compliance.models import (
     RuleBatchResult,
     RuleEvaluation,
@@ -21,6 +22,15 @@ from app.compliance.rules.registry import AuditRule, RuleBatch
 from app.core.ports.vlm import VLMProvider
 
 logger = logging.getLogger(__name__)
+
+# Visual checks that depend on chromatic information. When the page
+# image is a B&W scan, asking the VLM to evaluate these is at best
+# wasted spend and at worst a false-positive generator (the VLM
+# guesses a colour from stroke contrast). The pre-flight guard
+# short-circuits these to ``not_applicable`` before the VLM call.
+_COLOUR_DEPENDENT_CHECKS: frozenset[str] = frozenset({
+    "VC-INK-COLOR",
+})
 
 # ── Per-check prompt templates ────────────────────────────────────────
 
@@ -50,7 +60,19 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-INK-COLOR": (
         "Analyze this page image for ink color compliance.\n\n"
-        "For handwritten entries visible on this page:\n"
+        "**CRITICAL FIRST STEP — GRAYSCALE GUARD:**\n"
+        "Before answering anything else, decide: does this image actually "
+        "carry colour information, or is it a black-and-white / grayscale "
+        "scan? A B&W scan has zero hue saturation — every mark on it is "
+        "some shade of gray. If you cannot see clearly saturated chromatic "
+        "ink (a visibly red, green, or blue pen stroke whose hue is "
+        "obvious, not just a darker mark), the correct answer is "
+        "GRAYSCALE — emit ``not_applicable`` with reasoning "
+        "\"page is a grayscale scan; ink colour cannot be determined from "
+        "this rendering\". DO NOT guess a colour from contrast or stroke "
+        "density alone — a heavy black-ink mark looks dark, not red.\n\n"
+        "Only proceed past this guard when you can clearly identify ink "
+        "hue. For each handwritten entry visible:\n"
         "1. What COLOR ink was used? (blue/black/red/green/pencil/other)\n"
         "2. Are there any entries made in PENCIL (graphite)?\n"
         "3. Are there entries in non-standard colors for non-annotation purposes?\n\n"
@@ -263,7 +285,62 @@ class VisionBatchEvaluator:
             ]
             return batch.batch_id, page_num, RuleBatchResult(evaluations=evals)
 
-        prompt = _build_vision_prompt(batch.rules, page_num)
+        # Pre-flight: short-circuit colour-dependent checks on a B&W
+        # scan. The VLM was emitting false positives like "red ink
+        # detected" on grayscale-only pages because the VC-INK-COLOR
+        # prompt forced a categorical answer with no clean
+        # "grayscale" exit. Determining colour-presence is a cheap
+        # deterministic image-stat operation; the VLM never sees the
+        # image for those checks unless real chroma is present.
+        gated_eval_ids: set[str] = set()
+        gated_evals: list[RuleEvaluation] = []
+        if not image_has_meaningful_colour(page_image):
+            for rule in batch.rules:
+                if any(
+                    vc in _COLOUR_DEPENDENT_CHECKS for vc in rule.visual_checks
+                ):
+                    gated_eval_ids.add(rule.id)
+                    gated_evals.append(RuleEvaluation(
+                        rule_id=rule.id,
+                        status="not_applicable",
+                        confidence=1.0,
+                        reasoning=(
+                            "Page is a grayscale scan (no chromatic information "
+                            "detected); ink colour cannot be determined from "
+                            "this rendering. Re-scan in colour or supply a "
+                            "colour-bearing source if ink-colour evaluation is "
+                            "required for this document."
+                        ),
+                        evidence="Image saturation pre-check classified the page as B&W.",
+                    ))
+
+        # If every rule in the batch was gated out, skip the VLM call
+        # entirely — saves cost and latency on a known-no-info input.
+        remaining = [r for r in batch.rules if r.id not in gated_eval_ids]
+        if not remaining:
+            logger.info(
+                "Vision batch %s page %d: all rules gated out by grayscale "
+                "pre-check; skipping VLM call",
+                batch.batch_id, page_num,
+            )
+            return batch.batch_id, page_num, RuleBatchResult(
+                evaluations=gated_evals,
+            )
+
+        # Build the prompt only over the non-gated rules so the VLM
+        # isn't asked about checks it can't honestly evaluate.
+        residual_batch = (
+            RuleBatch(
+                batch_id=batch.batch_id,
+                category=batch.category,
+                agent=batch.agent,
+                rules=remaining,
+            )
+            if gated_eval_ids
+            else batch
+        )
+
+        prompt = _build_vision_prompt(residual_batch.rules, page_num)
         last_exc: Exception | None = None
 
         for attempt in range(1 + self._MAX_RETRIES):
@@ -285,7 +362,17 @@ class VisionBatchEvaluator:
                     parsed = json.loads(raw)
                     result = VisionBatchResult.model_validate(parsed)
 
-                return self._to_batch_result(batch, page_num, result)
+                # Evaluate the residual (non-gated) rules normally,
+                # then prepend the gated evaluations so the caller
+                # gets one entry per rule in the original batch.
+                bid, pn, residual_result = self._to_batch_result(
+                    residual_batch, page_num, result,
+                )
+                if gated_evals:
+                    residual_result = RuleBatchResult(
+                        evaluations=gated_evals + list(residual_result.evaluations),
+                    )
+                return bid, pn, residual_result
 
             except Exception as exc:
                 last_exc = exc
@@ -298,13 +385,17 @@ class VisionBatchEvaluator:
             "Vision batch %s page %d exhausted retries: %s",
             batch.batch_id, page_num, last_exc,
         )
-        evals = [
+        # On retry exhaustion: surface error evaluations for the
+        # residual rules and keep the gated ``not_applicable``
+        # evaluations untouched (they're deterministic and unrelated
+        # to the VLM's failure).
+        evals = list(gated_evals) + [
             RuleEvaluation(
                 rule_id=r.id,
                 status="error",
                 description=f"Vision evaluation failed: {last_exc}",
             )
-            for r in batch.rules
+            for r in remaining
         ]
         return batch.batch_id, page_num, RuleBatchResult(evaluations=evals)
 
