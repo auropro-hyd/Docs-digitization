@@ -9,7 +9,7 @@
 #
 # Bump `spec_version` whenever this file changes meaning. Append to
 # bpcr-section-spec.CHANGELOG.md alongside every edit.
-spec_version: "1.1.0-pilot"
+spec_version: "1.2.0-pilot"
 
 sections:
   - section_id: cover_page
@@ -115,6 +115,9 @@ sections:
       - "Process Yield"
       - "Yield Computation"
       - "Final Yield"
+      # v1.2.0: real-doc variants seen on the Apitoria BPCR (2026-04-30).
+      - "Yield Details"
+      - "Yield Summary"
     bands: [top_of_page, top_of_table, mid_page]
     requires_emphasis_for_mid_page: true
 
@@ -125,6 +128,11 @@ sections:
       - "Cleaning Record"
       - "Cleaning Verification"
       - "Post-Production Cleaning"
+      # v1.2.0: real-doc variants — the Apitoria BPCR uses
+      # "EQUIPMENT CLEANING DETAILS"; other pilot docs use the
+      # plain "Cleaning Details" without the equipment qualifier.
+      - "Equipment Cleaning Details"
+      - "Cleaning Details"
     bands: [top_of_page, top_of_table]
 
   - section_id: deviation
@@ -134,4 +142,11 @@ sections:
       - "Deviation Log"
       - "Deviation Report"
       - "Process Deviation"
+      # v1.2.0: real BPCRs phrase the deviation section as
+      # "DESCRIPTION OF DEVIATIONS OBSERVED DURING BATCH PROCESSING";
+      # "Deviations Observed" / "Description of Deviations" cover that
+      # plus the common shorthand variants.
+      - "Description of Deviations"
+      - "Deviations Observed"
+      - "Deviations Recorded During"
     bands: [top_of_page, top_of_table]

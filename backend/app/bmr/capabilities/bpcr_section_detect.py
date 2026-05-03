@@ -264,20 +264,60 @@ def _patterns_for(
     pattern-string level, so this is cheap. We deliberately avoid an
     id()-keyed module cache because Python recycles object ids after
     GC; that subtly couples test runs and breaks determinism.
+
+    ``cover_page`` gets a more permissive anchor than every other
+    section. Real BPCRs put the document title at the top of every
+    page in a long composite header like
+    ``# **APITORIA PHARMA PRIVATE LIMITED, UNIT-II PRODUCTION BLOCK – E
+    BATCH PRODUCTION AND CONTROL RECORD**``. The standard
+    ``^\\s*<alias>\\b`` anchor never matches because the title is
+    embedded mid-line behind the company name. The ``page_num == 1``
+    guard from ``_evaluate_page`` already prevents this relaxation
+    from over-matching on subsequent pages, so it's safe to let the
+    anchor accept any prefix here.
     """
 
-    primary = [re.compile(p, re.IGNORECASE) for p in section.regex]
-    if not primary:
+    is_cover = section.section_id == "cover_page"
+    line_anchor = "^.*?" if is_cover else r"^\s*"
+
+    if section.regex:
+        if is_cover:
+            # Replace the spec's own ``^\s*`` anchor with the relaxed
+            # form so existing cover_page regex entries keep working
+            # on real-world embedded-title pages without a YAML edit.
+            primary = [
+                re.compile(_relax_cover_anchor(p), re.IGNORECASE)
+                for p in section.regex
+            ]
+        else:
+            primary = [re.compile(p, re.IGNORECASE) for p in section.regex]
+    else:
         # Fall back to a literal-display-name match so a section with
         # no regex is still detectable.
         primary = [
-            re.compile(rf"^\s*{re.escape(section.display_name)}\b", re.IGNORECASE)
+            re.compile(
+                rf"{line_anchor}{re.escape(section.display_name)}\b",
+                re.IGNORECASE,
+            )
         ]
     aliases = [
-        re.compile(rf"^\s*{re.escape(alias)}\b", re.IGNORECASE)
+        re.compile(rf"{line_anchor}{re.escape(alias)}\b", re.IGNORECASE)
         for alias in section.aliases
     ]
     return primary, aliases
+
+
+def _relax_cover_anchor(pattern: str) -> str:
+    """Rewrite a cover_page YAML regex's leading anchor to ``^.*?``.
+
+    Idempotent — patterns that don't start with ``^\\s*`` pass through
+    unchanged so an author who deliberately wrote a stricter anchor
+    keeps that intent.
+    """
+
+    if pattern.startswith(r"^\s*"):
+        return "^.*?" + pattern[len(r"^\s*"):]
+    return pattern
 
 
 def _evaluate_page(
