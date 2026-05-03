@@ -4,6 +4,42 @@ Parallels ``RuleBatchEvaluator`` but sends page images to a VLM provider
 instead of OCR text to an LLM.  Each visual check (``VC-*``) has a
 domain-specific prompt template optimised for pharmaceutical document
 inspection.
+
+Prompt-design discipline (PR #26):
+
+The ``VC-INK-COLOR`` false positives Akhilesh hit on 2026-04-30 were
+the visible symptom of a pattern present across most of the original
+VC-* prompts:
+
+  1. **No absence escape.** "For each X visible, …" or "Look for evidence
+     of Y" primes the VLM to find X / Y. When nothing is present, the
+     VLM tends to invent something rather than emit a "nothing found"
+     reply. Each prompt now explicitly tells the VLM what to do when
+     the target is absent (= ``compliant``, not ``non_compliant`` or
+     made-up findings).
+
+  2. **High-stakes amplifiers.** Phrases like "any of these is a
+     CRITICAL non-compliance finding" turn a low-confidence VLM read
+     into a ``critical`` finding downstream. The amplifier stays for
+     genuinely-detected issues but doesn't apply to ambiguous reads —
+     the system prompt now requires the model to use ``uncertain``
+     for sub-0.6 confidence rather than returning ``non_compliant``.
+
+  3. **Counterfactual asks.** ``VC-ATTACHMENT`` asked the VLM to
+     detect "missing attachments (empty spaces where items were
+     previously affixed)" — a thing only inferrable from context the
+     VLM doesn't have. We narrow that to evidence-based detachment
+     (visible adhesive residue, torn corners, attachment-reference
+     text pointing at empty space).
+
+  4. **Counting tasks.** ``VC-CHECKBOX`` asked for total counts of
+     checked / unchecked items. VLMs are notoriously bad at counting;
+     we move to coarse buckets ("most/mixed/few") which the VLM can
+     judge reliably.
+
+The ``llm_arbitrated`` evaluation strategy on Akhilesh's 008/009
+branches reconciles OCR-vs-vision conflicts; the cleaner the VLM
+output, the less work that arbitrator does.
 """
 
 from __future__ import annotations
@@ -37,7 +73,14 @@ _COLOUR_DEPENDENT_CHECKS: frozenset[str] = frozenset({
 _VC_PROMPTS: dict[str, str] = {
     "VC-STRIKE": (
         "Analyze this page image for correction methodology compliance.\n\n"
-        "For each correction visible on the page:\n"
+        "**ABSENCE FIRST.** Most BPCR pages carry NO corrections. If you "
+        "do not see any deliberate strikethrough or crossing-out marks "
+        "on this page, the correct answer is ``compliant`` with the "
+        "evidence \"no corrections present on this page.\" The following "
+        "are NOT corrections and must not be reported as such: form "
+        "lines, table borders, signature underlines, dashes ('-') used "
+        "as N/A markers, decorative rules, page-number separators.\n\n"
+        "If genuine corrections ARE visible, for each one:\n"
         "1. Is it a SINGLE-LINE strikethrough (GMP-compliant)?\n"
         "2. Or is it a scribble, multiple lines, or heavy crossing-out (non-compliant)?\n"
         "3. Is the original text still READABLE beneath the correction?\n"
@@ -84,13 +127,28 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-CORRECTION": (
         "Analyze this page image for prohibited correction methods.\n\n"
-        "Look for evidence of:\n"
+        "**ABSENCE FIRST.** Prohibited corrections are RARE in real "
+        "BPCRs. The default answer for almost every page is "
+        "``compliant`` with evidence \"no prohibited correction "
+        "methods visible.\" Be especially careful that the following "
+        "are NOT prohibited corrections: blank cells with white "
+        "background, light printer toner, naturally lighter form "
+        "fields, paper texture, JPEG compression artifacts, or "
+        "underlines/borders. White-out and erasure detection from a "
+        "scanned page is technically hard — only flag a correction "
+        "when you can see UNAMBIGUOUS evidence (a thick opaque "
+        "white patch with visible boundary; a clear smudge specific "
+        "to a handwritten entry; tape with reflective edges).\n\n"
+        "When prohibited corrections ARE visible, classify them:\n"
         "1. WHITE-OUT / CORRECTION FLUID (opaque white patches covering text)\n"
         "2. ERASURE marks (rubbed/smudged areas, especially on handwritten text)\n"
         "3. OVERWRITING (new text written directly over old text without strikethrough)\n"
         "4. TAPE corrections (transparent or opaque tape covering original entries)\n\n"
-        "Any of these correction methods is a CRITICAL non-compliance finding "
-        "in GMP-regulated documents."
+        "If your confidence in the detection is below 0.7, return "
+        "``uncertain`` rather than ``non_compliant`` — the downstream "
+        "arbitrator will reconcile with OCR signal. A confirmed "
+        "prohibited correction is a CRITICAL finding; a guess is a "
+        "false positive that wastes reviewer time."
     ),
     "VC-STAMP-SEAL": (
         "Analyze this page image for official stamps, seals, and watermarks.\n\n"
@@ -104,13 +162,24 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-ATTACHMENT": (
         "Analyze this page image for physical attachments and their integrity.\n\n"
-        "Look for:\n"
+        "**ABSENCE FIRST.** Most BPCR pages have NO attachments. If you "
+        "see no labels, stickers, or pasted printouts, the correct "
+        "answer is ``compliant`` with evidence \"no physical "
+        "attachments visible on this page\" — do NOT speculate that "
+        "attachments are missing.\n\n"
+        "When attachments ARE visible, classify each:\n"
         "1. Affixed labels or stickers (chromatogram printouts, balance tickets)\n"
         "2. Pasted documents or printouts\n"
-        "3. Evidence of loose or detached attachments\n"
-        "4. Missing attachments (empty spaces where items were previously affixed)\n"
-        "5. Attachment reference labels and numbering\n\n"
-        "Report attachment condition: intact/partially-detached/missing."
+        "3. Loose or partially detached attachments — visible adhesive "
+        "residue, torn corners, or peeling edges. Empty space alone is "
+        "NOT evidence of detachment.\n\n"
+        "**Do NOT report \"missing attachment\" unless there is direct "
+        "visual evidence**: an attachment-reference label/number "
+        "(e.g. \"Attachment 1\") pointing at a clearly empty space "
+        "with adhesive residue or a marked outline. Without that "
+        "specific evidence, an empty area is just an empty area — "
+        "report ``compliant`` with \"no missing-attachment evidence "
+        "observed.\""
     ),
     "VC-BARCODE": (
         "Analyze this page image for barcode and label quality.\n\n"
@@ -131,13 +200,27 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-DOC-QUALITY": (
         "Analyze this page image for physical document quality.\n\n"
-        "Look for:\n"
-        "1. SMUDGES or stains that impair readability\n"
-        "2. FADING — text or ink that has faded over time\n"
-        "3. WATER DAMAGE — warping, discoloration, ink bleeding\n"
-        "4. TEARS or physical damage to the page\n"
-        "5. PENCIL marks (non-permanent annotations)\n\n"
-        "Minor cosmetic marks that do not affect GMP-critical data are acceptable."
+        "**ABSENCE FIRST.** A scanned document page in normal "
+        "production condition is the COMMON case. Default to "
+        "``compliant`` with \"no quality issues observed\" unless "
+        "you can identify a specific defect that genuinely impairs "
+        "GMP-critical data legibility.\n\n"
+        "These are NOT quality defects: aged paper colour, slight "
+        "off-white background tone, scanner-introduced shadows at "
+        "page edges, JPEG compression artifacts, mild printer-toner "
+        "variation, repeating template watermarks, and "
+        "page-numbering separators. Do not flag them.\n\n"
+        "Genuine defects that DO warrant a finding:\n"
+        "1. SMUDGES or stains that **obscure data text or signatures** "
+        "   (cosmetic marks on margins are not flagged)\n"
+        "2. FADING such that handwritten or critical printed entries "
+        "   are no longer readable\n"
+        "3. WATER DAMAGE — warping, ink bleeding through critical fields, "
+        "   visible discoloration tied to data\n"
+        "4. TEARS or physical damage that crosses data regions\n"
+        "5. PENCIL marks on data fields (non-permanent annotations)\n\n"
+        "If your confidence that a defect impairs critical data is "
+        "below 0.7, return ``uncertain`` rather than ``non_compliant``."
     ),
     "VC-CHART": (
         "Analyze this page image for chart/graph quality and labeling.\n\n"
@@ -161,11 +244,22 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-CHECKBOX": (
         "Analyze this page image for checkbox/tickmark status.\n\n"
-        "For each checkbox or checklist item visible:\n"
-        "1. Is it CHECKED (has a tick, check mark, X, or filled)?\n"
-        "2. Or is it UNCHECKED (empty box)?\n"
-        "3. Or is it marked 'N/A'?\n\n"
-        "Report the total number of checked, unchecked, and N/A items found."
+        "**ABSENCE FIRST.** If the page has no checkboxes or checklist "
+        "items at all, return ``compliant`` with \"no checkbox items "
+        "on this page\".\n\n"
+        "When checkboxes ARE present, do NOT attempt an exact total "
+        "count — VLMs are unreliable at counting many small UI "
+        "elements. Instead, report a coarse bucket per category:\n"
+        "  ``none`` (0 items in this state)\n"
+        "  ``few`` (a small minority — roughly <25%)\n"
+        "  ``mixed`` (a substantial portion in this state)\n"
+        "  ``most`` (clearly the majority)\n"
+        "  ``all`` (every visible checkbox in this state)\n\n"
+        "Categories: checked (tick/X/filled), unchecked (empty box), "
+        "marked N/A. Only flag non_compliant when the rule's pass "
+        "criteria explicitly require a fully-checked checklist and "
+        "the bucket for ``unchecked`` is ``few`` or higher AND the "
+        "unchecked items aren't marked N/A."
     ),
     "VC-PAGINATION": (
         "Analyze this page image for page numbering.\n\n"
@@ -178,13 +272,30 @@ _VC_PROMPTS: dict[str, str] = {
     ),
     "VC-STICKY-NOTE": (
         "Analyze this page image for temporary annotations.\n\n"
-        "Look for:\n"
-        "1. STICKY NOTES (Post-it notes) on the page\n"
-        "2. PENCIL annotations or markings\n"
-        "3. DRAFT watermarks or stamps\n"
-        "4. Temporary labels or tags\n"
-        "5. Any non-permanent markings\n\n"
-        "Any temporary annotation on a GMP document is non-compliant."
+        "**ABSENCE FIRST.** Temporary annotations on a properly "
+        "controlled BPCR are RARE. Default to ``compliant`` with "
+        "\"no temporary annotations visible\" unless you see "
+        "specific, unambiguous evidence.\n\n"
+        "These are NOT temporary annotations and must NOT be flagged: "
+        "official template watermarks (\"CONTROLLED COPY\", QA stamps, "
+        "company logos), printer registration marks at page edges, "
+        "page-number references, scanner artifacts, repeating header "
+        "elements that appear on every page of the document.\n\n"
+        "Genuine temporary annotations that warrant a finding:\n"
+        "1. A YELLOW / PINK / BLUE STICKY NOTE — visibly affixed to "
+        "   the page with adhesive, often with a different paper "
+        "   colour and a slight shadow\n"
+        "2. PENCIL handwriting on a data field (clearly graphite, "
+        "   not ink)\n"
+        "3. \"DRAFT\" watermark covering the page diagonally — but "
+        "   only if it is NOT part of the document template (real "
+        "   approved templates do not carry a DRAFT watermark)\n"
+        "4. Hand-affixed paper labels with non-template content\n\n"
+        "When the evidence is ambiguous (a faint mark, an indistinct "
+        "watermark, a pale stamp), return ``uncertain``. A confirmed "
+        "temporary annotation IS non-compliant; an ambiguous mark "
+        "called non-compliant is a false positive that wastes "
+        "reviewer time."
     ),
 }
 
@@ -194,13 +305,34 @@ _VISION_SYSTEM_PROMPT = (
     "images from pharmaceutical batch production records, logbooks, and "
     "controlled documents.\n\n"
     "CRITICAL GUIDELINES:\n"
-    "1. Base your assessment ONLY on what is visually present in the image.\n"
+    "1. Base your assessment ONLY on what is visually present in the image. "
+    "Do not infer history, intent, or context that isn't visible.\n"
     "2. Be precise about locations — describe as top/middle/bottom, left/center/right.\n"
     "3. Distinguish between genuine compliance issues and normal document features.\n"
     "4. For each rule, provide a clear status: compliant, non_compliant, "
-    "not_applicable, or uncertain.\n"
-    "5. Confidence should reflect your certainty: 0.9+ for clear visual evidence, "
-    "0.6-0.8 for moderate clarity, <0.6 for ambiguous.\n"
+    "not_applicable, or uncertain.\n\n"
+    "ABSENCE-OF-VIOLATION DEFAULT (most important rule):\n"
+    "When a rule asks about a specific defect or violation (corrections, "
+    "missing signatures, prohibited annotations, ink-colour issues, etc.) "
+    "and you do NOT see clear visual evidence of that defect, the correct "
+    "status is ``compliant`` — NOT ``non_compliant``. The absence of a "
+    "violation is the compliant state. ``non_compliant`` requires positive "
+    "visual evidence of an actual violation, not ambiguity, not a "
+    "speculative read, and not the lack of certainty about a feature's "
+    "presence. ``not_applicable`` is appropriate when the rule's subject "
+    "doesn't appear on the page at all (e.g. an ink-colour rule on a "
+    "page with no handwritten entries).\n\n"
+    "CONFIDENCE → STATUS MAPPING (use this exactly):\n"
+    "- ≥0.85 confidence in a visible violation → ``non_compliant`` with "
+    "the cited evidence.\n"
+    "- 0.60-0.85 confidence in a visible violation → ``uncertain`` with the "
+    "evidence cited; the downstream arbitrator reconciles with OCR signal.\n"
+    "- <0.60 confidence in a violation, OR no violation observed → "
+    "``compliant`` with evidence \"no <defect> observed on this page\". "
+    "Do NOT emit a low-confidence ``non_compliant`` — that produces false "
+    "positives that erode reviewer trust.\n\n"
+    "5. Confidence numerals should reflect your certainty: 0.9+ for clear "
+    "visual evidence, 0.6-0.8 for moderate clarity, <0.6 for ambiguous.\n"
     "6. When multiple visual checks are requested, evaluate each independently."
 )
 
