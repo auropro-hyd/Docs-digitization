@@ -88,8 +88,8 @@ class ReconciliationAgent:
         for rule in all_rules:
             if rule.id in existing_resolved_ids or not rule.cross_section_requirements:
                 continue
-            for req_id in rule.cross_section_requirements:
-                req_resolution = resolve_requirement(self._segmentation, req_id)
+            for req_spec in rule.cross_section_requirements:
+                req_resolution = resolve_requirement(self._segmentation, req_spec)
                 matched_ids = sorted(set(
                     list(req_resolution.evidence.source_section_ids) +
                     list(req_resolution.evidence.target_section_ids)
@@ -98,7 +98,10 @@ class ReconciliationAgent:
                     rule_id=rule.id,
                     matched_section_ids=matched_ids,
                     applicable=req_resolution.applicable,
-                    reason=f"{req_id}: {req_resolution.reason}",
+                    # Use the resolver's normalized requirement_id —
+                    # it formats inline dicts as "doc.section" rather
+                    # than dumping the raw repr into the trace.
+                    reason=f"{req_resolution.requirement_id}: {req_resolution.reason}",
                 ))
 
         all_section_ids = [s.section_id for s in self._segmentation.sections]
