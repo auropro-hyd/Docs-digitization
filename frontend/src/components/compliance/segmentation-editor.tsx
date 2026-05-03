@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,9 +18,25 @@ import {
   Pencil,
   X,
   Check,
+  ChevronDown,
+  ChevronRight,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+
+// One row inside a BPCR section's nested ``sub_sections`` array.
+// Shape mirrors backend ``app/compliance/models.py::BpcrSubSection``
+// (PR #22). Optional fields stay optional because the detector
+// emits empty strings / zeros for unsectioned spans rather than
+// fabricating display data.
+interface BpcrSubSection {
+  section_id: string;
+  display_name: string;
+  page_index: number;
+  confidence: number;
+  detection_method: string;
+}
 
 interface Section {
   section_id: string;
@@ -29,6 +45,11 @@ interface Section {
   start_page: number;
   end_page: number;
   description: string;
+  // Spec 007 — populated by the BPCR detector for sections whose
+  // ``section_type`` matches a BPCR hint. Empty for non-BPCR
+  // sections (raw_material_request_and_issue, sample_set_method,
+  // …) and for BPCRs where detection produced no hits.
+  sub_sections?: BpcrSubSection[];
 }
 
 interface Segmentation {
@@ -48,6 +69,26 @@ export function SegmentationEditor({ docId }: SegmentationEditorProps) {
   const [resegmenting, setResegmenting] = useState(false);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Section | null>(null);
+  // Track which BPCR section rows have their sub-section breakdown
+  // expanded. Default: any section with non-empty ``sub_sections`` is
+  // collapsed on first render so the table stays compact for
+  // multi-document packets (the user's real doc has 15 top-level
+  // sections, only 1 of which is the BPCR with sub-sections).
+  const [expandedSubSections, setExpandedSubSections] = useState<Set<number>>(
+    () => new Set(),
+  );
+
+  const toggleSubSections = useCallback((idx: number) => {
+    setExpandedSubSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) {
+        next.delete(idx);
+      } else {
+        next.add(idx);
+      }
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -175,9 +216,12 @@ export function SegmentationEditor({ docId }: SegmentationEditorProps) {
               </tr>
             </thead>
             <tbody>
-              {seg.sections.map((section, idx) => (
+              {seg.sections.map((section, idx) => {
+                const subCount = section.sub_sections?.length ?? 0;
+                const isExpanded = expandedSubSections.has(idx);
+                return (
+                <Fragment key={section.section_id}>
                 <tr
-                  key={section.section_id}
                   className={cn(
                     "border-t transition-colors",
                     editingIdx === idx && "bg-primary/5",
@@ -237,7 +281,34 @@ export function SegmentationEditor({ docId }: SegmentationEditorProps) {
                     </>
                   ) : (
                     <>
-                      <td className="py-2 px-3 font-medium">{section.name}</td>
+                      <td className="py-2 px-3 font-medium">
+                        <div className="flex items-center gap-1.5">
+                          {subCount > 0 && (
+                            <button
+                              onClick={() => toggleSubSections(idx)}
+                              className="size-5 rounded hover:bg-muted flex items-center justify-center -ml-1"
+                              aria-label={isExpanded ? "Collapse sub-sections" : "Expand sub-sections"}
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="size-3.5 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="size-3.5 text-muted-foreground" />
+                              )}
+                            </button>
+                          )}
+                          <span>{section.name}</span>
+                          {subCount > 0 && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] px-1 py-0 h-4 gap-0.5 cursor-pointer"
+                              onClick={() => toggleSubSections(idx)}
+                            >
+                              <Layers className="size-2.5" />
+                              {distinctSubSectionCount(section.sub_sections)} sub
+                            </Badge>
+                          )}
+                        </div>
+                      </td>
                       <td className="py-2 px-3">
                         <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
                           {section.section_type}
@@ -260,11 +331,153 @@ export function SegmentationEditor({ docId }: SegmentationEditorProps) {
                     </>
                   )}
                 </tr>
-              ))}
+                {isExpanded && section.sub_sections && section.sub_sections.length > 0 && (
+                  <tr className="border-t bg-muted/10">
+                    <td colSpan={5} className="py-2 px-3">
+                      <SubSectionBreakdown
+                        subSections={section.sub_sections}
+                        parentRange={[section.start_page, section.end_page]}
+                      />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+
+// ── BPCR sub-section breakdown ────────────────────────────────────────────
+//
+// The detector emits one ``BpcrSubSection`` per page covered by a span,
+// so a 35-page BPCR has 35 rows. Reviewers don't want a flat 35-row
+// dump; they want to see the *distinct* sections (cover_page,
+// material_dispensing, yield_calculation, …) with their page ranges.
+// This component groups by ``section_id`` and renders one row per
+// distinct sub-section, preserving the order the detector emitted
+// them (which mirrors document order).
+
+function distinctSubSectionCount(sub: BpcrSubSection[] | undefined): number {
+  if (!sub || sub.length === 0) return 0;
+  const ids = new Set<string>();
+  for (const s of sub) {
+    if (s.section_id && s.section_id !== "unsectioned") {
+      ids.add(s.section_id);
+    }
+  }
+  return ids.size;
+}
+
+
+interface SubSectionGroup {
+  section_id: string;
+  display_name: string;
+  start_page: number;
+  end_page: number;
+  page_count: number;
+  best_confidence: number;
+  detection_method: string;
+}
+
+
+function groupSubSections(sub: BpcrSubSection[]): SubSectionGroup[] {
+  // Walk the rows in order and emit one group per contiguous run of
+  // the same section_id. The detector already merges adjacent spans
+  // so this is mostly a one-row-per-distinct-section operation, but
+  // doing it client-side guarantees correct rendering even when the
+  // backend emits a non-merged list (e.g. legacy data, hand edits).
+  const groups: SubSectionGroup[] = [];
+  for (const row of sub) {
+    const last = groups[groups.length - 1];
+    if (last && last.section_id === row.section_id && last.end_page + 1 === row.page_index) {
+      last.end_page = row.page_index;
+      last.page_count += 1;
+      last.best_confidence = Math.max(last.best_confidence, row.confidence);
+      continue;
+    }
+    groups.push({
+      section_id: row.section_id,
+      display_name: row.display_name || row.section_id,
+      start_page: row.page_index,
+      end_page: row.page_index,
+      page_count: 1,
+      best_confidence: row.confidence,
+      detection_method: row.detection_method,
+    });
+  }
+  return groups;
+}
+
+
+function SubSectionBreakdown({
+  subSections,
+  parentRange,
+}: {
+  subSections: BpcrSubSection[];
+  parentRange: [number, number];
+}) {
+  const groups = groupSubSections(subSections);
+  // Filter out the "unsectioned" sentinel from the visible list — it's
+  // useful as a debugging signal but not informative to a reviewer.
+  // Surface a single "X pages unsectioned" footer instead.
+  const real = groups.filter((g) => g.section_id !== "unsectioned");
+  const unsectionedPages = groups
+    .filter((g) => g.section_id === "unsectioned")
+    .reduce((sum, g) => sum + g.page_count, 0);
+  const [parentStart, parentEnd] = parentRange;
+
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+        BPCR sub-sections (pages {parentStart}–{parentEnd})
+      </div>
+      {real.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic">
+          Detector ran but produced no canonical sub-section matches.
+          The 13-section spec at <code>config/bmr/pilot/bpcr-section-spec.yaml</code>{" "}
+          may need an alias for this document&apos;s heading wording.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+          {real.map((g) => (
+            <div
+              key={`${g.section_id}-${g.start_page}`}
+              className="border rounded px-2 py-1.5 bg-background flex items-center gap-2"
+            >
+              <Badge
+                variant="outline"
+                className="text-[9px] px-1 py-0 h-4 font-mono shrink-0"
+              >
+                {g.section_id}
+              </Badge>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-medium truncate">
+                  {g.display_name}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  pp. {g.start_page}
+                  {g.end_page !== g.start_page ? `–${g.end_page}` : ""}
+                  {" · "}
+                  {Math.round(g.best_confidence * 100)}% conf
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {unsectionedPages > 0 && (
+        <div className="text-[10px] text-muted-foreground">
+          + {unsectionedPages} page
+          {unsectionedPages === 1 ? "" : "s"} not assigned to a canonical
+          sub-section (carried by inheritance or fallthrough)
+        </div>
+      )}
+    </div>
   );
 }
