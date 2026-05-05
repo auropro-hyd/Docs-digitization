@@ -344,6 +344,33 @@ async def run_compliance_pipeline(
         return report
 
     agent_names_to_run = [a for a in applicable if a in _AGENT_CLASSES]
+
+    # An agent the orchestrator selected as applicable but for which the
+    # registry holds zero rules cannot produce a meaningful verdict —
+    # running it would build an ``AgentReport`` with the dataclass'
+    # default ``score=100.0`` and total_rules=0, which downstream renders
+    # as "Full compliance with X" in the executive summary even though
+    # the agent never evaluated a single rule. Move those agents into
+    # ``skipped`` with an explicit reason so the report makes the gap
+    # visible instead of papering over it.
+    no_rule_agents = [
+        name for name in agent_names_to_run
+        if not registry.get_rules(name)
+    ]
+    if no_rule_agents:
+        for name in no_rule_agents:
+            skipped.append(SkippedCategory(
+                category=name,
+                reason="No rules are registered for this agent (rule file empty or archived).",
+            ))
+            logger.warning(
+                "Agent %s was selected as applicable but has no rules in "
+                "the registry — moved to skipped_agents to avoid emitting "
+                "a fabricated 100/100 report.",
+                name,
+            )
+        agent_names_to_run = [a for a in agent_names_to_run if a not in no_rule_agents]
+
     agent_results = await asyncio.gather(
         *[_run_agent(name) for name in agent_names_to_run],
         return_exceptions=True,
@@ -560,10 +587,17 @@ async def _generate_executive_summary(
     findings_text = "\n".join(
         f"- [{f.severity.upper()}] {f.rule_id}: {f.description}" for f in findings[:30]
     )
+    # Belt-and-braces: even though the orchestrator filter upstream
+    # already drops zero-rule agents, the LLM prompt should never see
+    # an agent with ``total_rules == 0`` — feeding it ``score 100/100``
+    # rows for un-evaluated agents was the mechanism by which the May 4
+    # run fabricated "Full compliance with GMP/SOP/Checklist" in
+    # ``strengths``.
+    scored_reports = [ar for ar in agent_reports if ar.total_rules > 0]
     agents_text = "\n".join(
         f"- {ar.agent_display}: score {ar.score}/100, {ar.total_findings} findings"
-        for ar in agent_reports
-    )
+        for ar in scored_reports
+    ) or "(no agents produced rule-level verdicts in this run)"
 
     prompt = (
         f"Based on the compliance audit results below, generate an executive summary.\n\n"
