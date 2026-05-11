@@ -439,10 +439,10 @@ class DocumentSegmenter:
             if not isinstance(result, DocumentSegmentation):
                 result = DocumentSegmentation.model_validate(result)
             stamped = stamp_document_types(result)
-            # Surface quality issues to the run log so HITL
-            # reviewers and operators see overlaps, gaps, and
-            # unknown types without having to diff the JSON by
-            # hand. Pure observation — never mutates output.
+            # Surface quality issues to the run log AND the on-disk
+            # telemetry sink so post-run validation sees the
+            # structured issue list, not just a log line. Pure
+            # observation — never mutates segmentation output.
             try:
                 issues = validate_segmentation(stamped, total_pages=total_pages)
                 if issues:
@@ -454,6 +454,23 @@ class DocumentSegmenter:
                             for i in issues[:20]
                         ],
                     )
+                    # Emit one structured event per issue so the
+                    # on-disk telemetry's ``by_event`` summary shows
+                    # ``segmentation.overlap: N`` etc., enabling
+                    # one-glance verification that the validator ran
+                    # and found the expected issues.
+                    try:
+                        from app.observability.run_telemetry import record_event
+                        for i in issues:
+                            record_event(
+                                f"segmentation.{i.kind}",
+                                level="warning",
+                                message=i.message,
+                                section_ids=list(i.section_ids),
+                                page_range=list(i.page_range) if i.page_range else None,
+                            )
+                    except Exception:  # pragma: no cover — never break segmentation
+                        pass
             except Exception:  # pragma: no cover — defensive
                 logger.exception("segmentation validator raised; continuing")
             return stamped

@@ -996,6 +996,27 @@ class DatalabOCRAdapter:
                 len(sig_enrichment_telemetry),
                 sig_enrichment_telemetry,
             )
+            # Also emit a structured run-telemetry event per page so
+            # the on-disk ``telemetry.json`` carries the per-layer
+            # counts as queryable structured data (not just a log
+            # line). Auto-no-ops when no sink is bound (e.g. tests
+            # exercising the adapter directly outside a pipeline).
+            try:
+                from app.observability.run_telemetry import record_event
+                for page_num, tel in sig_enrichment_telemetry.items():
+                    record_event(
+                        "signature.page_enriched",
+                        page_num=page_num,
+                        layer_counts=tel.get("layer_counts", {}),
+                        injected_count=tel.get("injected_count", 0),
+                        skipped_idempotent=tel.get("skipped_idempotent", 0),
+                        signature_columns_detected=tel.get(
+                            "signature_columns_detected", 0
+                        ),
+                        tables_scanned=tel.get("tables_scanned", 0),
+                    )
+            except Exception:  # pragma: no cover — never break OCR
+                pass
 
         if extraction_data:
             all_kv_pairs = _map_extraction_to_kv_pairs(extraction_data, page_offset + 1)

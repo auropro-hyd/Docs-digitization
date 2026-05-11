@@ -54,6 +54,48 @@ def _inject_scope_processor(
     return event_dict
 
 
+def _telemetry_capture_processor(
+    logger: Any, method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Mirror every log record into the active ``RunTelemetrySink``.
+
+    Lazy import so a circular logging↔telemetry dependency can't
+    deadlock startup. No-op when no sink is bound (the common case
+    outside of a pipeline run, including tests that don't enter
+    ``telemetry_run``).
+
+    Never raises into the structlog pipeline — telemetry capture
+    is a side-effect, not a correctness surface.
+    """
+    try:
+        from app.observability.run_telemetry import current_sink
+
+        sink = current_sink()
+        if sink is None:
+            return event_dict
+
+        logger_name = ""
+        if logger is not None:
+            logger_name = getattr(logger, "name", "") or ""
+        # Pull the structured fields the user passed, excluding the
+        # framework keys we've already serialized.
+        framework_keys = {
+            "event", "ts", "level", "trace_id", "span_id",
+            "parent_span_id", "logger", "stack_info", "exc_info",
+        }
+        fields = {k: v for k, v in event_dict.items() if k not in framework_keys}
+
+        sink.record(
+            event=str(event_dict.get("event", "log")),
+            level=str(event_dict.get("level", method_name)),
+            logger_name=logger_name,
+            **fields,
+        )
+    except Exception:  # pragma: no cover — never break logging
+        pass
+    return event_dict
+
+
 def _resolve_log_mode() -> str:
     mode = os.getenv("AT_OBS__LOG_MODE", "").strip().lower()
     if mode in {"json", "dev"}:
@@ -90,6 +132,11 @@ def configure(*, force: bool = False) -> None:
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         redact_processor,
+        # Capture every log record into the active run telemetry
+        # sink. No-op when no sink is bound. Lives AFTER redaction
+        # so the on-disk telemetry doesn't carry secrets that the
+        # redaction processor was meant to strip.
+        _telemetry_capture_processor,
     ]
 
     if mode == "json":

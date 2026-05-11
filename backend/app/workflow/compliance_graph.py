@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -85,6 +86,57 @@ async def run_compliance_pipeline(
 
     user_selected = bool(selected_agents)
     doc_dir = Path(settings.storage.base_path) / doc_id
+
+    # Bind a per-run telemetry sink so every ``logger.*()`` call,
+    # every explicit ``record_event()``, and every sub-step's
+    # observability event during this pipeline lands in a single
+    # ``doc_dir/telemetry.json`` for post-run validation. The
+    # context manager handles flush-on-exit and exception safety.
+    from app.observability.run_telemetry import telemetry_run
+
+    async with _telemetry_async_wrapper(doc_id, doc_dir):
+        return await _run_compliance_pipeline_inner(
+            doc_id, extractions, filename, total_pages,
+            key_value_pairs, selected_agents,
+            settings, config, container, registry,
+            started_at, user_selected, doc_dir,
+        )
+
+
+@asynccontextmanager
+async def _telemetry_async_wrapper(doc_id: str, doc_dir: Path):
+    """Async wrapper for the (sync) ``telemetry_run`` context.
+
+    The synchronous ContextVar binding is correct across async
+    boundaries because ContextVars propagate through ``await``;
+    we just need an async context manager shape so the caller
+    can use ``async with``.
+    """
+    from app.observability.run_telemetry import telemetry_run
+
+    with telemetry_run(doc_id=doc_id, doc_dir=doc_dir):
+        yield
+
+
+async def _run_compliance_pipeline_inner(
+    doc_id: str,
+    extractions: list[dict],
+    filename: str,
+    total_pages: int,
+    key_value_pairs: list[dict] | None,
+    selected_agents: list[str] | None,
+    settings,
+    config,
+    container,
+    registry,
+    started_at: datetime,
+    user_selected: bool,
+    doc_dir: Path,
+) -> ComplianceReport:
+    """Actual pipeline body — extracted so the entrypoint can wrap it
+    in a telemetry context without indenting hundreds of lines."""
+
+    llm_call_count = 0
 
     # ── Phase 1: Orchestrator ─────────────────────────────────
     await _ws_progress(doc_id, {
