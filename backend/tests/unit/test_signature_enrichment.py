@@ -205,18 +205,46 @@ def test_non_signature_column_is_never_touched() -> None:
     assert "[Signature]" in parts[3], "Done by column must be stamped"
 
 
-def test_page_without_handwriting_or_signature_does_not_inject() -> None:
-    """If Datalab found no handwritten content at all on the
-    page, the enricher must not synthesize markers — the page
-    legitimately has no signatures."""
+def test_l4_fires_when_no_block_evidence_but_aggressive_is_on() -> None:
+    """The May 4 diagnostic showed Datalab returns
+    ``handwritten_count=0`` on every page even when 12+
+    ``[Signature]`` markers were inline. The JSON tree is
+    unreliable as block evidence; L4 closes the gap by firing
+    on column-header + date alone.
+
+    THIS IS THE PATH AKHILESH'S NEW DOC NEEDS — without it the
+    enricher does nothing because Datalab emits no Handwriting
+    or Signature blocks for that doc."""
     md = """\
 | Step | Done by |
 |------|---------|
 | 1 | 03/10/2025 |
 """
     result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" in result.markdown, (
+        "L4 must fire on column-header + date alone when aggressive=True"
+    )
+    assert result.telemetry.layer_counts["L4"] == 1
+    assert result.telemetry.injected_count == 1
+
+
+def test_l4_does_not_fire_when_aggressive_is_off() -> None:
+    """The strict "trust Datalab only" mode: if no JSON-tree
+    evidence, no injection. This is the original PR #32
+    behavior, preserved as an opt-out for diagnostic A/B and
+    for users who want classifier-only semantics."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 | 03/10/2025 |
+"""
+    result = enrich_page(
+        md, [], page_num=3,
+        signature_column_headers=_SIGNATURE_COLUMNS, aggressive=False,
+    )
     assert "[Signature]" not in result.markdown
     assert result.telemetry.injected_count == 0
+    assert result.telemetry.layer_counts["L4"] == 0
 
 
 # ── Idempotency ──────────────────────────────────────────────
@@ -284,17 +312,29 @@ def test_kill_switch_disables_injection_but_keeps_telemetry() -> None:
 # ── Page isolation ───────────────────────────────────────────
 
 
-def test_handwriting_block_on_other_page_does_not_trigger_injection() -> None:
+def test_handwriting_block_on_other_page_does_not_pull_signature_layer() -> None:
+    """A Handwriting block on page 5 must NOT cause page 3 to
+    fire at L3 — only at L4 (since page 3 has no own evidence)."""
     md = """\
 | Step | Done by |
 |------|---------|
 | 1 | 03/10/2025 |
 """
-    # Block is on page 5, we're enriching page 3.
+    # Block is on page 5, we're enriching page 3 with aggressive
+    # mode OFF so L4 doesn't backfill.
     blocks = [_handwriting_block(page_num=5)]
-    result = enrich_page(md, blocks, page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
-
+    result = enrich_page(
+        md, blocks, page_num=3,
+        signature_column_headers=_SIGNATURE_COLUMNS, aggressive=False,
+    )
     assert "[Signature]" not in result.markdown
+    # With aggressive ON (default), page 3 lands at L4 not L3,
+    # because L3 requires page-3's own handwriting block.
+    result_agg = enrich_page(
+        md, blocks, page_num=3, signature_column_headers=_SIGNATURE_COLUMNS,
+    )
+    assert result_agg.telemetry.layer_counts["L3"] == 0
+    assert result_agg.telemetry.layer_counts["L4"] == 1
 
 
 # ── Configuration edge cases ─────────────────────────────────
@@ -407,6 +447,35 @@ def test_enumerate_tables_ignores_pseudo_tables_without_separator() -> None:
 
 
 # ── End-to-end realistic BPCR row ───────────────────────────
+
+
+def test_l4_priority_lowest_l2_still_wins() -> None:
+    """When all three layers' triggers are present, L2 wins."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 | 03/10/2025 |
+"""
+    blocks = [_signature_block(page_num=3), _handwriting_block(page_num=3)]
+    result = enrich_page(md, blocks, page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+
+    assert result.telemetry.layer_counts["L2"] == 1
+    assert result.telemetry.layer_counts["L3"] == 0
+    assert result.telemetry.layer_counts["L4"] == 0
+
+
+def test_l4_does_not_synthesize_in_empty_cells() -> None:
+    """Even with aggressive=True (L4 default), empty cells in
+    signature columns are NEVER stamped. The load-bearing
+    invariant is preserved across all four layers."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 |  |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" not in result.markdown
+    assert result.telemetry.injected_count == 0
 
 
 def test_end_to_end_realistic_bpcr_dispensing_row() -> None:

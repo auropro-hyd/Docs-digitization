@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from app.compliance.models import (
@@ -63,6 +64,147 @@ def _looks_like_bpcr(section_type: str) -> bool:
         return False
     needle = section_type.lower()
     return any(hint in needle for hint in _BPCR_SECTION_TYPE_HINTS)
+
+
+@dataclass(frozen=True)
+class SegmentationIssue:
+    """One quality issue found in a segmentation output."""
+
+    kind: str  # "overlap" | "gap" | "unknown_document_type" | "unknown_section_type"
+    message: str
+    section_ids: tuple[str, ...] = ()
+    page_range: tuple[int, int] | None = None
+
+
+def validate_segmentation(
+    seg: DocumentSegmentation,
+    total_pages: int | None = None,
+) -> list[SegmentationIssue]:
+    """Surface segmentation quality issues as a list of warnings.
+
+    Detects:
+
+    1. **Overlaps** — two sections whose page ranges share at least
+       one page. Common when the LLM hallucinates a sub-document
+       on a page that's already part of a parent section
+       (e.g. ``VDE009 Data Monitoring Parameters`` pages 76-86
+       overlapping ``VDE009 Alarm Log`` page 81 in Akhilesh's
+       segmentation).
+    2. **Coverage gaps** — pages between sections that no section
+       claims. Most often a sign the LLM dropped a multi-page
+       attachment or didn't realize a checklist spans pages.
+       Reports the gap range so a HITL reviewer or the operator
+       can decide whether to re-segment.
+    3. **Unknown document_type** — ``document_type`` value not in
+       ``document_profiles.yaml``. The compliance pipeline will
+       silently lose every rule keyed off that doc_type unless
+       it's added to the YAML.
+    4. **Unknown section_type** — ``section_type`` value not in
+       any profile's ``expected_sections`` or ``section_aliases``.
+       Less critical than document_type drift but still worth
+       surfacing so config authors can fold them in.
+
+    Pure: no I/O, no logging. Caller decides whether to log /
+    raise / surface in the run report.
+    """
+
+    from app.compliance.rules.profiles import (
+        load_profiles,
+        normalize_document_type,
+        normalize_section_type,
+    )
+
+    profiles = load_profiles()
+    known_docs = profiles.known_document_types()
+    known_sections = profiles.known_section_types()
+
+    issues: list[SegmentationIssue] = []
+
+    # ── Overlaps and gaps ─────────────────────────────────
+    sorted_secs = sorted(seg.sections, key=lambda s: (s.start_page, s.end_page))
+    for i, sec in enumerate(sorted_secs):
+        for other in sorted_secs[i + 1:]:
+            if other.start_page > sec.end_page:
+                break  # sorted, no further overlap possible
+            overlap_lo = max(sec.start_page, other.start_page)
+            overlap_hi = min(sec.end_page, other.end_page)
+            if overlap_lo <= overlap_hi:
+                issues.append(SegmentationIssue(
+                    kind="overlap",
+                    message=(
+                        f"Sections '{sec.section_id}' "
+                        f"({sec.start_page}-{sec.end_page}) and "
+                        f"'{other.section_id}' "
+                        f"({other.start_page}-{other.end_page}) overlap "
+                        f"on pages {overlap_lo}-{overlap_hi}. The "
+                        f"compliance pipeline will double-count any "
+                        f"finding on those pages."
+                    ),
+                    section_ids=(sec.section_id, other.section_id),
+                    page_range=(overlap_lo, overlap_hi),
+                ))
+
+    # Coverage gaps — only check when we know total_pages.
+    if total_pages is not None and total_pages > 0:
+        covered: set[int] = set()
+        for sec in seg.sections:
+            for p in range(sec.start_page, sec.end_page + 1):
+                covered.add(p)
+        all_pages = set(range(1, total_pages + 1))
+        missing = sorted(all_pages - covered)
+        if missing:
+            # Compress consecutive gap pages into ranges.
+            run_start = missing[0]
+            prev = missing[0]
+            for p in missing[1:] + [None]:
+                if p != prev + 1 if p is not None else True:
+                    if p is None or p != prev + 1:
+                        issues.append(SegmentationIssue(
+                            kind="gap",
+                            message=(
+                                f"Pages {run_start}-{prev} are not covered "
+                                f"by any segmentation section. The compliance "
+                                f"pipeline will never evaluate rules against "
+                                f"this content."
+                            ),
+                            page_range=(run_start, prev),
+                        ))
+                        run_start = p if p is not None else prev
+                if p is not None:
+                    prev = p
+
+    # ── Type drift ────────────────────────────────────────
+    for sec in seg.sections:
+        if sec.document_type:
+            normalized = normalize_document_type(sec.document_type)
+            if normalized not in known_docs:
+                issues.append(SegmentationIssue(
+                    kind="unknown_document_type",
+                    message=(
+                        f"Section '{sec.section_id}' has "
+                        f"document_type='{sec.document_type}' which is "
+                        f"not defined in document_profiles.yaml. Rules "
+                        f"keyed to this doc_type won't fire on this "
+                        f"section until the YAML is extended."
+                    ),
+                    section_ids=(sec.section_id,),
+                ))
+        if sec.section_type:
+            normalized = normalize_section_type(sec.section_type)
+            if normalized and normalized not in known_sections:
+                issues.append(SegmentationIssue(
+                    kind="unknown_section_type",
+                    message=(
+                        f"Section '{sec.section_id}' has "
+                        f"section_type='{sec.section_type}' which is "
+                        f"not in any document profile's expected_sections "
+                        f"or section_aliases. Cross-section rules will "
+                        f"fail to resolve this section."
+                    ),
+                    section_ids=(sec.section_id,),
+                ))
+
+    return issues
 
 
 def stamp_document_types(seg: DocumentSegmentation) -> DocumentSegmentation:
@@ -296,7 +438,25 @@ class DocumentSegmenter:
             )
             if not isinstance(result, DocumentSegmentation):
                 result = DocumentSegmentation.model_validate(result)
-            return stamp_document_types(result)
+            stamped = stamp_document_types(result)
+            # Surface quality issues to the run log so HITL
+            # reviewers and operators see overlaps, gaps, and
+            # unknown types without having to diff the JSON by
+            # hand. Pure observation — never mutates output.
+            try:
+                issues = validate_segmentation(stamped, total_pages=total_pages)
+                if issues:
+                    logger.warning(
+                        "segmentation quality issues (%d): %s",
+                        len(issues),
+                        [
+                            {"kind": i.kind, "msg": i.message}
+                            for i in issues[:20]
+                        ],
+                    )
+            except Exception:  # pragma: no cover — defensive
+                logger.exception("segmentation validator raised; continuing")
+            return stamped
         except Exception:
             logger.exception("Segmentation failed, returning single-section fallback")
             return DocumentSegmentation(
