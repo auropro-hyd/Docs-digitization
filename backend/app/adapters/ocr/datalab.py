@@ -236,7 +236,34 @@ def _extract_bboxes_from_json(
                     page_num = int(p) + 1
                     break
 
-        if polygon and block_type in ("Text", "Handwriting", "SectionHeader", "ListItem", "Span", "Line"):
+        # Allowlist of block types we lift out of Datalab's JSON
+        # tree for downstream consumers. The original list was
+        # ``Text + Handwriting + SectionHeader + ListItem + Span +
+        # Line`` — purely the textual blocks.
+        #
+        # ``Signature``, ``Form``, ``TableCell``, and ``Table``
+        # were added on 2026-05-05 to support the signature
+        # enricher (``app.adapters.ocr.signature_enricher``)
+        # which needs to know about signature-classified blocks
+        # and table-cell bboxes to synthesize missing
+        # ``[Signature]`` markers in cells where Datalab's
+        # classifier missed the stroke but context makes
+        # presence obvious. Without these, the enricher's L2
+        # path is starved of evidence and recall drops by an
+        # order of magnitude on docs with sparse initial-only
+        # signatures.
+        if polygon and block_type in (
+            "Text",
+            "Handwriting",
+            "SectionHeader",
+            "ListItem",
+            "Span",
+            "Line",
+            "Signature",
+            "Form",
+            "TableCell",
+            "Table",
+        ):
             page_blocks.setdefault(page_num, []).append(
                 (block_type, re.sub(r"<[^>]+>", "", html_text).strip(), polygon)
             )
@@ -853,6 +880,25 @@ class DatalabOCRAdapter:
         all_table_meta: list[dict] = []
         all_signatures: list[SignatureRegion] = []
         all_kv_pairs: list[KeyValuePair] = []
+        sig_enrichment_telemetry: dict[int, dict] = {}
+
+        # Signature-enrichment dependencies — loaded once per
+        # adapter call so we don't re-parse the YAML or hit the
+        # config cache per-page. The kill switch
+        # (DatalabConfig.signature_enrichment=False) short-circuits
+        # injection but still emits telemetry, which is exactly
+        # the surface we need for a flag-off A/B diagnostic.
+        sig_columns: tuple[str, ...] = ()
+        sig_enrich_enabled = bool(getattr(self._config, "signature_enrichment", True))
+        try:
+            from app.compliance.rules.profiles import load_profiles
+            sig_columns = tuple(load_profiles().signature_column_headers)
+        except Exception:  # pragma: no cover — defensive
+            logger.warning(
+                "signature enricher: failed to load column headers from "
+                "document_profiles.yaml; falling back to no enrichment",
+                exc_info=True,
+            )
 
         for i, page_md in enumerate(page_texts):
             page_num = page_offset + i + 1
@@ -862,11 +908,49 @@ class DatalabOCRAdapter:
                 k: v for k, v in all_images.items() if k in page_md_stripped
             }
 
-            sel_marks = _parse_selection_marks(page_md_stripped, page_num)
+            # Signature enrichment runs BEFORE _parse_signatures so
+            # the synthesized markers flow through the same regex
+            # path L0/L1 already use. Result: a uniform
+            # ``[Signature]`` wire shape regardless of which layer
+            # produced it.
+            enriched_md = page_md_stripped
+            if sig_columns and bbox_data:
+                from app.adapters.ocr.signature_enricher import (
+                    JsonBlock,
+                    enrich_page,
+                )
+                page_json_blocks: list[JsonBlock] = []
+                for block_type, _text, polygon in bbox_data.get(page_num, []):
+                    try:
+                        poly = tuple((float(p[0]), float(p[1])) for p in polygon)
+                    except (TypeError, ValueError):
+                        continue
+                    page_json_blocks.append(
+                        JsonBlock(
+                            block_type=block_type,
+                            polygon=poly,
+                            page_num=page_num,
+                            text=_text,
+                        )
+                    )
+                enrichment = enrich_page(
+                    page_md_stripped,
+                    page_json_blocks,
+                    page_num,
+                    sig_columns,
+                    enabled=sig_enrich_enabled,
+                )
+                enriched_md = enrichment.markdown
+                if enrichment.telemetry.injected_count or any(
+                    enrichment.telemetry.layer_counts.values()
+                ):
+                    sig_enrichment_telemetry[page_num] = enrichment.telemetry.to_dict()
+
+            sel_marks = _parse_selection_marks(enriched_md, page_num)
             hw_words = _parse_handwriting_words(page_md, page_num)
-            sigs = _parse_signatures(page_md, page_num)
-            table_meta = _parse_table_metadata(page_md_stripped, page_num)
-            formulas = _parse_formulas(page_md_stripped, page_num)
+            sigs = _parse_signatures(enriched_md, page_num)
+            table_meta = _parse_table_metadata(enriched_md, page_num)
+            formulas = _parse_formulas(enriched_md, page_num)
 
             # Enrich words with bounding boxes from JSON output
             if bbox_data and page_num in bbox_data:
@@ -887,12 +971,19 @@ class DatalabOCRAdapter:
             pages.append(
                 OCRPageResult(
                     page_num=page_num,
-                    markdown=page_md_stripped,
+                    markdown=enriched_md,
                     words=hw_words,
                     selection_marks=sel_marks,
                     formulas=formulas,
                     images=page_images,
                 )
+            )
+
+        if sig_enrichment_telemetry:
+            logger.info(
+                "signature enricher: enriched %d page(s); per-page telemetry=%s",
+                len(sig_enrichment_telemetry),
+                sig_enrichment_telemetry,
             )
 
         if extraction_data:

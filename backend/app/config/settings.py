@@ -142,6 +142,17 @@ class DatalabConfig(BaseModel):
     extraction_schema: dict = Field(default_factory=dict)
     save_checkpoint: bool = True
 
+    # Signature enrichment — deterministic post-OCR pass that
+    # synthesizes ``[Signature]`` markers in table cells where
+    # Datalab's classifier missed the signature stroke but
+    # context (signature-named column + cell with handwritten
+    # content) makes presence obvious. See
+    # :mod:`app.adapters.ocr.signature_enricher`.
+    # Defaults on; set ``AT_DATALAB__SIGNATURE_ENRICHMENT=false``
+    # to disable and run the raw Datalab output (e.g. for
+    # diagnostic A/B comparison against the classifier).
+    signature_enrichment: bool = True
+
     # Bounding box enrichment via JSON output
     fetch_block_bboxes: bool = True
 
