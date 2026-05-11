@@ -420,3 +420,35 @@ section_aliases:
   co_mill_line_clearance: co_mill_checklist
   metal_detector_operation_checklist: metal_detector_checklist
   metal_detection_line_clearance: metal_detector_checklist
+
+
+# Header phrases that identify a table column as carrying a signature /
+# initials / "performed by" attribution. Used by the OCR adapter's
+# signature enricher (``app.adapters.ocr.signature_enricher``) to
+# synthesize ``[Signature]`` markers in cells where Datalab's
+# classifier missed the actual signature stroke (common with sparse
+# initial-only marks or low-contrast scans).
+#
+# All matching is case-insensitive and substring-based after
+# normalisation (lowercase + collapsed whitespace). Add new phrases
+# whenever a new BPCR template surfaces a column we don't catch —
+# this is a data-only change, no code edit required.
+signature_column_headers:
+  - done by
+  - checked by
+  - verified by
+  - signed by
+  - reviewed by
+  - performed by
+  - approved by
+  - witnessed by
+  - operator
+  - reviewer
+  - witness
+  - sign
+  - signature
+  - initials
+  - init.
+  - signed
+  - chk by
+  - done

@@ -47,6 +47,12 @@ class ProfilesConfig(BaseModel):
     version: int = 1
     document_profiles: dict[str, DocumentProfile] = Field(default_factory=dict)
     section_aliases: dict[str, str] = Field(default_factory=dict)
+    # Header phrases identifying a table column as a signature /
+    # initials / attribution column. Consumed by the OCR signature
+    # enricher; treated as case-insensitive substrings after
+    # whitespace normalization. Empty list = enrichment disabled
+    # for that profile.
+    signature_column_headers: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _normalize(self):
@@ -56,6 +62,14 @@ class ProfilesConfig(BaseModel):
         self.section_aliases = {
             _slug(k): _slug(v) for k, v in self.section_aliases.items()
         }
+        # Normalize signature column headers to lowercase trimmed
+        # form so the matcher in signature_enricher can do simple
+        # substring tests without re-normalizing on every call.
+        self.signature_column_headers = [
+            " ".join(h.lower().split())
+            for h in self.signature_column_headers
+            if str(h).strip()
+        ]
         return self
 
     def known_document_types(self) -> set[str]:
