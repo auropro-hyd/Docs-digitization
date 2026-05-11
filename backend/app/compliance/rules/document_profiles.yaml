@@ -123,7 +123,30 @@ document_profiles:
     - equipment monitoring data
     - temperature profile
     - pressure profile
-    expected_sections: []
+    # New aliases (2026-05-05): Akhilesh's segmentation
+    # surfaced these on the UIIBEHSII28 doc. They're the same
+    # instrument-monitoring concept as SCADA, just classified by
+    # the LLM with a different name.
+    - instrument_monitoring_data
+    - instrument_data_log
+    - instrument_alarm_log
+    - vde009_data_monitoring_parameters
+    - vde009_alarm_log
+    expected_sections:
+    - section_type: instrument_data_log
+      display_name: Instrument Data Log
+      required: false
+      aliases:
+      - data monitoring parameters
+      - instrument monitoring parameters
+      - trend log
+    - section_type: instrument_alarm_log
+      display_name: Instrument Alarm Log
+      required: false
+      aliases:
+      - alarm log
+      - vde009 alarm log
+      - dryer alarm log
 
   ipc_report:
     aliases:
@@ -307,6 +330,11 @@ document_profiles:
 section_aliases:
   # ── Existing canonical aliases ─────────────────────────────────────────────
   batch_production_and_control_record: batch_record
+  # Akhilesh's UIIBEHSII28 segmentation surfaced these aliases on
+  # 2026-05-05; they map to the instrument-monitoring profile.
+  instrument_alarm_log: instrument_alarm_log
+  vde009_alarm_log: instrument_alarm_log
+  vde009_data_monitoring_parameters: instrument_data_log
   manufacturing_operation: manufacturing_operations
   manufacturing_operation_log: manufacturing_operations
   manufacturing_log: manufacturing_operations

@@ -890,6 +890,9 @@ class DatalabOCRAdapter:
         # the surface we need for a flag-off A/B diagnostic.
         sig_columns: tuple[str, ...] = ()
         sig_enrich_enabled = bool(getattr(self._config, "signature_enrichment", True))
+        sig_enrich_aggressive = bool(
+            getattr(self._config, "signature_enrichment_aggressive", True)
+        )
         try:
             from app.compliance.rules.profiles import load_profiles
             sig_columns = tuple(load_profiles().signature_column_headers)
@@ -912,15 +915,22 @@ class DatalabOCRAdapter:
             # the synthesized markers flow through the same regex
             # path L0/L1 already use. Result: a uniform
             # ``[Signature]`` wire shape regardless of which layer
-            # produced it.
+            # produced it. We call the enricher even when bbox_data
+            # is empty/absent because the L4 path needs no JSON-tree
+            # evidence — column-header + date-only content alone
+            # triggers injection (this is the only layer that
+            # works on docs where Datalab returns no Handwriting
+            # blocks even though [Signature] markers ARE in the
+            # markdown — diagnostic on May 4 doc, all 13 signed
+            # pages had handwritten_count=0).
             enriched_md = page_md_stripped
-            if sig_columns and bbox_data:
+            if sig_columns:
                 from app.adapters.ocr.signature_enricher import (
                     JsonBlock,
                     enrich_page,
                 )
                 page_json_blocks: list[JsonBlock] = []
-                for block_type, _text, polygon in bbox_data.get(page_num, []):
+                for block_type, _text, polygon in (bbox_data or {}).get(page_num, []):
                     try:
                         poly = tuple((float(p[0]), float(p[1])) for p in polygon)
                     except (TypeError, ValueError):
@@ -939,6 +949,7 @@ class DatalabOCRAdapter:
                     page_num,
                     sig_columns,
                     enabled=sig_enrich_enabled,
+                    aggressive=sig_enrich_aggressive,
                 )
                 enriched_md = enrichment.markdown
                 if enrichment.telemetry.injected_count or any(

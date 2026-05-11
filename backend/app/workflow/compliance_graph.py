@@ -371,6 +371,54 @@ async def run_compliance_pipeline(
             )
         agent_names_to_run = [a for a in agent_names_to_run if a not in no_rule_agents]
 
+    # When the user selects only zero-rule agents (e.g. picks
+    # Checklist whose rules.md is archived), ``agent_names_to_run``
+    # is empty here even though ``applicable`` was non-empty
+    # earlier. Without this branch the pipeline still runs
+    # through report assembly with empty agent_reports — emitting
+    # a confusing "0/0 agents done" report where the user can't
+    # tell whether anything ran. Surface an explicit empty
+    # report carrying the skip reasons so the UI shows
+    # "Checklist: no rules registered" instead of a silent void.
+    if not agent_names_to_run:
+        logger.warning(
+            "All selected agents were filtered out (zero rules registered). "
+            "Building empty report with skip reasons attached: %s",
+            [s.category for s in skipped],
+        )
+        report = _build_empty_report(
+            doc_id, filename, total_pages, orch_result, started_at, config,
+        )
+        report.skipped_agents = list(skipped)
+        # Replace executive summary so the LLM doesn't confabulate
+        # "Full compliance" on a run that evaluated zero rules.
+        report.executive_summary = ExecutiveSummary(
+            overall_assessment=(
+                "No rules were evaluated in this run. "
+                + ("Selected agent(s) have no rules registered: "
+                   + ", ".join(s.category for s in skipped) + ". "
+                   if skipped else "")
+                + "Select an agent with a non-empty rule file or contact "
+                "your admin to publish rules for this agent."
+            ),
+            key_risks=[],
+            strengths=[],
+            priority_actions=[
+                "Select an agent with rules registered (e.g. ALCOA+) and "
+                "re-run the audit.",
+            ],
+        )
+        _store_report(doc_id, report)
+        await _ws_progress(doc_id, {
+            "phase": "complete",
+            "overall_score": report.overall_score,
+            "total_findings": 0,
+            "skipped_agents": [
+                {"category": s.category, "reason": s.reason} for s in skipped
+            ],
+        })
+        return report
+
     agent_results = await asyncio.gather(
         *[_run_agent(name) for name in agent_names_to_run],
         return_exceptions=True,

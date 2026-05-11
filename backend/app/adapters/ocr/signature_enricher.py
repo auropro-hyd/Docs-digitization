@@ -91,6 +91,17 @@ LAYER_CONFIDENCE: dict[str, float] = {
     "L1": 0.80,
     "L2": 0.65,
     "L3": 0.45,
+    # L4 — last-resort heuristic. Fires when NO JSON-tree
+    # evidence (Signature or Handwriting blocks) is available
+    # on the page, but the cell sits in a signature-named
+    # column AND carries date-only content. Diagnostic on the
+    # May 4 doc showed Datalab returns ``handwritten_count=0``
+    # on every page even when 12 ``[Signature]`` markers are
+    # inline — so the JSON tree is unreliable as evidence.
+    # L4 closes the gap. Confidence floored at 0.30 so it
+    # never satisfies the ``>=0.6 → firm`` mapping; downstream
+    # consumers treat these as ``uncertain``-tier signals.
+    "L4": 0.30,
 }
 
 
@@ -132,7 +143,9 @@ class JsonBlock:
 class EnrichmentTelemetry:
     """Per-page counters surfaced to ``extraction_telemetry``."""
 
-    layer_counts: dict[str, int] = field(default_factory=lambda: {"L0": 0, "L1": 0, "L2": 0, "L3": 0})
+    layer_counts: dict[str, int] = field(
+        default_factory=lambda: {"L0": 0, "L1": 0, "L2": 0, "L3": 0, "L4": 0}
+    )
     injected_count: int = 0
     skipped_idempotent: int = 0
     signature_columns_detected: int = 0
@@ -299,22 +312,31 @@ def _enrich_table(
     signature_column_patterns: tuple[str, ...],
     page_has_signature_block: bool,
     page_has_handwriting_block: bool,
+    *,
+    aggressive: bool = True,
 ) -> tuple[list[str], EnrichmentTelemetry]:
     """Walk a single markdown table; inject ``[Signature]`` into
     qualifying cells. Returns ``(new_rows, telemetry)``.
 
-    The injection criteria depend on what Datalab found on the
-    same page:
+    The injection layer depends on what evidence the page carries:
 
-    * **L2 path** — page has at least one ``Signature`` block in
-      the JSON tree. We trust Datalab classified at least one
-      signature on the page; cells in signature-named columns
-      with date-only content are stamped at L2 confidence.
+    * **L2 path** — page has at least one JSON-tree ``Signature``
+      block. Datalab classified at least one signature on the
+      page; cells in signature-named columns with date-only
+      content are stamped at L2 confidence.
 
     * **L3 path** — page has Handwriting blocks but no Signature
       classifications. The classifier saw handwriting; we
-      synthesize ``[Signature]`` in date-only cells of
-      signature-named columns at L3 confidence.
+      synthesize ``[Signature]`` at L3 confidence.
+
+    * **L4 path** (when ``aggressive=True``) — page has NO JSON-tree
+      evidence at all. This is the common case on real BPCRs:
+      diagnostic on the May 4 doc showed ``handwritten_count=0``
+      on every page even when 12 ``[Signature]`` markers were
+      inline. The JSON tree is unreliable as evidence; column-
+      header + date-only content alone trigger injection at the
+      lowest confidence (0.30) so downstream
+      ``llm_arbitrated`` / VLM-tier consumers can downweight.
 
     Per-cell idempotency: cells already containing ``[Signature]``
     are skipped (counted under ``skipped_idempotent``).
@@ -345,13 +367,15 @@ def _enrich_table(
 
     telemetry.signature_columns_detected += len(sig_columns)
 
+    # Choose the strongest available layer. L2 > L3 > L4.
     layer: str | None = None
     if page_has_signature_block:
         layer = "L2"
     elif page_has_handwriting_block:
         layer = "L3"
-    # else: no evidence of handwritten content on this page —
-    # don't synthesize markers.
+    elif aggressive:
+        layer = "L4"
+    # else: no evidence + aggressive disabled — don't synthesize.
     if layer is None:
         return rows, telemetry
 
@@ -405,6 +429,7 @@ def enrich_page(
     signature_column_headers: tuple[str, ...],
     *,
     enabled: bool = True,
+    aggressive: bool = True,
 ) -> EnrichmentResult:
     """Apply the four-layer enrichment to a single page's markdown.
 
@@ -445,11 +470,15 @@ def enrich_page(
     page_has_signature_block = any(b.block_type == "Signature" for b in page_blocks)
     page_has_handwriting_block = any(b.block_type == "Handwriting" for b in page_blocks)
 
-    if not (page_has_signature_block or page_has_handwriting_block):
-        # Datalab saw no handwritten content. Don't synthesize
-        # markers from thin air — let downstream rules treat
-        # this page as unsigned, which may be the correct
-        # finding.
+    # When ``aggressive`` is False and there's no JSON-tree
+    # evidence, short-circuit. With aggressive=True the L4 path
+    # in ``_enrich_table`` fires on column-header + date alone,
+    # which is the only signal available on docs where Datalab's
+    # classifier emits ``[Signature]`` inline but doesn't tag
+    # individual blocks (the May 4 diagnostic showed
+    # ``handwritten_count=0`` on every page despite 53 inline
+    # markers — the JSON tree is unreliable as evidence).
+    if not aggressive and not (page_has_signature_block or page_has_handwriting_block):
         return EnrichmentResult(markdown=markdown, telemetry=telemetry)
 
     tables = _enumerate_tables(markdown)
@@ -465,6 +494,7 @@ def enrich_page(
             patterns,
             page_has_signature_block,
             page_has_handwriting_block,
+            aggressive=aggressive,
         )
         telemetry.merge(table_telemetry)
         if table_telemetry.injected_count:

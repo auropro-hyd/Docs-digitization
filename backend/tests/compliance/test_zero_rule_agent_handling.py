@@ -116,6 +116,44 @@ async def test_summary_uses_sentinel_when_all_agents_have_zero_rules() -> None:
 # ── Orchestration-layer filter shape ─────────────────────────
 
 
+def test_empty_report_fallback_when_all_selected_agents_are_zero_rule() -> None:
+    """The "I selected an agent but got no report" UX issue.
+
+    When the user (or orchestrator) selects only zero-rule agents,
+    ``agent_names_to_run`` is empty after the filter. Without
+    the empty-report fallback the pipeline used to build a void
+    report where the UI showed "0/0 agents done" with no
+    explanation.
+
+    With the fallback, an explicit empty report is returned
+    carrying the skip reasons so the user sees:
+    "Checklist: no rules registered" instead of a silent void.
+    """
+
+    import inspect
+    from app.workflow import compliance_graph
+
+    src = inspect.getsource(compliance_graph)
+
+    # The fallback branch must exist and key off agent_names_to_run.
+    assert "if not agent_names_to_run:" in src, (
+        "empty-report fallback branch missing — the UX regression that "
+        "produces '0/0 agents done' on user-selected zero-rule agents "
+        "is back"
+    )
+    # The fallback must carry skip reasons through to the report.
+    assert "report.skipped_agents = list(skipped)" in src, (
+        "fallback must attach skipped_agents so the UI can render "
+        "the per-agent skip reasons"
+    )
+    # The exec summary must be replaced — otherwise the LLM
+    # confabulates "Full compliance" on a zero-rules run.
+    assert "No rules were evaluated in this run" in src, (
+        "fallback must replace executive_summary with a clear "
+        "no-rules-evaluated message"
+    )
+
+
 def test_orchestration_filter_logic() -> None:
     """The orchestration filter is a small data transform: given an
     applicable agent list and a registry that returns a list of rules

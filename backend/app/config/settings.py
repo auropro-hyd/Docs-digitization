@@ -153,6 +153,19 @@ class DatalabConfig(BaseModel):
     # diagnostic A/B comparison against the classifier).
     signature_enrichment: bool = True
 
+    # Aggressive (L4) layer: synthesizes ``[Signature]`` from
+    # column-header + date-only-cell signals ALONE, without
+    # requiring a Handwriting/Signature block in Datalab's JSON
+    # tree. Necessary because diagnostic on real BPCRs shows
+    # Datalab returns ``handwritten_count=0`` per page even
+    # when ``[Signature]`` markers ARE in the markdown — the
+    # JSON tree is structurally unreliable as block evidence.
+    # Defaults on so the new-doc symptom is fixed by default;
+    # set to ``false`` for strict "trust Datalab classifier
+    # only" semantics. Confidence floor 0.30 keeps L4
+    # findings in the ``uncertain`` band downstream.
+    signature_enrichment_aggressive: bool = True
+
     # Bounding box enrichment via JSON output
     fetch_block_bboxes: bool = True
 
