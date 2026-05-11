@@ -536,11 +536,23 @@ categories:
              → Remarks should be blank, dash (-/—), or "N.A."
              → A numeric measurement value in Remarks for a skipped step is NON-COMPLIANT.
 
+          UNIT-IS-LABEL EXCEPTION:
+          Some parameters use their label as the unit — no separate unit suffix is
+          required in the recorded value. Treat a bare numeric value as compliant
+          when the row or column label IS the unit:
+          - RPM (revolutions per minute): a value of "40" in an RPM-labeled column
+            or row is COMPLIANT. Do NOT flag it as missing units.
+          - pH: a value of "7.2" with no suffix is COMPLIANT (pH is its own scale).
+          Do NOT flag these as non-compliant solely because the recorded value
+          lacks a unit suffix.
+
           REAL EXAMPLES (from this batch record):
           - Step "Apply Vacuum (NLT 650 mmHg)" executed (From=17-30, To=20-10),
             Remarks="Vacuum: 708 mmHg" → PASS (708 ≥ 650)
           - Step "Heat hot water temperature to 50–55°C" executed,
             Remarks="Average Temperature set point: 52.5" → PASS (52.5 within 50–55)
+          - RPM column value "40" in PIN MILLING RECORD → PASS (RPM is the unit;
+            bare numeric is sufficient)
           - Step with From=N.A., To=N.A., Remarks=N.A. → PASS (skipped, no value recorded)
           - Step with From=N.A., To=N.A., Remarks="Vacuum: 700 mmHg" → FAIL
             (skipped step should not record a parameter value)

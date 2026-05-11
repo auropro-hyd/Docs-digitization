@@ -654,8 +654,9 @@ def _merge_text_vision(
 ) -> RuleEvaluation:
     """Merge text and vision evaluations for a text_and_vision rule.
 
-    Vision takes precedence for visual aspects (strikethrough, ink color, etc.)
-    while text evaluation provides context from OCR content.
+    Text wins on ties and when text severity is lower. Vision can override
+    only when text is more severe — allowing vision to de-escalate OCR
+    false positives (e.g. OCR misses a handwritten entry that vision confirms).
     """
     if text_ev is None and vision_ev is None:
         return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
@@ -664,23 +665,11 @@ def _merge_text_vision(
     if vision_ev is None:
         return text_ev
 
-    # For visual aspects, vision result takes precedence
     text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
     vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
 
-    if vision_sev >= text_sev:
-        merged = RuleEvaluation(
-            rule_id=rule.id,
-            status=vision_ev.status,
-            severity=vision_ev.severity or text_ev.severity,
-            confidence=min(text_ev.confidence, vision_ev.confidence),
-            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
-            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
-            description=vision_ev.description or text_ev.description,
-            recommendation=vision_ev.recommendation or text_ev.recommendation,
-            applicability_trace=list(text_ev.applicability_trace),
-        )
-    else:
+    if text_sev <= vision_sev:
+        # Text wins (including ties)
         merged = RuleEvaluation(
             rule_id=rule.id,
             status=text_ev.status,
@@ -690,6 +679,19 @@ def _merge_text_vision(
             evidence=f"[Text] {text_ev.evidence} [Vision] {vision_ev.evidence}",
             description=text_ev.description or vision_ev.description,
             recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+    else:
+        # Vision de-escalates — text is more severe but vision confirms compliance
+        merged = RuleEvaluation(
+            rule_id=rule.id,
+            status=vision_ev.status,
+            severity=vision_ev.severity or text_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
+            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
+            description=vision_ev.description or text_ev.description,
+            recommendation=vision_ev.recommendation or text_ev.recommendation,
             applicability_trace=list(text_ev.applicability_trace),
         )
 
@@ -717,20 +719,7 @@ def _merge_text_primary(
     text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
     vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
 
-    if vision_sev > text_sev:
-        # Vision escalates — use vision verdict
-        return RuleEvaluation(
-            rule_id=rule.id,
-            status=vision_ev.status,
-            severity=vision_ev.severity or text_ev.severity,
-            confidence=min(text_ev.confidence, vision_ev.confidence),
-            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
-            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
-            description=vision_ev.description or text_ev.description,
-            recommendation=vision_ev.recommendation or text_ev.recommendation,
-            applicability_trace=list(text_ev.applicability_trace),
-        )
-    else:
+    if vision_sev <= text_sev:
         # Text wins (including ties)
         return RuleEvaluation(
             rule_id=rule.id,
@@ -741,6 +730,19 @@ def _merge_text_primary(
             evidence=f"[Text] {text_ev.evidence} [Vision] {vision_ev.evidence}",
             description=text_ev.description or vision_ev.description,
             recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+    else:
+        # Vision escalates — vision is more severe, overrides lenient text verdict
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=vision_ev.status,
+            severity=vision_ev.severity or text_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
+            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
+            description=vision_ev.description or text_ev.description,
+            recommendation=vision_ev.recommendation or text_ev.recommendation,
             applicability_trace=list(text_ev.applicability_trace),
         )
 

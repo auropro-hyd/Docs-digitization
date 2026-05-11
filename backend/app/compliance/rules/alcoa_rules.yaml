@@ -65,7 +65,6 @@ categories:
 
           A row is non-compliant only when a Done by / Checked by / signature /
           date / time cell is completely blank or empty (no text at all).
-          Strikethroughs over previously written entries are also non-compliant.
 
           If a row at the bottom of the page appears visually cut off or
           truncated due to OCR extraction limits (i.e. the row is partially
@@ -87,12 +86,12 @@ categories:
           cells. One valid entry anywhere in the column = table is COMPLIANT.
         skip_conditions:
           - "page is a cover_page or revision_summary (no operator entries expected)"
-          - "a table on the page is diagonally struck through — evidenced by: (a) OCR text or a note describing a diagonal line across the table, or (b) the Done by/Checked by cells in the table contain only '^' symbols (the OCR artifact of a diagonal strike mark, even if other columns like Time/Temperature contain apostrophes or other artifacts) — then that entire table is not_applicable; do NOT flag any blank cells inside it; evaluate the rest of the page independently"
+          - "a table on the page is diagonally struck through — evidenced by: (a) OCR text, a note, or `<del>` markup describing a diagonal line across the table, or (b) the Done by/Checked by cells in the table contain only '^' symbols (the OCR artifact of a diagonal strike mark, even if other columns like Time/Temperature contain apostrophes or other artifacts) — then that entire table is not_applicable; do NOT flag any blank cells inside it; evaluate the rest of the page independently"
           - "an operation step row where ALL operational fields (time From, time To, duration, temperature, remarks, Done by, Checked by) are blank AND the step text contains a conditional instruction (e.g. 'If ... Otherwise proceed to Step N') — the step was not executed and is not_applicable; do not flag its blank operator fields"
           - "a table has a 'Weighed by' and 'Checked by' header (weighing record or container table, e.g. Table-VI, Table-VII, Table-VIII, or any table whose columns include Container No., Tare Weight, Gross Weight) — rows 2 through N of the Weighed by / Checked by columns are always intentionally blank because these are physically merged cells in the printed form; do NOT evaluate rows 2-N of these columns at all; the table passes if row 1 has a valid entry"
 
       2:
-        applicable_document_types: [batch_record, raw_material_request, scada_report, ipc_report, analysis_report, certificate, batch_closure, operation_checklist, qc_analytical_package]
+        applicable_document_types: [batch_record, raw_material_request, scada_report, ipc_report, analysis_report, certificate, batch_closure, qc_analytical_package]
         applicable_page_types: [form, content, printed]
         applicable_section_types: []
         pass_criteria: |
@@ -262,6 +261,7 @@ categories:
       8:
         applicable_section_types: [cleaning_log]
         applicable_document_types: [batch_record]
+        applicable_page_types: []
         pass_criteria: >
           Each cleaning or usage log entry must have operator identification
           (name, initials, or employee code) alongside the activity record.
@@ -281,6 +281,7 @@ categories:
 
       10:
         scope: document
+        evaluation_mode: cannot_evaluate
         cannot_evaluate_reason: "System access required to verify presence and integrity of electronic signatures and audit trails"
         applicable_page_types: []
         notes: >
@@ -288,6 +289,7 @@ categories:
           trails. Full verification requires system access.
 
       11:
+        evaluation_mode: cannot_evaluate
         applicable_document_types: [batch_record,analysis_report]
         pass_criteria: >
           If the page indicates it is system-generated, the footer/content
@@ -300,7 +302,8 @@ categories:
       12:
         evaluation_strategy: text_and_vision
         visual_checks: [VC-SIGNATURE]
-        applicable_section_types: [deviation, oos_investigation, oot_investigation]
+        applicable_section_types: [deviation]
+        applicable_page_types: []
         pass_criteria: >
           Deviation/OOS/OOT records should include completion evidence:
           completion date and required role sign-offs (manufacturing, QC, QA
@@ -367,13 +370,13 @@ categories:
         evaluation_strategy: vision
         visual_checks: [VC-ATTACHMENT]
         applicable_document_types: [batch_record]
-        applicable_section_types: [cover_page, revision_summary]
         skip_conditions:
           - "Page has no attachments, labels, or affixed items -> not_applicable"
         keywords: [attachment, label, sticker, affixed, pasted]
 
       19:
-        evaluation_strategy: tet
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-PAGINATION]
         applicable_document_types: [batch_record, analysis_report, certificate, batch_closure, operation_checklist]
         
         pass_criteria: >
@@ -436,9 +439,34 @@ categories:
         applicable_document_types: [batch_record]
         applicable_section_types: [manufacturing_operations]
         pass_criteria: >
-          Timestamps for each activity entry should be close to the expected
-          execution time. Entries recorded hours after the event or in bulk
-          at shift end are non-compliant.
+          Evaluate using the OCR-extracted From/To/Duration and Done By columns
+          in the operations table. Timestamps that progress across steps over
+          the course of a shift (e.g. 02-00 → 03-00 → 03-15 → 04-20) indicate
+          contemporaneous recording and are compliant.
+
+          Non-compliant patterns (bulk end-of-shift recording):
+          - ALL entries across many unrelated steps share an identical or
+            near-identical timestamp with no plausible explanation.
+          - A long unexplained gap (several hours) between consecutive steps
+            with no hold-time or wait note.
+
+          DO NOT flag as non-compliant:
+          - An isolated single-step where From > To or From/To appear
+            swapped — this is an OCR misread of handwritten digits (e.g.
+            "03-15" read as "03-45") or a minor operator transcription slip,
+            NOT evidence of bulk recording. Only a systemic pattern across
+            multiple steps justifies a non-compliant finding.
+          - OCR metadata lines such as "Signatures detected: 0" or
+            "Handwritten regions: 0" — these are unreliable Azure Document
+            Intelligence counters and must NOT be used to judge whether
+            timestamps are evaluable. Evaluate solely from the OCR text in
+            the From, To, and Duration columns.
+
+          If the overall timestamp pattern across steps spans the shift
+          with no sign of bulk recording, mark compliant even if one or
+          two individual steps have minor time anomalies.
+        skip_conditions:
+          - "Page has no From/To/Duration time columns in any operations table -> not_applicable"
         keywords: [time, date, performed, completed, hr, min]
 
       26:
@@ -456,13 +484,23 @@ categories:
         pass_criteria: >
           Timestamps must progress logically (later steps have later times).
           Duration values must be plausible for the described activity.
-          IMPORTANT: OCR frequently misreads handwritten dates — common
-          errors include wrong year digits (2015 instead of 2025, 205 or
-          20# instead of 2025), swapped day/month digits, and truncated
-          numbers. These are OCR artifacts, NOT evidence of unrealistic
-          timestamps. If a date looks implausible (e.g., year 2015 when
-          surrounding dates are 2025), assume it is an OCR misread and
-          treat the entry as compliant.
+          IMPORTANT: OCR frequently misreads handwritten dates AND times —
+          common errors include wrong year digits (2015 instead of 2025),
+          swapped day/month digits, and misread time digits (e.g. "03-15"
+          read as "03-45" because "1" and "4" look similar in handwriting).
+          These are OCR artifacts, NOT evidence of unrealistic timestamps.
+          If a date looks implausible (e.g., year 2015 when surrounding
+          dates are 2025), assume it is an OCR misread and treat as
+          compliant.
+          An isolated single step where From > To (reversed) or where the
+          duration doesn't match the From/To difference is also an OCR
+          misread or minor operator transcription slip — do NOT flag it as
+          non-compliant. To determine whether an anomaly is isolated,
+          check whether the NEXT step's From time equals the anomalous
+          step's To time: if yes, the chain is internally consistent and
+          only one value is wrong — treat it as a single OCR/transcription
+          error and mark compliant. Only flag non-compliant when illogical
+          timestamps appear across many steps with no coherent chain.
         keywords: [time, hr, min, duration, from, to]
 
       28:
@@ -483,6 +521,7 @@ categories:
         keywords: [time, timestamp, hr, min]
 
       30:
+        applicable_page_types: []
         cannot_evaluate_reason: "Alarm and alert log patterns require domain-specific training data for accurate evaluation"
         skip_conditions:
           - "Page contains no alarm or alert records -> not_applicable"
@@ -534,6 +573,8 @@ categories:
           Vision: detect presence of official stamps, seals, or watermarks.
 
       35:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Determining original vs copy status may require access to document control records or physical document examination"
         skip_conditions:
           - "If the page is clearly part of an official BMR (has BPCR number, batch number, controlled header) -> not_applicable"
         keywords: [draft, convenience copy, for information only, uncontrolled]
@@ -544,7 +585,9 @@ categories:
         keywords: [controlled copy, document control, revision, copy number]
 
       37:
-        applicable_section_types: [electronic_records, raw_data]
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Provenance verification for electronic data requires system access and metadata analysis beyond page content"
+        applicable_section_types: [raw_data]
         pass_criteria: >
           For pages referencing electronic/system-captured data, there should
           be metadata suggesting original system provenance (system name,
@@ -562,7 +605,9 @@ categories:
         keywords: [missing, reconstructed, re-created, deviation, data lost]
 
       39:
-        applicable_section_types: [electronic_records]
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Electronic signature and audit trail verification requires system access and cannot be reliably inferred from page content alone"
+        applicable_section_types: []
         skip_conditions:
           - "No electronic signature or audit trail references on page -> not_applicable"
 
@@ -594,9 +639,12 @@ categories:
           plausible given the input values shown.
           Vision: verify countersignature is a genuine handwritten mark.
         keywords: [calculation, yield, weight, total, result, formula]
-        applicable_section_types: [manufacturing_operations, qc_report, yield_calculation]
+        applicable_section_types: [yield_calculation]
+        applicable_document_types: [batch_record]
 
       43:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "This is performed as part of checklist verification"
         pass_criteria: >
           Recorded weights, parameters, and test results must fall within
           any stated acceptance ranges or specification limits shown on the
@@ -605,12 +653,16 @@ categories:
         applicable_section_types: [manufacturing_operations, qc_report, in_process_report]
 
       44:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Environmental condition verification requires access to original data sources and is best evaluated as cross-page"
         keywords: [temperature, humidity, pressure, environmental, sampling, monitor]
         applicable_section_types: [environmental_monitoring, sampling, manufacturing_operations]
         skip_conditions:
           - "Page has no environmental or sampling data -> not_applicable"
 
       45:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Equipment setting verification requires access to original data sources"
         keywords: [equipment, setting, parameter, RPM, temperature, pressure, speed]
         applicable_section_types: [manufacturing_operations]
         skip_conditions:
@@ -643,6 +695,18 @@ categories:
           - "Page has no potency or correction factor data -> not_applicable"
 
       49:
+        evaluation_stratey: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [manufacturing_operations]
+        pass_crtieria: >
+          Unit conversions must be accurate. Common conversions include:
+          - mg to kg (1,000,000 mg = 1 kg)
+          - mL to L (1,000 mL = 1 L)
+          - grams to kilograms (1,000 g = 1 kg)
+          - liters to milliliters (1 L = 1,000 mL)
+           Check that any unit conversions shown on the page are mathematically correct based on the values provided.
+           OCR errors in unit labels (e.g., "mg" read as "mg", "kg" read as "kg") should not be flagged as conversion errors 
+           if the intended units are clear from context. Only flag non-compliant if the conversion is clearly incorrect based on the values and intended units.
         keywords: [mg, kg, mL, L, unit, conversion, gram, liter]
         skip_conditions:
           - "Page has no unit-based calculations -> not_applicable"
@@ -668,6 +732,8 @@ categories:
       52:
         evaluation_strategy: text_and_vision
         visual_checks: [VC-BLANK-FIELD]
+        applicable_document_types: [batch_record]
+        applicable_section_types: [manufacturing_operations, sifting_record, pin_milling_mixing, micronization, co_mill_operation, metal_detection, material_dispensing, yield_calculation]
         applicable_page_types: [form]
         pass_criteria: >
           Every field on the form page must be filled in. The following
@@ -680,13 +746,23 @@ categories:
           no dash, no annotation whatsoever. Dashes in form fields mean
           "not applicable" or "step not performed" — they are legitimate
           GMP annotations and must NOT be treated as blank.
+
+          STRUCK-THROUGH TABLES — MANDATORY: If a table has a diagonal
+          strike-through line across it — evidenced by (a) an OCR note or
+          `<del>` markup describing a diagonal line, (b) any cell containing
+          only a "^" symbol (OCR artifact of the diagonal mark), or (c)
+          "NA", "N/A", or "N.A." annotations in cells alongside the
+          strikethrough — then ALL blank cells inside that table are
+          considered not_applicable and must NOT be flagged as missing.
+          Evaluate all other tables and steps on the page independently.
           Vision: visually confirm blank vs filled fields that OCR may miss.
+          Do NOT flag blank cells in a table that visually shows a diagonal
+          strike-through line.
         skip_conditions:
           - "Page has no form fields or tabular data -> not_applicable"
 
       53:
-        evaluation_strategy: text_and_vision
-        visual_checks: [VC-SIGNATURE]
+        evaluation_strategy: text
         applicable_page_types: [form]
         pass_criteria: >
           All signature lines (Done by, Checked by, Approved by, Verified by)
@@ -703,10 +779,20 @@ categories:
         keywords: [signature, date, equipment, done by, checked by, approved by]
 
       54:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "covered as part of checklist validation"
         scope: document
         keywords: [attachment, annexure, appendix, refer, enclosed]
 
       55:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Linkage between deviations and root cause analyses requires access to document control systems and cross-referencing capabilities"
+        pass_criteria: >
+          Deviation/OOS/OOT records must reference a root cause analysis and
+          corrective action. Look for text like "Refer to deviation #1234" or
+          "Root cause analysis in attached deviation report". If the section
+          exists but contains no reference to an investigation or root cause,
+          mark non-compliant.
         scope: document
         keywords: [deviation, OOS, OOT, reference, linked]
 
@@ -718,25 +804,51 @@ categories:
       57:
         evaluation_strategy: text_and_vision
         visual_checks: [VC-PAGINATION]
-        scope: document
+        scope: page
         pass_criteria: >
-          Page numbering should be sequential with no gaps. "Page X of Y"
-          format should have Y matching the total page count.
-          Vision: verify page number layout in header/footer area.
+          Check whether this page contains a reference indicating its position
+          within its individual document (e.g. "Page 3 of 7", "3/7",
+          "Page: 3 of 7"). The total (Y) refers to the page count of this
+          specific document only — NOT the size of the entire document packet,
+          which may contain multiple documents bundled together.
+          Do NOT use any summary-level or packet-level page count to validate Y.
+          Evaluate only what is printed on this page: if a "page X of Y"-style
+          reference is present, the page is compliant. If no such reference
+          exists anywhere on the page, mark non-compliant.
+
+          OCR TOLERANCE — MANDATORY: OCR frequently garbles "Page X of Y" in
+          table headers. Accept ALL of the following as valid page references:
+          - `Page\nXY` where X is a recognisable page number and Y is a stray
+            digit or letter from "of" (e.g. "Page\n160" = "Page 16 of [N]").
+          - "Pag X o", "Page X o", or any partial read that includes a digit
+            sequence followed by "o" or "of" — the word "of" confirms the X-of-Y
+            structure is present even when Y is cut off.
+          - Any OCR result where a number immediately follows "Page" or "Pg"
+            in a header/footer cell, even without the total page count visible.
+          Do NOT require Y to be legible. The presence of a page number
+          adjacent to the word "Page" is sufficient evidence of compliance.
+          Vision: verify a page number reference is visible in the header or
+          footer — a partial "Page X of" where Y is cut off still counts.
+          Do NOT fail solely because the total page count is not visible in
+          the image.
         keywords: [page, of]
 
       58:
-        applicable_page_types: [form]
+        applicable_page_types: []
         keywords: [hold time, hold-time, intermediate, storage, stability]
         applicable_section_types: [manufacturing_operations]
         skip_conditions:
           - "Page has no hold-time or intermediate storage references -> not_applicable"
 
       59:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Change control and CAPA linkages require access to document control systems"
         scope: document
         keywords: [change control, CAPA, change request]
 
       60:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "This is covered as part of checklist verification"
         scope: document
         keywords: [analytical report, IPC, finished product, certificate]
 
@@ -750,7 +862,7 @@ categories:
       62:
         applicable_page_types: [form]
         keywords: [retention, sample, withdrawal, reserve]
-        applicable_section_types: [qc_report, retention_sample]
+        applicable_section_types: [qc_report, sampling]
         skip_conditions:
           - "Page has no retention sample references -> not_applicable"
 
@@ -793,6 +905,8 @@ categories:
     applicable_page_types: []
     rules:
       69:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Proper storage conditions and physical document integrity require on-site inspection"
         evaluation_strategy: text_and_vision
         visual_checks: [VC-DOC-QUALITY]
         pass_criteria: >
@@ -807,11 +921,15 @@ categories:
         notes: "Ink permanence assessment requires visual inspection."
 
       71:
-        applicable_section_types: [electronic_records]
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Physical document condition and storage environment require on-site inspection"
+        applicable_section_types: []
         skip_conditions:
           - "Document is purely paper-based with no electronic components -> not_applicable"
 
       72:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Binding integrity assessment requires physical inspection of the document"
         evaluation_strategy: text_and_vision
         visual_checks: [VC-PAGINATION]
         pass_criteria: >
@@ -825,7 +943,7 @@ categories:
         requires_external_data: [archive_monitoring_records]
 
       74:
-        applicable_section_types: [electronic_records]
+        applicable_section_types: []
         evaluation_mode: cannot_evaluate
         cannot_evaluate_reason: "Electronic backup validation requires IT system access"
         requires_external_data: [backup_validation_records]
@@ -857,6 +975,8 @@ categories:
         requires_external_data: [backup_system]
 
       79:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "Cross-referenced document retrieval requires access to document control systems"
         keywords: [cross-reference, refer, see also, attachment]
         pass_criteria: >
           Cross-referenced documents mentioned in the record should have
@@ -869,6 +989,8 @@ categories:
         requires_external_data: [audit_trail_system]
 
       81:
+        evaluation_mode: cannot_evaluate
+        cannot_evaluate_reason: "SOP and specification retrieval testing requires access to document control systems"
         keywords: [SOP, specification, reference, procedure]
         pass_criteria: >
           Referenced SOPs and specifications should include document numbers
