@@ -41,6 +41,34 @@ async def lifespan(app: FastAPI):
     data_dir = Path(settings.storage.base_path)
     data_dir.mkdir(parents=True, exist_ok=True)
     validate_compliance_configs(get_registry())
+
+    # Surface obvious config conflicts the signature-crop pipeline
+    # needs at startup, where the operator will actually see them.
+    # Akhilesh's runs were producing zero signature crops because
+    # ``AT_DATALAB__FETCH_BLOCK_BBOXES=false`` and
+    # ``AT_DATALAB__DISABLE_IMAGE_EXTRACTION=true`` were set in
+    # ``.env`` from a prior speed-tuning phase, and the new
+    # signature-crop code can't function with those off. We log
+    # WARNINGs (not raise) so the app stays bootable; operator
+    # decides whether to flip the env vars.
+    dl = settings.datalab
+    if getattr(dl, "signature_enrichment", True) and not dl.fetch_block_bboxes:
+        logger.warning(
+            "datalab.config.signature_pipeline_disabled — "
+            "signature_enrichment=on but fetch_block_bboxes=off → "
+            "no JSON-tree bboxes will be fetched, signature image "
+            "crops won't be generated. Set "
+            "AT_DATALAB__FETCH_BLOCK_BBOXES=true to enable crops."
+        )
+    if getattr(dl, "signature_enrichment", True) and dl.disable_image_extraction:
+        logger.warning(
+            "datalab.config.image_extraction_disabled — "
+            "signature_enrichment=on but disable_image_extraction=on → "
+            "Datalab won't return binary images, markdown <img> tags "
+            "will be broken on signature cells it does classify. "
+            "Set AT_DATALAB__DISABLE_IMAGE_EXTRACTION=false to fix."
+        )
+
     logger.info("app.lifespan.ready")
     yield
     from app.core.task_manager import task_manager
