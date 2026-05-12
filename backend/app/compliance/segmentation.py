@@ -352,7 +352,7 @@ def enrich_with_bpcr_sub_sections(
             enriched_sections.append(section)
             continue
 
-        # FLATTEN: each BPCR detector span becomes a top-level
+        # FLATTEN: each BPCR sub-section becomes a top-level
         # ``DocumentSection`` entry — not a nested ``BpcrSubSection``
         # row. This matches the gold-standard segmentation shape
         # Akhilesh shared on 2026-05-12: rather than one parent BPCR
@@ -368,30 +368,73 @@ def enrich_with_bpcr_sub_sections(
         # The shared ``section_id`` is preserved across all spans
         # of the same BPCR so the frontend can still group them
         # visually if it wants.
-        if not section_map.spans:
-            # Detector returned nothing useful — keep the parent
+        #
+        # Flatten input is the UNION of two sources:
+        #   * heuristic detector spans (preferred — proper start/end
+        #     ranges derived from text matching across the markdown);
+        #   * LLM-populated ``parent.sub_sections`` — since the 2026-
+        #     05-12 prompt cues, the segmentation LLM frequently
+        #     emits ``BpcrSubSection`` entries (often with
+        #     ``detection_method='column_names'``) for cover_page /
+        #     revision_summary, which the detector cannot match by
+        #     heading text. Before this merge those entries were
+        #     dropped on the floor: the detector either returned 0
+        #     spans (parent kept whole, LLM sub_sections nested-only)
+        #     or returned its own spans (parent replaced, LLM
+        #     sub_sections discarded entirely).
+        # Detector wins on section_type collisions because its spans
+        # carry real page ranges; LLM ``page_index`` is a single int
+        # so we collapse it to a 1-page span.
+        flatten_plan: list[tuple[str, str, int, int]] = []
+        seen_types: set[str] = set()
+        for span in section_map.spans:
+            normalized_section_type = (
+                normalize_section_type(span.section_id) or span.section_id
+            )
+            if normalized_section_type in seen_types:
+                continue
+            seen_types.add(normalized_section_type)
+            flatten_plan.append((
+                normalized_section_type,
+                span.display_name or section.name,
+                span.start_page,
+                span.end_page,
+            ))
+        for ss in section.sub_sections:
+            normalized_section_type = (
+                normalize_section_type(ss.section_id) or ss.section_id
+            )
+            if not normalized_section_type or normalized_section_type in seen_types:
+                continue
+            seen_types.add(normalized_section_type)
+            page = ss.page_index or section.start_page
+            # Clamp to the parent's page range so a stray LLM
+            # ``page_index`` doesn't escape the BPCR's span.
+            if page < section.start_page:
+                page = section.start_page
+            elif page > section.end_page:
+                page = section.end_page
+            flatten_plan.append((
+                normalized_section_type,
+                ss.display_name or section.name,
+                page,
+                page,
+            ))
+
+        if not flatten_plan:
+            # Neither source produced anything — keep the parent
             # section unchanged so the page coverage isn't lost.
             enriched_sections.append(section)
             continue
 
-        for span in section_map.spans:
-            # Map the heuristic detector's section_id (e.g.
-            # ``cover_page``, ``manufacturing_operations``) into
-            # a normalized section_type for the cross-document
-            # resolver. ``span.section_id`` is already in the
-            # canonical snake_case form from the BPCR spec, so
-            # this is a no-op in the common case — the
-            # normalization just covers operator-edited specs.
-            normalized_section_type = normalize_section_type(
-                span.section_id
-            )
+        for stype, dname, sp, ep in flatten_plan:
             enriched_sections.append(DocumentSection(
                 section_id=section.section_id,
-                name=span.display_name or section.name,
-                section_type=normalized_section_type or span.section_id,
+                name=dname,
+                section_type=stype,
                 document_type="batch_record",
-                start_page=span.start_page,
-                end_page=span.end_page,
+                start_page=sp,
+                end_page=ep,
                 description=section.description,
             ))
 

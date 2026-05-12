@@ -1214,6 +1214,23 @@ class DatalabOCRAdapter:
             all_kv_pairs = _enrich_attestations(all_kv_pairs)
             all_kv_pairs = _enrich_critical_steps(all_kv_pairs)
 
+        # Strip the chunk-level ``<p>Image: signature</p>`` placeholder
+        # after the per-page enricher loop has had its chance to consume
+        # it as the L_IMG_PLACEHOLDER signal. Without this strip the
+        # placeholder survives in ``chunk_md`` → ``full_markdown`` →
+        # ``raw_markdown['full']`` and shows up as 38+ "Image: signature"
+        # noise lines in the HITL review pane even though the per-page
+        # markdown shows a clean ``[Signature]`` marker. Run e5e35ffc-…
+        # had 38 occurrences in raw_markdown after PR #41 cleaned the
+        # per-page paths.
+        try:
+            from app.adapters.ocr.signature_enricher import (
+                IMAGE_SIG_PLACEHOLDER_RE,
+            )
+            sanitized_md = IMAGE_SIG_PLACEHOLDER_RE.sub("", sanitized_md)
+        except Exception:  # pragma: no cover — defensive
+            pass
+
         return pages, sanitized_md, all_table_meta, all_signatures, all_kv_pairs
 
     def _inject_signature_crops(

@@ -308,6 +308,24 @@ async def run_agent_evaluation(
     total_tasks = len(batches) * len(extractions)
     completed = 0
 
+    # Diagnostic: VC-* prompts defined in vision_evaluator with NO
+    # rule reference will never fire. Surface this once per agent so
+    # an extended prompt (like VC-DOC-QUALITY's scan-defect coverage
+    # in PR #43) doesn't sit unused because no rule was updated to
+    # tag it. Auto-no-op when no telemetry sink is bound.
+    try:
+        from app.compliance.vision_evaluator import audit_unused_vc_prompts
+        unique_rules: list[AuditRule] = []
+        seen: set[str] = set()
+        for batch in batches:
+            for rule in batch.rules:
+                if rule.id not in seen:
+                    seen.add(rule.id)
+                    unique_rules.append(rule)
+        audit_unused_vc_prompts(unique_rules, agent=agent)
+    except Exception:  # pragma: no cover — defensive
+        logger.debug("VC prompt coverage audit failed", exc_info=True)
+
     page_type_cache: dict[int, str] = {}
 
     # ── LLM mode: pre-screen all rules per page before batch evaluation ──
