@@ -161,6 +161,45 @@ async def get_document_pdf(doc_id: str):
     )
 
 
+@router.get("/{doc_id}/images/{filename}")
+async def get_extracted_image(doc_id: str, filename: str):
+    """Serve a Datalab-extracted image crop (signature region,
+    figure, diagram).
+
+    Datalab embeds cropped regions as
+    ``<img data-bbox=... src="HASH_img.jpg"/>`` tags in the
+    OCR markdown. The intake pipeline (``app.workflow.nodes``)
+    persists the binaries to ``<doc_dir>/images/<filename>``
+    after extraction. This route serves them so the frontend's
+    image references resolve.
+
+    Path traversal is rejected via ``filename`` strict validation
+    — only basename components are accepted (no ``/`` or ``..``).
+    """
+    settings = get_settings()
+    if "/" in filename or ".." in filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="invalid filename")
+
+    images_dir = Path(settings.storage.base_path) / doc_id / "images"
+    target = images_dir / filename
+    if not target.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"image {filename} not found for doc_id={doc_id}",
+        )
+
+    ext = target.suffix.lower()
+    media_type = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+    }.get(ext, "application/octet-stream")
+
+    return FileResponse(target, media_type=media_type, filename=filename)
+
+
 @router.get("/{doc_id}/pages/{page_num}/image")
 async def get_page_image(doc_id: str, page_num: int):
     """Serve a rendered page image (PNG).
@@ -381,73 +420,86 @@ async def _run_pipeline(doc_id: str, pdf_path: str):
     logger.info(f"Starting pipeline for doc_id={doc_id}, pdf={pdf_path}")
     started = perf_counter()
 
-    try:
-        from app.workflow.document_graph import build_document_graph
+    # Bind a run-telemetry sink for the OCR/intake pipeline so every
+    # ``logger.*()`` call across the LangGraph nodes (OCR adapter,
+    # Azure DI merge, parser repairs, quality gate, image
+    # persistence, signature enrichment) is captured into
+    # ``<doc_dir>/telemetry-intake.json`` for post-run validation.
+    # Uses the ``"intake"`` filename namespace so the later
+    # compliance run (which writes ``telemetry.json``) doesn't
+    # overwrite the intake record — both stages are inspectable
+    # side-by-side. Failure events are persisted too (the context
+    # manager flushes in its ``finally`` block, even on raise).
+    from app.observability.run_telemetry import telemetry_run
 
-        graph = build_document_graph()
+    with telemetry_run(doc_id=doc_id, doc_dir=doc_dir, name="intake"):
+        try:
+            from app.workflow.document_graph import build_document_graph
 
-        initial_state = {
-            "doc_id": doc_id,
-            "pdf_path": pdf_path,
-            "status": "uploaded",
-        }
+            graph = build_document_graph()
 
-        config = {"configurable": {"thread_id": doc_id}}
+            initial_state = {
+                "doc_id": doc_id,
+                "pdf_path": pdf_path,
+                "status": "uploaded",
+            }
 
-        from app.api.websocket import manager
+            config = {"configurable": {"thread_id": doc_id}}
 
-        accumulated: dict = {}
-        async for event in graph.astream(initial_state, config=config):
-            node_names = list(event.keys())
-            logger.info(f"[{doc_id}] Graph event: {node_names}")
-            for _node_name, value in event.items():
-                if isinstance(value, dict):
-                    for k, v in value.items():
-                        if k in accumulated and isinstance(accumulated[k], dict) and isinstance(v, dict):
-                            accumulated[k].update(v)
-                        elif k in accumulated and isinstance(accumulated[k], list) and isinstance(v, list):
-                            accumulated[k].extend(v)
-                        else:
-                            accumulated[k] = v
+            from app.api.websocket import manager
+
+            accumulated: dict = {}
+            async for event in graph.astream(initial_state, config=config):
+                node_names = list(event.keys())
+                logger.info(f"[{doc_id}] Graph event: {node_names}")
+                for _node_name, value in event.items():
+                    if isinstance(value, dict):
+                        for k, v in value.items():
+                            if k in accumulated and isinstance(accumulated[k], dict) and isinstance(v, dict):
+                                accumulated[k].update(v)
+                            elif k in accumulated and isinstance(accumulated[k], list) and isinstance(v, list):
+                                accumulated[k].extend(v)
+                            else:
+                                accumulated[k] = v
+                try:
+                    await manager.broadcast(doc_id, {
+                        "type": "status",
+                        "status": node_names[0] if node_names else "processing",
+                    })
+                except Exception:
+                    pass
+
+            result_path = doc_dir / "result.json"
+            result_data = accumulated
+            elapsed_ms = int((perf_counter() - started) * 1000)
+            result_data["extraction_telemetry"] = _build_extraction_telemetry(result_data, elapsed_ms)
+
+            def _serialize_and_write():
+                result_path.write_text(json.dumps(result_data, indent=2, default=str))
+
+            await asyncio.to_thread(_serialize_and_write)
+            logger.info(f"[{doc_id}] Pipeline complete. Results saved to {result_path}")
+
+            total_pages = len(result_data.get("extractions", []))
             try:
                 await manager.broadcast(doc_id, {
                     "type": "status",
-                    "status": node_names[0] if node_names else "processing",
+                    "status": "completed",
+                    "total_pages": total_pages,
                 })
             except Exception:
                 pass
 
-        result_path = doc_dir / "result.json"
-        result_data = accumulated
-        elapsed_ms = int((perf_counter() - started) * 1000)
-        result_data["extraction_telemetry"] = _build_extraction_telemetry(result_data, elapsed_ms)
+        except Exception as e:
+            logger.exception(f"[{doc_id}] Pipeline failed: {e}")
+            try:
+                from app.api.websocket import manager
 
-        def _serialize_and_write():
-            result_path.write_text(json.dumps(result_data, indent=2, default=str))
-
-        await asyncio.to_thread(_serialize_and_write)
-        logger.info(f"[{doc_id}] Pipeline complete. Results saved to {result_path}")
-
-        total_pages = len(result_data.get("extractions", []))
-        try:
-            await manager.broadcast(doc_id, {
-                "type": "status",
-                "status": "completed",
-                "total_pages": total_pages,
-            })
-        except Exception:
-            pass
-
-    except Exception as e:
-        logger.exception(f"[{doc_id}] Pipeline failed: {e}")
-        try:
-            from app.api.websocket import manager
-
-            await manager.broadcast(doc_id, {"type": "error", "error": str(e)})
-        except Exception:
-            pass
-        error_path = doc_dir / "result.json"
-        error_path.write_text(json.dumps({"status": "error", "error": str(e)}, indent=2))
-    finally:
-        if lock_file.exists():
-            lock_file.unlink()
+                await manager.broadcast(doc_id, {"type": "error", "error": str(e)})
+            except Exception:
+                pass
+            error_path = doc_dir / "result.json"
+            error_path.write_text(json.dumps({"status": "error", "error": str(e)}, indent=2))
+        finally:
+            if lock_file.exists():
+                lock_file.unlink()

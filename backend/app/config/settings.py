@@ -120,7 +120,17 @@ class DatalabConfig(BaseModel):
     max_pages: int | None = None
     extras: str = "new_block_types,table_row_bboxes,chart_understanding"
     output_format: str = "markdown"
-    disable_image_extraction: bool = True
+    # Datalab emits cropped signature / handwriting / figure
+    # regions as ``<img data-bbox=... src="HASH_img.jpg"/>`` tags
+    # in the markdown when image extraction is enabled. We want
+    # these binaries so the frontend can render signature
+    # crops alongside the ``[Signature]`` text marker
+    # (PR #35 — Akhilesh reported "image is broken" on
+    # 2538105061.pdf because the markdown referenced hashes
+    # that were never written to disk). The pipeline persists
+    # them to ``<doc_dir>/images/<hash>_img.jpg`` and serves
+    # them via ``/api/documents/{doc_id}/images/{filename}``.
+    disable_image_extraction: bool = False
     disable_image_captions: bool = True
     token_efficient_markdown: bool = False
     page_range: str | None = None

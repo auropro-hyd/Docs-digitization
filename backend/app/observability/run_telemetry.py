@@ -126,11 +126,15 @@ class RunTelemetrySink:
     """Captures structured events for the duration of a single run.
 
     Pass ``doc_dir=None`` to use the sink in tests without touching
-    the filesystem.
+    the filesystem. ``name`` lets multiple sinks coexist in the same
+    doc_dir without overwriting — the flushed file is
+    ``telemetry-<name>.json`` (or ``telemetry.json`` when name is
+    empty or the legacy default ``"run"``).
     """
 
     doc_id: str
     doc_dir: Path | None
+    name: str = "run"
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     events: list[TelemetryEvent] = field(default_factory=list)
@@ -235,8 +239,11 @@ class RunTelemetrySink:
         }
 
     def flush(self) -> Path | None:
-        """Write the sink to ``<doc_dir>/telemetry.json`` and return
-        the path. Returns None when no ``doc_dir`` is bound (test mode).
+        """Write the sink to ``<doc_dir>/telemetry-<name>.json`` and
+        return the path. The legacy default name ``"run"`` produces
+        the unnamed ``telemetry.json`` filename to preserve back-compat
+        with PR #34's existing on-disk shape. Returns None when no
+        ``doc_dir`` is bound (test mode).
 
         Fail-open: serialization errors are logged but do not raise.
         """
@@ -245,7 +252,12 @@ class RunTelemetrySink:
             return None
         try:
             self.doc_dir.mkdir(parents=True, exist_ok=True)
-            out = self.doc_dir / "telemetry.json"
+            filename = (
+                "telemetry.json"
+                if self.name in ("", "run")
+                else f"telemetry-{self.name}.json"
+            )
+            out = self.doc_dir / filename
             out.write_text(
                 json.dumps(self.to_dict(), indent=2, default=str),
                 encoding="utf-8",
@@ -273,6 +285,8 @@ def current_sink() -> RunTelemetrySink | None:
 def telemetry_run(
     doc_id: str,
     doc_dir: Path | None,
+    *,
+    name: str = "run",
 ) -> Iterator[RunTelemetrySink]:
     """Bind a fresh sink for the duration of the ``with`` block.
 
@@ -280,12 +294,16 @@ def telemetry_run(
     * All ``logger.*()`` calls (via the structlog capture processor
       in ``logging.py``) are mirrored into the sink.
     * Explicit :func:`record_event` calls land in the sink.
-    * The sink is flushed to ``<doc_dir>/telemetry.json`` on exit.
+    * The sink is flushed to ``<doc_dir>/telemetry-<name>.json`` on
+      exit. ``name="run"`` (the default) flushes the unnamed
+      ``telemetry.json`` for back-compat. Use distinct names like
+      ``"intake"`` and ``"compliance"`` for separate pipeline
+      stages so they don't overwrite each other in the same doc_dir.
 
     Concurrent ``telemetry_run`` blocks each carry their own sink —
     ``current_sink()`` returns the innermost active one.
     """
-    sink = RunTelemetrySink(doc_id=doc_id, doc_dir=doc_dir)
+    sink = RunTelemetrySink(doc_id=doc_id, doc_dir=doc_dir, name=name)
     token = _RUN_TELEMETRY.set(sink)
     try:
         yield sink
