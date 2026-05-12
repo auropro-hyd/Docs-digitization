@@ -352,23 +352,48 @@ def enrich_with_bpcr_sub_sections(
             enriched_sections.append(section)
             continue
 
-        # Walk the section_map's spans and emit one BpcrSubSection per
-        # page. The wire shape mirrors the BMR pipeline's row format
-        # so a future shared frontend component can render either.
-        sub_sections: list[BpcrSubSection] = []
-        for span in section_map.spans:
-            for page_index in range(span.start_page, span.end_page + 1):
-                sub_sections.append(BpcrSubSection(
-                    section_id=span.section_id,
-                    display_name=span.display_name,
-                    page_index=page_index,
-                    confidence=span.confidence,
-                    detection_method=span.detection_method,
-                ))
+        # FLATTEN: each BPCR detector span becomes a top-level
+        # ``DocumentSection`` entry — not a nested ``BpcrSubSection``
+        # row. This matches the gold-standard segmentation shape
+        # Akhilesh shared on 2026-05-12: rather than one parent BPCR
+        # row carrying 35 per-page sub-rows, the output has one
+        # row per detected canonical sub-section, each with proper
+        # ``section_type`` + ``start_page`` / ``end_page`` covering
+        # the span. Downstream compliance rules already address
+        # individual section_types (manufacturing_operations,
+        # material_dispensing, …) so this is the natural shape;
+        # the previous nested-per-page form was an artifact of
+        # mirroring the BMR pipeline's display rows.
+        #
+        # The shared ``section_id`` is preserved across all spans
+        # of the same BPCR so the frontend can still group them
+        # visually if it wants.
+        if not section_map.spans:
+            # Detector returned nothing useful — keep the parent
+            # section unchanged so the page coverage isn't lost.
+            enriched_sections.append(section)
+            continue
 
-        enriched_sections.append(
-            section.model_copy(update={"sub_sections": sub_sections})
-        )
+        for span in section_map.spans:
+            # Map the heuristic detector's section_id (e.g.
+            # ``cover_page``, ``manufacturing_operations``) into
+            # a normalized section_type for the cross-document
+            # resolver. ``span.section_id`` is already in the
+            # canonical snake_case form from the BPCR spec, so
+            # this is a no-op in the common case — the
+            # normalization just covers operator-edited specs.
+            normalized_section_type = normalize_section_type(
+                span.section_id
+            )
+            enriched_sections.append(DocumentSection(
+                section_id=section.section_id,
+                name=span.display_name or section.name,
+                section_type=normalized_section_type or span.section_id,
+                document_type="batch_record",
+                start_page=span.start_page,
+                end_page=span.end_page,
+                description=section.description,
+            ))
 
     return stamp_document_types(
         seg.model_copy(update={"sections": enriched_sections})

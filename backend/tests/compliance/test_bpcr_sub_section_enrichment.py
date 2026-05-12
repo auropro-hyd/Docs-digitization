@@ -76,10 +76,16 @@ def test_enrichment_passes_non_bpcr_sections_through_unchanged() -> None:
     assert seg.sections[0].sub_sections == []
 
 
-def test_enrichment_drills_bpcr_section_into_sub_sections() -> None:
+def test_enrichment_flattens_bpcr_into_top_level_section_per_span() -> None:
     """End-to-end: a segmentation with a BPCR section + per-page
-    markdown produces ``sub_sections`` for that BPCR. Pages outside
-    the BPCR's page range are not touched.
+    markdown produces N top-level ``DocumentSection`` entries —
+    one per canonical BPCR sub-section the detector recognized.
+
+    This matches the gold-standard shape Akhilesh shared on
+    2026-05-12: rather than ONE parent BPCR row with nested
+    per-page rows, each sub-section gets its own top-level
+    entry with a proper ``section_type`` + ``start_page`` /
+    ``end_page``. Non-BPCR sections pass through unchanged.
     """
 
     seg = DocumentSegmentation(
@@ -118,26 +124,39 @@ def test_enrichment_drills_bpcr_section_into_sub_sections() -> None:
 
     enriched = enrich_with_bpcr_sub_sections(seg, extractions)
 
-    bpcr = next(s for s in enriched.sections if "batch_production" in s.section_type)
-    rm = next(s for s in enriched.sections if s.section_type == "raw_material_request_and_issue")
+    # The BPCR's one parent section is replaced by N top-level
+    # entries — one per detected span. The non-BPCR section
+    # passes through unchanged.
+    bpcr_entries = [
+        s for s in enriched.sections if s.document_type == "batch_record"
+    ]
+    rm_entries = [
+        s for s in enriched.sections
+        if s.section_type == "raw_material_request_and_issue"
+    ]
 
-    # Non-BPCR section is unchanged.
-    assert rm.sub_sections == []
+    assert len(rm_entries) == 1, "non-BPCR section must pass through unchanged"
+    assert rm_entries[0].sub_sections == []
 
-    # BPCR section has at least one entry per page in its range,
-    # mapping back to a known section_id from the spec.
-    assert bpcr.sub_sections, "BPCR enrichment produced no sub_sections"
-    by_page = {ss.page_index: ss.section_id for ss in bpcr.sub_sections}
+    assert bpcr_entries, "BPCR enrichment produced no top-level entries"
+    # All BPCR sub-section entries share the parent section_id.
+    assert all(s.section_id == "bpcr_unit_ii" for s in bpcr_entries)
+    # Each carries the right document_type for cross-doc filters.
+    assert all(s.document_type == "batch_record" for s in bpcr_entries)
 
     # Pin the four mid-page markers and the cover page — these are
     # the headers the user's real BPCR carried. If these regress
     # the legacy compliance pipeline goes back to one opaque BPCR
     # block (Akhilesh's original symptom).
-    assert by_page.get(1) == "cover_page"
-    assert by_page.get(2) == "revision_summary"
-    assert by_page.get(3) == "material_dispensing"
-    assert by_page.get(4) == "manufacturing_operations"
-    assert by_page.get(5) == "micronization"
+    by_type = {s.section_type: (s.start_page, s.end_page) for s in bpcr_entries}
+    assert "cover_page" in by_type
+    assert "revision_summary" in by_type
+    assert "material_dispensing" in by_type
+    assert "manufacturing_operations" in by_type
+    assert "micronization" in by_type
+    # Cover page is page 1; revision page 2; etc.
+    assert by_type["cover_page"] == (1, 1)
+    assert by_type["revision_summary"] == (2, 2)
 
 
 def test_enrichment_is_idempotent_so_cache_upgrade_is_safe() -> None:
@@ -172,12 +191,27 @@ def test_enrichment_is_idempotent_so_cache_upgrade_is_safe() -> None:
     once = enrich_with_bpcr_sub_sections(seg, extractions)
     twice = enrich_with_bpcr_sub_sections(once, extractions)
 
-    # Same row count, same shape — second pass doesn't compound.
-    assert len(twice.sections[0].sub_sections) == len(once.sections[0].sub_sections)
-    assert (
-        [(ss.section_id, ss.page_index) for ss in twice.sections[0].sub_sections]
-        == [(ss.section_id, ss.page_index) for ss in once.sections[0].sub_sections]
+    # Second pass produces the same section list — no re-flattening,
+    # no duplicate entries. The first pass turned the parent BPCR
+    # into N sub-section entries (each with section_type like
+    # ``cover_page``, ``revision_summary``); the second pass sees
+    # those entries as already-flattened (none of their
+    # section_types match the BPCR hints) and passes them through
+    # unchanged.
+    once_shape = [
+        (s.section_type, s.document_type, s.start_page, s.end_page)
+        for s in once.sections
+    ]
+    twice_shape = [
+        (s.section_type, s.document_type, s.start_page, s.end_page)
+        for s in twice.sections
+    ]
+    assert once_shape == twice_shape, (
+        "second pass changed the section list — enrichment is not idempotent"
     )
+    # Sanity: the flattening actually happened on the first pass.
+    assert len(once.sections) >= 1
+    assert any(s.section_type == "cover_page" for s in once.sections)
 
 
 def test_enrichment_fails_open_when_no_markdown_for_bpcr_pages() -> None:
