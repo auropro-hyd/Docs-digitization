@@ -534,6 +534,113 @@ def test_l_img_does_not_fire_on_img_outside_signature_column() -> None:
     assert result.telemetry.layer_counts["L4"] == 1
 
 
+def test_l_hwtext_italic_handwriting_in_signature_column_injects() -> None:
+    """L_HWTEXT path: Datalab transcribed handwritten initials as
+    italic-wrapped text (``<i>FE</i>``). Inject ``[Signature]``
+    alongside so frontends still mark the cell as signed.
+
+    This is the gap on 2538105061.pdf pages 6/18 where Datalab
+    chose to OCR the initials instead of cropping them — 44
+    cells across the doc had this shape pre-fix."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 | <i>N089</i><br>22/11/2025 | <i>FE</i><br>22/11/2025 |
+"""
+    result = enrich_page(md, [], page_num=6, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" in result.markdown
+    assert result.markdown.count("[Signature]") == 2
+    assert result.telemetry.layer_counts["L_HWTEXT"] == 2
+    # Original italic content preserved — operator can still read
+    # what Datalab transcribed.
+    assert "<i>N089</i>" in result.markdown
+    assert "<i>FE</i>" in result.markdown
+
+
+def test_l_text_short_non_date_text_in_signature_column_injects() -> None:
+    """L_TEXT path: short text content (initials Datalab OCR'd
+    without italic markup) in a signature column → inject.
+    The user's stated rule: 'anything except date comes in
+    they should be identified as signature'."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 | N089<br>25/11/2025 | ALE<br>25/11/2025 |
+"""
+    result = enrich_page(md, [], page_num=12, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert result.markdown.count("[Signature]") == 2
+    assert result.telemetry.layer_counts["L_TEXT"] == 2
+
+
+def test_l_text_skips_verdict_words_no_false_positives() -> None:
+    """A Done-by cell with 'OK' / 'PASS' / 'NA' is an operator
+    verdict, not a signature. The verdict-skip list must
+    prevent these from being stamped as signed."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 | OK | PASS |
+| 2 | N/A | approved |
+"""
+    result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" not in result.markdown, (
+        "verdict words like OK/PASS/NA must NEVER be stamped as signatures"
+    )
+    assert result.telemetry.layer_counts["L_HWTEXT"] == 0
+    assert result.telemetry.layer_counts["L_TEXT"] == 0
+    assert result.telemetry.skipped_verdict == 4
+
+
+def test_l_text_skips_long_prose_no_false_positives() -> None:
+    """A Done-by cell containing a long descriptive note is
+    legitimate documentation, not a signature. The
+    MAX_SIG_TEXT_CHARS=40 cap must prevent injection.
+
+    If real BPCRs surface legitimate initials beyond 40 chars
+    we'll see ``skipped_long_text`` in telemetry and can revisit
+    the threshold."""
+    md = """\
+| Step | Done By |
+|------|---------|
+| 1 | Initial sampling completed by quality team on time as scheduled |
+"""
+    result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" not in result.markdown
+    assert result.telemetry.skipped_long_text == 1
+
+
+def test_l_hwtext_outranks_l_text_when_italic_present() -> None:
+    """When a cell has italic markup, L_HWTEXT must win even
+    if L_TEXT could also fire. Italic is a stronger signal
+    (Datalab actively marked it as handwriting) — confidence
+    0.55 vs 0.40."""
+    md = """\
+| Step | Done By |
+|------|---------|
+| 1 | <i>AK</i> |
+"""
+    result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert result.telemetry.layer_counts["L_HWTEXT"] == 1
+    assert result.telemetry.layer_counts["L_TEXT"] == 0
+
+
+def test_empty_cell_still_never_stamped_with_new_layers() -> None:
+    """The load-bearing invariant survives the new layers:
+    an empty signature-column cell is a legitimate
+    missing-signature finding, never papered over."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 |   |  |
+| 2 |  | ALE |
+"""
+    result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
+    # Row 1 cells empty → no inject. Row 2: Done-by empty, Checked-by has text.
+    assert result.markdown.count("[Signature]") == 1
+    # The single inject is in Checked By only.
+    assert result.telemetry.layer_counts["L_TEXT"] == 1
+
+
 def test_l_img_outranks_l4_when_both_could_fire() -> None:
     """A cell with both an img tag AND a date is a strong
     L_IMG signal (Datalab cropped it) — must use L_IMG

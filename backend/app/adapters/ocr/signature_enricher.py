@@ -99,19 +99,62 @@ LAYER_CONFIDENCE: dict[str, float] = {
     # block extraction is deterministic, not a guess.
     "L_IMG": 0.75,
     "L2": 0.65,
+    # L_HWTEXT — Datalab transcribed the handwritten initials as
+    # text wrapped in italic markup (``<i>FE</i>`` /
+    # ``<i>N089</i>``). The italic wrapper is Datalab's marker
+    # for "this is handwriting" even though it could OCR the
+    # characters. When the cell sits in a signature-named
+    # column, that's a deterministic-classifier signal worth
+    # 0.55 confidence — below L2 (explicit Signature block)
+    # but above the unstructured text layers.
+    "L_HWTEXT": 0.55,
     "L3": 0.45,
-    # L4 — last-resort heuristic. Fires when NO JSON-tree
-    # evidence (Signature or Handwriting blocks) is available
-    # on the page, but the cell sits in a signature-named
-    # column AND carries date-only content. Diagnostic on the
-    # May 4 doc showed Datalab returns ``handwritten_count=0``
-    # on every page even when 12 ``[Signature]`` markers are
-    # inline — so the JSON tree is unreliable as evidence.
-    # L4 closes the gap. Confidence floored at 0.30 so it
-    # never satisfies the ``>=0.6 → firm`` mapping; downstream
-    # consumers treat these as ``uncertain``-tier signals.
+    # L_TEXT — last-resort short-text heuristic. Fires when a
+    # cell in a signature-named column contains short
+    # (≤ MAX_SIG_TEXT_CHARS) non-date, non-verdict content
+    # without any of the above signals. Confidence 0.40 —
+    # just above L4 because the presence of *some* content is
+    # marginally more signal than just a date.
+    "L_TEXT": 0.40,
+    # L4 — date-only / page-evidence heuristic. Fires when NO
+    # JSON-tree evidence (Signature or Handwriting blocks) is
+    # available on the page, but the cell sits in a
+    # signature-named column AND carries date-only content.
+    # Diagnostic on the May 4 doc showed Datalab returns
+    # ``handwritten_count=0`` on every page even when 12
+    # ``[Signature]`` markers are inline — so the JSON tree is
+    # unreliable as evidence. L4 closes the gap. Confidence
+    # floored at 0.30 so it never satisfies the
+    # ``>=0.6 → firm`` mapping; downstream consumers treat
+    # these as ``uncertain``-tier signals.
     "L4": 0.30,
 }
+
+
+# Maximum non-date character length for L_TEXT to fire. The 105
+# real-doc samples on 2538105061.pdf show 100 % of legitimate
+# initial-transcription cells are ≤ 20 chars after stripping
+# dates / italic / br tags; we set a 40-char cap to give
+# headroom for compound initials like "R. K. Jha" without
+# catching legitimate prose ("Sampled by quality team" etc).
+MAX_SIG_TEXT_CHARS = 40
+
+
+# Words operators legitimately type into signature columns as
+# review verdicts — NOT signatures. Skip these from L_HWTEXT
+# and L_TEXT to avoid false positives where an "OK" or "PASS"
+# in a Done-by column gets stamped as signed when no actual
+# signature was captured.
+_VERDICT_WORDS: frozenset[str] = frozenset({
+    "ok", "okay", "pass", "passed", "fail", "failed",
+    "na", "n/a", "n.a.", "nil", "none",
+    "yes", "no", "y", "n",
+    "approved", "approve", "rejected", "reject",
+    "compliant", "non-compliant", "noncompliant",
+    "satisfactory", "unsatisfactory",
+    "done", "complete", "completed", "pending",
+    "tbd", "tba",
+})
 
 
 # A date in any of the formats we've seen on real BPCR pages:
@@ -146,6 +189,36 @@ IMG_TAG_RE = re.compile(
 )
 
 
+# Datalab wraps transcribed handwriting in italic markup.
+# Example real-doc cells: ``<i>FE</i><br>22/11/2025`` /
+# ``<i>N089</i><br>22/11/2025``. The italic tag is a strong
+# Datalab-emitted signal that the underlying ink was
+# handwritten — independent of the cell's text content.
+ITALIC_TAG_RE = re.compile(r"<i\b[^>]*>", re.IGNORECASE)
+
+
+# Markup we strip from a cell to compute its "real text content"
+# for L_HWTEXT and L_TEXT length / verdict checks. Excluding
+# these from the cleaned length means a cell like
+# ``<i>AK</i><br>03/10/2025`` has cleaned content ``"AK"`` —
+# 2 chars, clearly a signature initial.
+_TAG_STRIP_RE = re.compile(r"</?(?:i|b|em|strong|br|span|p|div)\b[^>]*>", re.IGNORECASE)
+
+
+def _clean_for_signature_check(cell: str) -> str:
+    """Strip markup, dates, and filler chars from a cell so the
+    L_HWTEXT / L_TEXT layers can reason about the "real" content.
+
+    Returns the cleaned text. An empty result means the cell
+    held only filler (dates, dashes, whitespace, tags) — no
+    text content worth treating as a signature.
+    """
+    text = _TAG_STRIP_RE.sub("", cell)
+    text = DATE_RE.sub("", text)
+    text = text.replace("&nbsp;", " ")
+    return text.strip(" -—|<>/\t\n\r")
+
+
 @dataclass(frozen=True)
 class JsonBlock:
     """A single block extracted from Datalab's JSON tree.
@@ -167,11 +240,14 @@ class EnrichmentTelemetry:
 
     layer_counts: dict[str, int] = field(
         default_factory=lambda: {
-            "L0": 0, "L1": 0, "L_IMG": 0, "L2": 0, "L3": 0, "L4": 0,
+            "L0": 0, "L1": 0, "L_IMG": 0, "L2": 0,
+            "L_HWTEXT": 0, "L3": 0, "L_TEXT": 0, "L4": 0,
         }
     )
     injected_count: int = 0
     skipped_idempotent: int = 0
+    skipped_verdict: int = 0
+    skipped_long_text: int = 0
     signature_columns_detected: int = 0
     tables_scanned: int = 0
 
@@ -180,6 +256,8 @@ class EnrichmentTelemetry:
             self.layer_counts[k] = self.layer_counts.get(k, 0) + v
         self.injected_count += other.injected_count
         self.skipped_idempotent += other.skipped_idempotent
+        self.skipped_verdict += other.skipped_verdict
+        self.skipped_long_text += other.skipped_long_text
         self.signature_columns_detected += other.signature_columns_detected
         self.tables_scanned += other.tables_scanned
 
@@ -188,6 +266,8 @@ class EnrichmentTelemetry:
             "layer_counts": dict(self.layer_counts),
             "injected_count": self.injected_count,
             "skipped_idempotent": self.skipped_idempotent,
+            "skipped_verdict": self.skipped_verdict,
+            "skipped_long_text": self.skipped_long_text,
             "signature_columns_detected": self.signature_columns_detected,
             "tables_scanned": self.tables_scanned,
         }
@@ -436,21 +516,73 @@ def _enrich_table(
                 modified = True
                 continue
 
-            # ── L2/L3/L4: heuristic backfill for cells whose
-            # text content is date-only or filler. Needs a
-            # page-level layer to be eligible.
-            if page_layer is None:
+            # An empty cell in a signature column is a legitimate
+            # missing-signature finding — preserve it (don't
+            # inject anything below this point). Verified at the
+            # top of every layer's logic so the invariant stays
+            # universal.
+            if not cell.strip() or _is_empty(cell):
                 continue
-            if _is_date_only_or_empty(cell):
-                # Only inject when there's signal something was
-                # written. An empty cell with no handwriting on
-                # the page is a legitimate "missing signature"
-                # finding and must NOT be papered over.
-                if cell.strip() and not _is_empty(cell):
-                    cells[col_idx] = f" [Signature] {cell.strip()} "
-                    telemetry.layer_counts[page_layer] += 1
-                    telemetry.injected_count += 1
-                    modified = True
+
+            # Compute the cell's "real" text content with dates,
+            # italic / br markup, and filler stripped. Used by
+            # L_HWTEXT verdict-skip and L_TEXT length check.
+            cleaned = _clean_for_signature_check(cell)
+            cleaned_lower = cleaned.lower()
+
+            # Verdict words ("OK", "PASS", "NA", "approved", …)
+            # are operator-typed review outcomes, NOT signatures.
+            # Skip them at every layer so a Done-by cell carrying
+            # ``OK`` doesn't get falsely stamped as signed.
+            if cleaned_lower in _VERDICT_WORDS:
+                telemetry.skipped_verdict += 1
+                continue
+
+            # ── L_HWTEXT: italic-wrapped handwritten transcription.
+            # Datalab marks handwritten text with ``<i>...</i>``.
+            # When that appears in a signature column, Datalab is
+            # telling us the underlying ink was handwriting —
+            # even though the OCR could read it. Inject the marker
+            # at L_HWTEXT confidence (0.55) — above the pure
+            # heuristic layers, below explicit Signature blocks.
+            if ITALIC_TAG_RE.search(cell) and cleaned:
+                cells[col_idx] = f" [Signature] {cell.strip()} "
+                telemetry.layer_counts["L_HWTEXT"] += 1
+                telemetry.injected_count += 1
+                modified = True
+                continue
+
+            # ── L4: cell content reduces to a date only — the
+            # date-only-cell path. Requires page-level evidence
+            # of handwriting (L2/L3) OR aggressive=True (L4).
+            # Date alone is the most ambiguous signal — could be
+            # a typed scheduled date, not a signature date —
+            # so keep it gated on page-layer evidence.
+            if page_layer is not None and _is_date_only_or_empty(cell):
+                cells[col_idx] = f" [Signature] {cell.strip()} "
+                telemetry.layer_counts[page_layer] += 1
+                telemetry.injected_count += 1
+                modified = True
+                continue
+
+            # ── L_TEXT: short non-date text in a signature
+            # column with no other signal. The user's rule:
+            # "if there are defined columns for signature and
+            # anything except date comes in, identify as
+            # signature." Bounded by MAX_SIG_TEXT_CHARS to keep
+            # legitimate prose ("Sampled by quality team") from
+            # being misclassified. Confidence 0.40.
+            if cleaned and len(cleaned) <= MAX_SIG_TEXT_CHARS:
+                cells[col_idx] = f" [Signature] {cell.strip()} "
+                telemetry.layer_counts["L_TEXT"] += 1
+                telemetry.injected_count += 1
+                modified = True
+                continue
+            elif cleaned:
+                # Too long — likely prose / a description.
+                # Track in telemetry so we can revisit the cap
+                # if real BPCRs surface long legitimate initials.
+                telemetry.skipped_long_text += 1
         if modified:
             # Reassemble the row preserving leading/trailing pipes.
             inner = "|".join(cells)
