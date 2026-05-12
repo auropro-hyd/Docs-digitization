@@ -98,6 +98,17 @@ LAYER_CONFIDENCE: dict[str, float] = {
     # text marker) but above the heuristic layers because the
     # block extraction is deterministic, not a guess.
     "L_IMG": 0.75,
+    # L_IMG_PLACEHOLDER — Datalab emitted the literal text
+    # ``<p>Image: signature</p>`` in a signature-named column
+    # cell. This is what Datalab returns when image extraction
+    # is disabled but a region WOULD have been cropped as a
+    # signature — descriptive text rather than the binary.
+    # The descriptive text is itself a positive classification:
+    # Datalab decided this cell contains a signature region.
+    # Treated at the same confidence as L_IMG since the
+    # classification step is identical; only the byproduct
+    # differs (text label vs cropped image).
+    "L_IMG_PLACEHOLDER": 0.70,
     "L2": 0.65,
     # L_HWTEXT — Datalab transcribed the handwritten initials as
     # text wrapped in italic markup (``<i>FE</i>`` /
@@ -197,6 +208,30 @@ IMG_TAG_RE = re.compile(
 ITALIC_TAG_RE = re.compile(r"<i\b[^>]*>", re.IGNORECASE)
 
 
+# Datalab emits ``<p>Image: signature</p>`` placeholder text when
+# ``disable_image_extraction=True`` is in effect and a region
+# would otherwise have been cropped as a signature. It also emits
+# ``<p>Image: figure</p>`` / ``<p>Image: chart</p>`` style
+# descriptors for non-signature regions. These are visual noise
+# when rendered alongside the ``[Signature]`` marker — the
+# operator sees:
+#
+#     [Signature]
+#     Image:
+#     signature
+#     26/11/2025
+#
+# stacked vertically inside the cell. We treat ``Image: signature``
+# AS a positive signature signal (Datalab classified the region)
+# AND strip the placeholder text so the side-pane reads cleanly.
+# Other ``Image: <kind>`` placeholders (figure, chart) are NOT
+# stripped — they belong in the markdown for downstream context.
+IMAGE_SIG_PLACEHOLDER_RE = re.compile(
+    r"<p>\s*Image\s*:\s*signature\s*</p>",
+    re.IGNORECASE,
+)
+
+
 # Markup we strip from a cell to compute its "real text content"
 # for L_HWTEXT and L_TEXT length / verdict checks. Excluding
 # these from the cleaned length means a cell like
@@ -283,8 +318,8 @@ class EnrichmentTelemetry:
 
     layer_counts: dict[str, int] = field(
         default_factory=lambda: {
-            "L0": 0, "L1": 0, "L_IMG": 0, "L2": 0,
-            "L_HWTEXT": 0, "L3": 0, "L_TEXT": 0, "L4": 0,
+            "L0": 0, "L1": 0, "L_IMG": 0, "L_IMG_PLACEHOLDER": 0,
+            "L2": 0, "L_HWTEXT": 0, "L3": 0, "L_TEXT": 0, "L4": 0,
         }
     )
     injected_count: int = 0
@@ -578,8 +613,52 @@ def _enrich_table(
             if col_idx >= len(cells):
                 continue
             cell = cells[col_idx]
+
+            # Detect whether Datalab's literal
+            # ``<p>Image: signature</p>`` placeholder text is in
+            # this cell. If yes we'll attribute the injection to
+            # the L_IMG_PLACEHOLDER layer below — Datalab DID
+            # classify the region as a signature, the placeholder
+            # is just the descriptive byproduct rather than a
+            # cropped image. We strip the placeholder regardless
+            # of whether a marker is already present (cells from
+            # a prior enrichment pass had this noise left in).
+            had_img_placeholder = bool(IMAGE_SIG_PLACEHOLDER_RE.search(cell))
+            if had_img_placeholder:
+                stripped = IMAGE_SIG_PLACEHOLDER_RE.sub("", cell)
+                stripped = " ".join(stripped.split())
+                # Preserve leading/trailing single space the
+                # markdown table renderer expects between pipes.
+                cells[col_idx] = f" {stripped} "
+                cell = cells[col_idx]
+                modified = True
+
             if EXISTING_MARKER_RE.search(cell):
-                telemetry.skipped_idempotent += 1
+                # Already enriched — just count the placeholder
+                # strip (if any) toward the L_IMG_PLACEHOLDER
+                # bucket so re-runs over already-enriched cells
+                # still report the cleanup in telemetry. The
+                # main injection counter doesn't increment since
+                # we didn't add a new marker.
+                if had_img_placeholder:
+                    telemetry.layer_counts["L_IMG_PLACEHOLDER"] += 1
+                else:
+                    telemetry.skipped_idempotent += 1
+                continue
+
+            # ── L_IMG_PLACEHOLDER: cell carried the Datalab
+            # ``<p>Image: signature</p>`` placeholder (now
+            # stripped). That's a positive classifier signal —
+            # inject ``[Signature]`` at high confidence (0.70).
+            # Use BEFORE the IMG_TAG_RE / L_IMG path because the
+            # placeholder is a higher-priority signal than a
+            # raw <img> tag's bbox-only evidence — it tells us
+            # explicitly what the region IS.
+            if had_img_placeholder:
+                cells[col_idx] = f" [Signature] {cell.strip()} " if cell.strip() else " [Signature] "
+                telemetry.layer_counts["L_IMG_PLACEHOLDER"] += 1
+                telemetry.injected_count += 1
+                modified = True
                 continue
 
             # ── L_IMG: cell contains a Datalab image-region tag
@@ -769,7 +848,15 @@ def enrich_page(
             aggressive=aggressive,
         )
         telemetry.merge(table_telemetry)
-        if table_telemetry.injected_count:
+        # Splice when the table content actually changed — either
+        # because we injected a new ``[Signature]`` marker
+        # (``injected_count > 0``) OR because we stripped a Datalab
+        # ``<p>Image: signature</p>`` placeholder on an already-
+        # enriched cell (counted via ``L_IMG_PLACEHOLDER`` but
+        # doesn't bump ``injected_count``). Comparing the row
+        # lists directly catches both cases without coupling to
+        # specific telemetry counters.
+        if new_rows != rows:
             replacement = "\n".join(new_rows)
             # Preserve the trailing newline if the original table
             # ended with one (the slice includes it).

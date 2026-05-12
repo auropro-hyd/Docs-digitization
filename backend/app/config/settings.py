@@ -115,7 +115,15 @@ class DatalabConfig(BaseModel):
     api_key: str = ""
     base_url: str = "https://www.datalab.to"
     timeout: int = 300
-    mode: str = "accurate"  # "fast" | "balanced" | "accurate"
+    # Default is ``balanced`` after PR #41 — accurate mode adds
+    # significant per-chunk latency without measurable signature-
+    # recall improvement on tested BPCRs, and PR #39's two-pass
+    # retry already kicks in on the rare docs where the lighter
+    # mode returns barren JSON. Set to ``"accurate"`` if your
+    # docs trigger frequent ``ocr.json_bbox_retry_kicked``
+    # telemetry events — at that point the retry overhead
+    # exceeds the per-chunk savings.
+    mode: str = "balanced"  # "fast" | "balanced" | "accurate"
     paginate: bool = True
     max_pages: int | None = None
     extras: str = "new_block_types,table_row_bboxes,chart_understanding"
@@ -176,7 +184,12 @@ class DatalabConfig(BaseModel):
     # findings in the ``uncertain`` band downstream.
     signature_enrichment_aggressive: bool = True
 
-    # Bounding box enrichment via JSON output
+    # Bounding box enrichment via Datalab's JSON output endpoint.
+    # REQUIRED for the signature-crop pipeline — without bbox info
+    # we can't render per-cell signature images.
+    # If you set this to False (e.g. for cost-bounded staging),
+    # the lifespan hook in ``app.main`` logs a startup WARNING so
+    # the operator sees the mismatch with ``signature_enrichment``.
     fetch_block_bboxes: bool = True
 
 
