@@ -51,6 +51,14 @@ _HANDWRITING_BLOCK_RE = re.compile(
 _FORMULA_INLINE_RE = re.compile(r"\$([^$]+)\$")
 _FORMULA_BLOCK_RE = re.compile(r"\$\$([^$]+)\$\$")
 
+# Minimum number of "useful" blocks (TableCell + Signature +
+# Handwriting) the JSON-tree fetch must return before we trust it.
+# Below this we retry with mode="accurate" + force_ocr=True since
+# Datalab's lighter modes sometimes emit a barren JSON tree
+# (observed on 2538105061.pdf — bbox_data was empty across 5
+# chunks even though markdown extraction worked).
+_JSON_RETRY_MIN_USEFUL_BLOCKS = 5
+
 _DASH_ONLY_RE = re.compile(r"^[\s\-—–]*$")
 _NUMERIC_QTY_RE = re.compile(
     r"\d+\.?\d*\s*(?:kg|g|mg|l|ml|rpm|psi|bar|mm|cm|°?c|hr|min|sec)\b",
@@ -817,40 +825,198 @@ class DatalabOCRAdapter:
         checkpoint_id: str | None,
         page_range: str | None,
     ) -> dict[int, list[tuple[str, str, list[list[float]]]]]:
-        """Fetch JSON output for bounding box data."""
+        """Fetch JSON output for bounding-box data, with retry.
+
+        Datalab's JSON tree is non-deterministic across runs on the
+        same doc — sometimes it carries Signature / TableCell /
+        Handwriting blocks with full polygons, sometimes it comes
+        back essentially empty (no allowlist-matching blocks). When
+        empty, the signature-crop pipeline has no bboxes to work
+        with and silently produces zero crops.
+
+        This method attempts the JSON fetch up to twice:
+
+        1. First pass — current config (typically ``mode="balanced"``
+           or ``"accurate"`` per ``DatalabConfig.mode``, with the
+           configured ``extras``).
+        2. If the first pass returns < ``_JSON_RETRY_MIN_BLOCKS``
+           allowlist-matching blocks, retry with ``mode="accurate"``
+           and ``force_ocr=True`` and an explicit
+           ``extras="new_block_types,table_row_bboxes"`` to force
+           the highest-recall classifier path.
+
+        Always emits a structured telemetry event so post-run
+        validation can see the outcome of EACH pass:
+        attempt count, exception class on failure, raw json-blob
+        size, total allowlist-matching blocks, blocks broken down
+        by block_type. Lets us distinguish "Datalab threw" from
+        "Datalab returned empty json" from "json had no
+        allowlist-matching blocks" without re-running.
+        """
+        from app.observability.run_telemetry import record_event as _record
+
         if not self._config.fetch_block_bboxes:
+            _record("ocr.json_bbox_fetch_disabled", page_range=page_range or "")
             return {}
-        try:
-            client = self._get_client()
-            from datalab_sdk import ConvertOptions
 
-            json_opts = ConvertOptions(
-                mode=self._config.mode,
-                output_format="json",
-                paginate=self._config.paginate,
-            )
-            if checkpoint_id:
-                json_opts.checkpoint_id = checkpoint_id
-            elif page_range:
-                json_opts.page_range = page_range
+        async def _attempt(
+            attempt_idx: int,
+            mode_override: str | None,
+            extras_override: str | None,
+            force_ocr_override: bool | None,
+        ) -> dict[int, list[tuple[str, str, list[list[float]]]]]:
+            """One pass; returns the extracted bbox map (may be empty)."""
+            try:
+                client = self._get_client()
+                from datalab_sdk import ConvertOptions
 
-            result = await client.convert(
-                file_path=pdf_path,
-                options=json_opts,
-                max_polls=self._config.max_polls,
-                poll_interval=self._config.poll_interval,
-            )
-            json_data = getattr(result, "json", None)
-            if not json_data:
+                json_opts = ConvertOptions(
+                    mode=mode_override or self._config.mode,
+                    output_format="json",
+                    paginate=self._config.paginate,
+                )
+                if extras_override is not None:
+                    json_opts.extras = extras_override
+                elif self._config.extras:
+                    json_opts.extras = self._config.extras
+                if force_ocr_override is not None:
+                    json_opts.force_ocr = force_ocr_override
+
+                # Don't reuse checkpoint_id on retries — the retry
+                # is intentionally re-classifying with different
+                # options. First pass keeps checkpoint for efficiency.
+                if attempt_idx == 0 and checkpoint_id:
+                    json_opts.checkpoint_id = checkpoint_id
+                elif page_range:
+                    json_opts.page_range = page_range
+
+                result = await client.convert(
+                    file_path=pdf_path,
+                    options=json_opts,
+                    max_polls=self._config.max_polls,
+                    poll_interval=self._config.poll_interval,
+                )
+                json_data = getattr(result, "json", None)
+
+                first_page_0 = 0
+                if page_range:
+                    first_page_0 = int(page_range.split(",")[0].split("-")[0])
+
+                if not json_data:
+                    _record(
+                        "ocr.json_bbox_empty_response",
+                        attempt=attempt_idx,
+                        mode=json_opts.mode,
+                        page_range=page_range or "",
+                        reason="json field is empty / falsy",
+                    )
+                    return {}
+
+                bboxes = _extract_bboxes_from_json(json_data, first_page_0)
+                total_blocks = sum(len(v) for v in bboxes.values())
+
+                # Break the total down by block_type so we can see
+                # exactly what Datalab returned.
+                by_type: dict[str, int] = {}
+                for blocks in bboxes.values():
+                    for (bt, _t, _p) in blocks:
+                        by_type[bt] = by_type.get(bt, 0) + 1
+
+                _record(
+                    "ocr.json_bbox_fetched",
+                    attempt=attempt_idx,
+                    mode=json_opts.mode,
+                    page_range=page_range or "",
+                    pages_in_result=len(bboxes),
+                    total_blocks=total_blocks,
+                    by_block_type=by_type,
+                )
+                return bboxes
+            except Exception as exc:
+                _record(
+                    "ocr.json_bbox_fetch_failed",
+                    level="warning",
+                    attempt=attempt_idx,
+                    mode=mode_override or self._config.mode,
+                    page_range=page_range or "",
+                    exception_class=type(exc).__name__,
+                    exception_msg=str(exc)[:300],
+                )
+                logger.warning(
+                    "Data Lab JSON bbox fetch attempt %d failed (mode=%s); will %s",
+                    attempt_idx,
+                    mode_override or self._config.mode,
+                    "retry" if attempt_idx == 0 else "give up",
+                    exc_info=True,
+                )
                 return {}
 
-            first_page_0 = 0
-            if page_range:
-                first_page_0 = int(page_range.split(",")[0].split("-")[0])
-            return _extract_bboxes_from_json(json_data, first_page_0)
-        except Exception:
-            logger.warning("Data Lab JSON bbox fetch failed; using zero-coord placeholders", exc_info=True)
-            return {}
+        # First attempt with current config.
+        bboxes = await _attempt(
+            attempt_idx=0,
+            mode_override=None,
+            extras_override=None,
+            force_ocr_override=None,
+        )
+
+        # Decide on retry. We retry when:
+        # * the fetch returned nothing, OR
+        # * the fetch returned blocks but ZERO ``TableCell`` /
+        #   ``Signature`` / ``Handwriting`` — the block types the
+        #   crop pipeline actually needs.
+        useful_types = {"TableCell", "Signature", "Handwriting"}
+        useful_count = sum(
+            1 for blocks in bboxes.values()
+            for (bt, _t, _p) in blocks
+            if bt in useful_types
+        )
+        should_retry = (not bboxes) or (useful_count < _JSON_RETRY_MIN_USEFUL_BLOCKS)
+
+        if should_retry and self._config.mode != "accurate":
+            _record(
+                "ocr.json_bbox_retry_kicked",
+                reason=(
+                    "empty response" if not bboxes
+                    else f"only {useful_count} useful blocks "
+                    f"(threshold {_JSON_RETRY_MIN_USEFUL_BLOCKS})"
+                ),
+                first_attempt_mode=self._config.mode,
+                retry_mode="accurate",
+                page_range=page_range or "",
+            )
+            retry_bboxes = await _attempt(
+                attempt_idx=1,
+                mode_override="accurate",
+                # Explicitly request the extras the cropper needs.
+                extras_override="new_block_types,table_row_bboxes",
+                force_ocr_override=True,
+            )
+            # Prefer the retry result whenever it has MORE useful
+            # blocks than the first attempt — the retry is the
+            # higher-recall path so this is almost always strictly
+            # better.
+            retry_useful = sum(
+                1 for blocks in retry_bboxes.values()
+                for (bt, _t, _p) in blocks
+                if bt in useful_types
+            )
+            if retry_useful > useful_count:
+                _record(
+                    "ocr.json_bbox_retry_succeeded",
+                    page_range=page_range or "",
+                    first_attempt_useful=useful_count,
+                    retry_useful=retry_useful,
+                )
+                return retry_bboxes
+            _record(
+                "ocr.json_bbox_retry_no_improvement",
+                level="warning",
+                page_range=page_range or "",
+                first_attempt_useful=useful_count,
+                retry_useful=retry_useful,
+            )
+
+        return bboxes
 
     def _process_result(
         self,
