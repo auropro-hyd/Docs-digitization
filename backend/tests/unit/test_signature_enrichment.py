@@ -369,6 +369,52 @@ def test_column_header_match_is_substring_and_case_insensitive() -> None:
     assert result.telemetry.layer_counts["L2"] == 2
 
 
+def test_normalize_for_match_keeps_dates_for_cell_correlation() -> None:
+    """``_normalize_for_match`` is the cell-to-cell matching key
+    used by the signature-crop injector. It MUST preserve the
+    cell's identity (including dates) so a markdown cell can be
+    correlated with the JSON-tree TableCell that produced it.
+
+    This is the bug Akhilesh hit on the post-PR-#36 run: the
+    crop injector was previously using
+    ``_clean_for_signature_check`` (which strips dates) as the
+    match key. For L4 cells whose only content is a date, the
+    cleaned key was empty → no match → no crop. 0 sigcrop files
+    written for the whole 112-page doc.
+
+    The two functions serve DIFFERENT purposes:
+      * ``_clean_for_signature_check`` — "is there non-date
+        content worth treating as a signature?" Strips dates.
+      * ``_normalize_for_match`` — "what's the cell's identity
+        for cross-referencing?" Keeps everything except markup
+        and the ``[Signature]`` marker.
+    """
+    from app.adapters.ocr.signature_enricher import _normalize_for_match
+
+    # Date-only cell — keep the date intact.
+    assert _normalize_for_match("[Signature] 23/11/2025") == "23/11/2025"
+    # Block-level tags (``<br>``) collapse to space, inline tags
+    # (``<i>``) collapse to nothing → produces tokens separated
+    # by a single space.
+    assert _normalize_for_match("[Signature] <i>FE</i><br>22/11/2025") == "FE 22/11/2025"
+    assert _normalize_for_match("[Signature] N089<br>25/11/2025") == "N089 25/11/2025"
+    # Already-marker cell — empty key (legitimately no content).
+    assert _normalize_for_match("[Signature]") == ""
+    # Whitespace collapsing.
+    assert _normalize_for_match("  [Signature]   AK\t\t\n03/10/2025  ") == "AK 03/10/2025"
+    # The load-bearing property: identical content from either
+    # side (markdown with tags, JSON with HTML stripped) must
+    # produce the same normalized key so the bbox correlator
+    # finds the match.
+    md_cell = "[Signature] <i>N089</i><br>22/11/2025"
+    json_cell = "N089 22/11/2025"  # what _extract_bboxes_from_json typically gives
+    assert _normalize_for_match(md_cell) == _normalize_for_match(json_cell)
+    # And a JSON cell with a newline at the <br> position
+    # (Datalab's other emission style) normalizes identically.
+    json_cell_with_nl = "N089\n22/11/2025"
+    assert _normalize_for_match(md_cell) == _normalize_for_match(json_cell_with_nl)
+
+
 def test_date_only_predicate() -> None:
     """``_is_date_only_or_empty`` returns True ONLY when the
     cell contains a date AND nothing else of substance.

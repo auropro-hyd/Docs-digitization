@@ -212,11 +212,54 @@ def _clean_for_signature_check(cell: str) -> str:
     Returns the cleaned text. An empty result means the cell
     held only filler (dates, dashes, whitespace, tags) — no
     text content worth treating as a signature.
+
+    NOTE: this strips dates because L_TEXT only fires when
+    there's NON-date content worth treating as a signature.
+    For cell-to-cell MATCHING (e.g. mapping a markdown cell to
+    a JSON-tree TableCell by text), use
+    :func:`_normalize_for_match` instead — that one keeps dates
+    so cells with only a date can still be located.
     """
     text = _TAG_STRIP_RE.sub("", cell)
     text = DATE_RE.sub("", text)
     text = text.replace("&nbsp;", " ")
     return text.strip(" -—|<>/\t\n\r")
+
+
+def _normalize_for_match(cell: str) -> str:
+    """Normalize a cell's text for matching against another
+    representation of the same content (e.g. a markdown cell vs
+    a JSON-tree TableCell's HTML-stripped text).
+
+    Strips markup tags and the ``[Signature]`` marker, collapses
+    whitespace runs, but PRESERVES the underlying content
+    (dates, initials, filler tokens). Two representations of
+    the same cell should produce the same normalized string —
+    that's the load-bearing property for the cell-bbox
+    correlation in :meth:`_inject_signature_crops`.
+
+    Block-level tags (``<br>``, ``</p>``, ``</div>``) collapse
+    to a space so a markdown cell ``<i>FE</i><br>22/11/2025``
+    and a JSON cell ``FE 22/11/2025`` produce the same key.
+    Inline tags collapse to nothing.
+    """
+    text = cell or ""
+    text = EXISTING_MARKER_RE.sub("", text)
+    # Block-level tags first — they signal a line break / boundary,
+    # so replace with space to keep adjacent tokens separated.
+    text = re.sub(
+        r"</?(?:br|p|div|tr|td|li)\b[^>]*>",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Remaining inline tags — collapse to nothing.
+    text = re.sub(r"</?[a-z][a-z0-9]*\b[^>]*>", "", text, flags=re.IGNORECASE)
+    text = text.replace("&nbsp;", " ")
+    # Collapse all whitespace runs (including the leftover from
+    # tag stripping) to single spaces.
+    text = " ".join(text.split())
+    return text
 
 
 @dataclass(frozen=True)
