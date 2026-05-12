@@ -1084,7 +1084,7 @@ class DatalabOCRAdapter:
             _is_separator_row,
             _is_signature_column_header,
             _split_table_row,
-            _clean_for_signature_check,
+            _normalize_for_match,
         )
 
         doc_dir = Path(pdf_path).parent
@@ -1158,33 +1158,40 @@ class DatalabOCRAdapter:
                             continue
                         if IMG_TAG_RE.search(cell):
                             continue  # already has crop
-                        # Cleaned text used for matching against
-                        # the TableCell.text field.
-                        without_marker = EXISTING_MARKER_RE.sub("", cell)
-                        cleaned = _clean_for_signature_check(without_marker)
-                        if not cleaned:
+                        # Normalized text used for matching against
+                        # the JSON-tree TableCell.text field. Keep
+                        # dates and filler intact — they're part
+                        # of the cell's identity. We previously
+                        # used ``_clean_for_signature_check`` here
+                        # which strips dates, leaving an empty
+                        # match key for L4 cells (just a date) and
+                        # losing the entire crop opportunity.
+                        normalized = _normalize_for_match(cell)
+                        if not normalized:
                             continue
-                        cell_specs.append((cell, cleaned))
+                        cell_specs.append((cell, normalized))
 
             if not cell_specs:
                 continue
 
-            # Index TableCell texts the same way we cleaned the
-            # markdown cells. Match by exact cleaned equality;
-            # when multiple TableCells share the same text, pair
-            # by reading-order so first signature cell ↔ first
-            # matching TableCell, etc.
+            # Index TableCell texts under the same normalization
+            # we applied to the markdown cells. Match by exact
+            # normalized equality; when multiple TableCells share
+            # the same text (e.g. every Done-by cell in the
+            # dispensing table just has a date), pair by
+            # reading-order so the Nth signature cell maps to
+            # the Nth matching TableCell.
             cleaned_index: dict[str, list[
                 tuple[float, float, float, float]
             ]] = {}
             for txt, poly in table_cells:
-                t_clean = _clean_for_signature_check(txt or "")
-                if not t_clean:
+                t_norm = _normalize_for_match(txt or "")
+                if not t_norm:
                     continue
                 xs = [p[0] for p in poly]
                 ys = [p[1] for p in poly]
                 bbox = (min(xs), min(ys), max(xs), max(ys))
-                cleaned_index.setdefault(t_clean, []).append(bbox)
+                cleaned_index.setdefault(t_norm, []).append(bbox)
 
             crop_list: list[tuple[float, float, float, float]] = []
             replacements: list[tuple[str, int]] = []
