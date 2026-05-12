@@ -413,6 +413,26 @@ def _build_segmentation_prompt(
     key_value_pairs: list[dict] | None = None,
     filename: str = "",
 ) -> str:
+    """Build the segmentation prompt.
+
+    Encodes the classification heuristics Akhilesh stated on the
+    2026-05-12 call:
+
+    * Document types EXCEPT ``batch_record``: classify from the
+      document header on each page first. Fall back to content
+      cues (e.g. ``VDE0**`` + temp/pressure tables → ``scada_report``)
+      only when no header.
+    * BPCR document_type from header; BPCR section_type from
+      headings on top of tables ('LIST OF RAW MATERIALS …',
+      'MICRONIZATION OPERATION', etc.).
+    * BPCR ``cover_page`` and ``revision_summary`` have no
+      section heading — infer from COLUMN NAMES.
+
+    Also injects the canonical doc_type and section_type vocabulary
+    from ``document_profiles.yaml`` so the LLM uses known names.
+    Any free-form values the LLM emits beyond that list get caught
+    by ``validate_segmentation`` as drift warnings.
+    """
     page_summaries = []
     for ext in extractions:
         page_num = ext.get("page_num", 0)
@@ -426,17 +446,100 @@ def _build_segmentation_prompt(
             for kv in key_value_pairs[:30]
         )
 
+    # Inject canonical doc/section type vocabulary. Empty fallback
+    # for test environments that haven't loaded profiles.
+    try:
+        from app.compliance.rules.profiles import load_profiles
+        profiles = load_profiles()
+        known_doc_types = sorted(profiles.known_document_types())
+        known_section_types = sorted(profiles.known_section_types())
+    except Exception:
+        known_doc_types = []
+        known_section_types = []
+
+    doc_types_hint = (
+        f"\nKnown document_type values (use these canonical names when "
+        f"they fit): {', '.join(known_doc_types)}.\n"
+        if known_doc_types else ""
+    )
+    section_types_hint = (
+        f"Known section_type values (use these canonical names when "
+        f"they fit): {', '.join(known_section_types[:80])}.\n"
+        if known_section_types else ""
+    )
+
     return (
-        f"Analyze this multi-part document and identify each distinct sub-document/section.\n\n"
-        f"Look for: page numbering restarts, document titles, headers that change, "
-        f"form layout shifts, and content topic changes.\n\n"
+        f"Analyze this multi-part document and identify each distinct "
+        f"sub-document/section.\n\n"
+        f"CLASSIFICATION HEURISTICS (in priority order):\n"
+        f"1. For every document type EXCEPT ``batch_record``: classify\n"
+        f"   from the document HEADER on each page first. The header\n"
+        f"   typically names the document explicitly (e.g.\n"
+        f"   'Raw Material Request & Issue', 'In-Process Samples\n"
+        f"   Request Cum Analysis Report', 'QC Analytical Data\n"
+        f"   Review Checklist'). Same header repeating across pages\n"
+        f"   = same document.\n"
+        f"2. If a page has NO explicit header, infer document_type\n"
+        f"   from CONTENT. Examples:\n"
+        f"   * ``VDE0**`` identifiers + monitoring tables (temp,\n"
+        f"     pressure, vacuum) → ``scada_report``.\n"
+        f"   * Chromatogram traces / instrument analysis tables →\n"
+        f"     ``qc_analytical_package`` or ``analysis_report``.\n"
+        f"   * Particle-size / sieving result columns →\n"
+        f"     ``analysis_report``.\n"
+        f"3. For ``batch_record`` (BPCR) documents: doc_type comes\n"
+        f"   from the document header (e.g. 'BATCH PRODUCTION AND\n"
+        f"   CONTROL RECORD'). But individual SECTIONS within the\n"
+        f"   BPCR carry their OWN section heading on top of the\n"
+        f"   first table on each section's page — look there:\n"
+        f"   * 'LIST OF RAW MATERIALS AND WEIGHING DETAILS' →\n"
+        f"     ``material_dispensing``\n"
+        f"   * 'LIST OF MAJOR EQUIPMENTS & SOP DETAILS' →\n"
+        f"     ``equipment_list``\n"
+        f"   * 'MANUFACTURING INSTRUCTIONS' →\n"
+        f"     ``manufacturing_operations``\n"
+        f"   * 'YIELD CALCULATION' → ``yield_calculation``\n"
+        f"   * 'SIFTING RECORD' → ``sifting_record``\n"
+        f"   * 'PIN MILLING' / 'PIN MILL MIXING' →\n"
+        f"     ``pin_milling_mixing``\n"
+        f"   * 'MICRONIZATION OPERATION' → ``micronization``\n"
+        f"   * 'CO-MILL OPERATION' → ``co_mill_operation``\n"
+        f"   * 'METAL DETECTION' → ``metal_detection``\n"
+        f"   * 'EQUIPMENT CLEANING' → ``cleaning_log``\n"
+        f"   * 'DEVIATION' → ``deviation``\n"
+        f"4. For the BPCR's cover_page and revision_summary\n"
+        f"   sections specifically: there's NO section heading on\n"
+        f"   top of the table. Infer from the COLUMN NAMES:\n"
+        f"   * Cover page: columns like Product Name, MPCR No.,\n"
+        f"     BPCR Number, Batch No., Batch Size, Market Code,\n"
+        f"     Stage, Revision Number → ``cover_page``\n"
+        f"   * Revision summary: columns like Change History,\n"
+        f"     Revision Number, Change Description, Effective\n"
+        f"     Date → ``revision_summary``\n"
+        f"{doc_types_hint}"
+        f"{section_types_hint}\n"
+        f"GENERAL RULES:\n"
+        f"* Page numbering restarts, document title changes, and\n"
+        f"  form-layout shifts mark section / document boundaries.\n"
+        f"* Same product family but different stages (e.g. coarser\n"
+        f"  vs micronized polymorph) is still the SAME batch_record\n"
+        f"  document_type — they share the BPCR header.\n"
+        f"* When in doubt between two doc_types, prefer the more\n"
+        f"  specific canonical name from the list above.\n"
+        f"* If a section truly doesn't fit any canonical type,\n"
+        f"  emit a lowercase_snake_case free-form value — drift\n"
+        f"  warnings will surface it so the doc_profiles can be\n"
+        f"  extended later.\n\n"
         f"FILENAME: {filename}\n\n"
         f"KEY-VALUE PAIRS:\n{kv_text}\n\n"
         f"PAGE SUMMARIES:\n" + "\n\n".join(page_summaries) + "\n\n"
         f"For each section return:\n"
         f"- section_id: short lowercase_snake_case slug\n"
         f"- name: descriptive human-readable name\n"
-        f"- section_type: descriptive type in lowercase_snake_case (be specific)\n"
+        f"- section_type: canonical type from the list above when it\n"
+        f"  fits; lowercase_snake_case free-form only if none fit\n"
+        f"- document_type: canonical doc_type from the list above\n"
+        f"  when it fits\n"
         f"- start_page / end_page: inclusive page range\n"
         f"- description: brief description of the section content\n\n"
         f"Also return the overall document_type and your confidence (0.0-1.0)."
@@ -493,6 +596,74 @@ class DocumentSegmenter:
                                 message=i.message,
                                 section_ids=list(i.section_ids),
                                 page_range=list(i.page_range) if i.page_range else None,
+                            )
+
+                        # Akhilesh's 2026-05-12 ask:
+                        # "add a mechanism to detect & flag any of
+                        # the document/section types that are not
+                        # defined in document_profiles.yaml."
+                        #
+                        # The per-issue events above DO that. This
+                        # extra summary event groups the unknown
+                        # values into a single actionable digest so
+                        # operators don't have to scan event-by-
+                        # event — they see one ``segmentation.
+                        # vocabulary_drift`` event listing every
+                        # new doc_type / section_type the LLM
+                        # emitted that's NOT in
+                        # ``document_profiles.yaml``. The suggested
+                        # YAML snippet is ready to paste.
+                        unknown_doc_types = sorted({
+                            i.message.split("'")[1] for i in issues
+                            if i.kind == "unknown_document_type"
+                            and "'" in i.message
+                        })
+                        unknown_section_types = sorted({
+                            i.message.split("'")[1] for i in issues
+                            if i.kind == "unknown_section_type"
+                            and "'" in i.message
+                        })
+                        if unknown_doc_types or unknown_section_types:
+                            suggested_yaml = []
+                            if unknown_doc_types:
+                                suggested_yaml.append(
+                                    "# Add to document_profiles.yaml under "
+                                    "``document_profiles:``"
+                                )
+                                for dt in unknown_doc_types:
+                                    suggested_yaml.append(
+                                        f"  {dt}:\n    aliases: []\n    "
+                                        f"expected_sections: []"
+                                    )
+                            if unknown_section_types:
+                                suggested_yaml.append(
+                                    "# Add to document_profiles.yaml under "
+                                    "the appropriate profile's "
+                                    "``expected_sections:`` list"
+                                )
+                                for st in unknown_section_types:
+                                    suggested_yaml.append(
+                                        f"  - section_type: {st}\n    "
+                                        f"display_name: ''\n    "
+                                        f"required: false\n    aliases: []"
+                                    )
+                            record_event(
+                                "segmentation.vocabulary_drift",
+                                level="warning",
+                                unknown_document_types=unknown_doc_types,
+                                unknown_section_types=unknown_section_types,
+                                count_unknown_doc_types=len(unknown_doc_types),
+                                count_unknown_section_types=len(unknown_section_types),
+                                suggested_yaml_snippet="\n".join(suggested_yaml),
+                            )
+                            logger.warning(
+                                "segmentation.vocabulary_drift — "
+                                "%d unknown document_type(s): %s | "
+                                "%d unknown section_type(s): %s — "
+                                "extend backend/app/compliance/rules/"
+                                "document_profiles.yaml to silence",
+                                len(unknown_doc_types), unknown_doc_types,
+                                len(unknown_section_types), unknown_section_types,
                             )
                     except Exception:  # pragma: no cover — never break segmentation
                         pass
