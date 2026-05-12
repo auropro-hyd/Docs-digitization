@@ -415,6 +415,52 @@ def test_normalize_for_match_keeps_dates_for_cell_correlation() -> None:
     assert _normalize_for_match(md_cell) == _normalize_for_match(json_cell_with_nl)
 
 
+def test_image_placeholder_stripped_on_new_cell() -> None:
+    """Datalab emits ``<p>Image: signature</p>`` placeholder text
+    when image extraction is disabled. The placeholder clutters
+    the side-pane:
+        [Signature]
+        Image:
+        signature
+        26/11/2025
+
+    Stack-rendered. The L_IMG_PLACEHOLDER layer fires, strips
+    the literal, and injects ``[Signature]`` cleanly."""
+    md = """\
+| Step | Done by | Checked by |
+|------|---------|------------|
+| 1 | <p>Image: signature</p> 26/11/2025 | <p>Image: signature</p> 26/11/2025 |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" in result.markdown
+    assert "Image: signature" not in result.markdown
+    assert "<p>" not in result.markdown.replace("[Signature]", "")
+    assert result.telemetry.layer_counts["L_IMG_PLACEHOLDER"] == 2
+
+
+def test_image_placeholder_stripped_on_already_marked_cell() -> None:
+    """Idempotency edge case: when a cell ALREADY has
+    ``[Signature]`` from a prior run AND still has the
+    ``<p>Image: signature</p>`` placeholder, the strip must
+    still happen so reviewers see a clean cell. Skipping
+    cleanup on idempotent cells leaves the noise in place
+    forever (the symptom Akhilesh reported)."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 | [Signature] <p>Image: signature</p> 26/11/2025 |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "Image: signature" not in result.markdown
+    # Marker preserved (not re-injected).
+    assert result.markdown.count("[Signature]") == 1
+    # The strip on an already-enriched cell is attributed to
+    # L_IMG_PLACEHOLDER (not skipped_idempotent) so re-runs over
+    # already-enriched docs surface cleanup work in telemetry.
+    assert result.telemetry.layer_counts["L_IMG_PLACEHOLDER"] == 1
+    assert result.telemetry.skipped_idempotent == 0
+
+
 def test_date_only_predicate() -> None:
     """``_is_date_only_or_empty`` returns True ONLY when the
     cell contains a date AND nothing else of substance.
