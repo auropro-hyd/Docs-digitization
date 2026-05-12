@@ -166,7 +166,6 @@ class CrossPageEvaluator:
             )
             if not isinstance(result, RuleBatchResult):
                 result = RuleBatchResult.model_validate(result)
-            return result
         except Exception:
             logger.exception("Cross-page evaluation failed for %d rules", len(rules))
             return RuleBatchResult(evaluations=[
@@ -177,3 +176,49 @@ class CrossPageEvaluator:
                 )
                 for r in rules
             ])
+
+        # Silent-drop guard: the LLM sometimes returns a partial
+        # evaluations list — REC-MAN2 vanished from run e5e35ffc-…'s
+        # report this way: requested in the prompt, omitted from the
+        # response, never surfaced anywhere downstream. Reconcile the
+        # returned evaluations against the requested rule_ids and
+        # backfill any missing rule with status="error" so the
+        # operator sees the drop instead of silently losing a rule's
+        # verdict. Telemetry event lets post-run analysis flag
+        # which rules / which models are dropping.
+        requested_ids = {r.id for r in rules}
+        returned_ids = {ev.rule_id for ev in result.evaluations}
+        missing = sorted(requested_ids - returned_ids)
+        if missing:
+            logger.warning(
+                "cross_page.llm_dropped_rules — requested=%d returned=%d "
+                "dropped=%s (rule_ids backfilled as status=error)",
+                len(requested_ids), len(returned_ids), missing,
+            )
+            try:
+                from app.observability.run_telemetry import record_event
+                record_event(
+                    "cross_page.rule_dropped_by_llm",
+                    level="warning",
+                    requested_count=len(requested_ids),
+                    returned_count=len(returned_ids),
+                    dropped_rule_ids=missing,
+                )
+            except Exception:  # pragma: no cover — never break eval
+                pass
+            backfilled = list(result.evaluations)
+            for rule_id in missing:
+                backfilled.append(RuleEvaluation(
+                    rule_id=rule_id,
+                    status="error",
+                    description=(
+                        "Rule was sent to the cross-page LLM but the "
+                        "response omitted it — verdict lost. The model "
+                        "silently dropped this rule from its evaluations "
+                        "list. Re-run or inspect the prompt to surface "
+                        "the underlying cause."
+                    ),
+                ))
+            result = RuleBatchResult(evaluations=backfilled)
+
+        return result
