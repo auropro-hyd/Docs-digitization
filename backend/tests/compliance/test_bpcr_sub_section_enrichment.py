@@ -214,6 +214,140 @@ def test_enrichment_is_idempotent_so_cache_upgrade_is_safe() -> None:
     assert any(s.section_type == "cover_page" for s in once.sections)
 
 
+def test_enrichment_flattens_llm_populated_sub_sections_when_detector_misses() -> None:
+    """The 2026-05-12 segmentation prompt cues nudge the LLM to
+    emit ``BpcrSubSection`` entries directly (often with
+    ``detection_method='column_names'`` for cover_page /
+    revision_summary, which have no section heading). Before this
+    fix the flatten only consumed the heuristic detector's spans;
+    LLM-populated sub_sections were dropped on the floor whenever
+    the detector either returned nothing (parent kept whole) or
+    returned its own spans (LLM entries discarded).
+
+    Real-doc symptom from run e5e35ffc-…: BPCR parent arrived from
+    the LLM with sub_sections=[cover_page, revision_summary] but
+    the detector found nothing for those pages because there's no
+    heading text on top of those tables, so the run came back with
+    one opaque BPCR block.
+
+    Pin: when the detector finds nothing, the LLM-populated
+    sub_sections must still become top-level entries.
+    """
+
+    from app.compliance.models import BpcrSubSection
+
+    seg = DocumentSegmentation(
+        sections=[
+            DocumentSection(
+                section_id="bpcr",
+                name="BPCR",
+                section_type="batch_record",
+                start_page=1, end_page=2,
+                sub_sections=[
+                    BpcrSubSection(
+                        section_id="cover_page",
+                        display_name="Cover Page",
+                        page_index=1,
+                        confidence=0.8,
+                        detection_method="column_names",
+                    ),
+                    BpcrSubSection(
+                        section_id="revision_summary",
+                        display_name="Revision Summary",
+                        page_index=2,
+                        confidence=0.8,
+                        detection_method="column_names",
+                    ),
+                ],
+            ),
+        ],
+    )
+    # Markdown deliberately bland — the heuristic detector has no
+    # heading text to latch onto, so all flatten output must come
+    # from the LLM-populated sub_sections.
+    extractions = [
+        {"page_num": 1, "markdown": "page 1 plain content"},
+        {"page_num": 2, "markdown": "page 2 plain content"},
+    ]
+
+    enriched = enrich_with_bpcr_sub_sections(seg, extractions)
+
+    by_type = {s.section_type: (s.start_page, s.end_page) for s in enriched.sections}
+    assert "cover_page" in by_type, (
+        "LLM-populated cover_page sub_section was dropped — flatten "
+        "regression from PR #42 not yet fixed"
+    )
+    assert "revision_summary" in by_type
+    assert by_type["cover_page"] == (1, 1)
+    assert by_type["revision_summary"] == (2, 2)
+    # Each carries the right document_type for cross-doc filters.
+    for s in enriched.sections:
+        assert s.document_type == "batch_record"
+        assert s.section_id == "bpcr"  # parent section_id preserved
+
+
+def test_enrichment_merges_detector_spans_with_llm_sub_sections() -> None:
+    """When BOTH sources fire — detector finds heading-anchored
+    sections (manufacturing_operations) AND the LLM populates
+    sub_sections for the heading-less ones (cover_page) — the
+    flatten must include all of them. Detector wins on
+    section_type collisions because its spans carry real page
+    ranges; LLM ``page_index`` is a single int."""
+
+    from app.compliance.models import BpcrSubSection
+
+    seg = DocumentSegmentation(
+        sections=[
+            DocumentSection(
+                section_id="bpcr",
+                name="BPCR",
+                section_type="batch_record",
+                start_page=1, end_page=4,
+                sub_sections=[
+                    # LLM only knows the heading-less ones.
+                    BpcrSubSection(
+                        section_id="cover_page",
+                        display_name="Cover",
+                        page_index=1,
+                        confidence=0.8,
+                        detection_method="column_names",
+                    ),
+                    BpcrSubSection(
+                        section_id="revision_summary",
+                        display_name="Revision",
+                        page_index=2,
+                        confidence=0.8,
+                        detection_method="column_names",
+                    ),
+                ],
+            ),
+        ],
+    )
+    # Markdown carries headings for the heading-anchored sections
+    # so the heuristic detector fires on pages 3-4. The flatten
+    # must combine its spans with the LLM's pages 1-2 entries.
+    extractions = [
+        {"page_num": 1, "markdown": "Cover content with BPCR Number columns."},
+        {"page_num": 2, "markdown": "Revision content with Change History columns."},
+        {"page_num": 3, "markdown": "**MANUFACTURING INSTRUCTIONS**\nDate:"},
+        {"page_num": 4, "markdown": "**MICRONIZATION OPERATION**\n| col |"},
+    ]
+
+    enriched = enrich_with_bpcr_sub_sections(seg, extractions)
+    types = {s.section_type for s in enriched.sections}
+
+    # LLM-only types still present.
+    assert "cover_page" in types
+    assert "revision_summary" in types
+    # Detector-only types present too — the merge didn't crowd them out.
+    assert "manufacturing_operations" in types or "micronization" in types
+    # No duplicate top-level entries for the same section_type.
+    seen: list[str] = [s.section_type for s in enriched.sections]
+    assert len(seen) == len(set(seen)), (
+        f"merged flatten produced duplicate section_types: {seen}"
+    )
+
+
 def test_enrichment_fails_open_when_no_markdown_for_bpcr_pages() -> None:
     """If the extractions lack markdown for the BPCR's page range
     (rare but possible — a doc with image-only pages), the section
