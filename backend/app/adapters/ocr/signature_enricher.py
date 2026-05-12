@@ -327,23 +327,61 @@ def _is_signature_column_header(text: str, patterns: tuple[str, ...]) -> bool:
     return any(p in norm for p in patterns)
 
 
-def _is_date_only_or_empty(cell_text: str) -> bool:
-    """True for cells that should be considered signature-column-empty.
+_FILLER_TOKENS = {"-", "—", "--", "---", "----", "_", "__", "___", "____"}
 
-    A cell containing only whitespace, only a date, only an
-    em-dash, or only ``----`` is treated as "no signature
-    captured in OCR" and is a candidate for enrichment.
+
+def _is_filler_only(cell_text: str) -> bool:
+    """True for cells whose content reduces to nothing but
+    filler — pure whitespace, dashes, or markup tags. These are
+    legitimate ``no data captured`` cells; the L4 / L_TEXT
+    layers must NEVER stamp a ``[Signature]`` over them
+    (observed false positive on 2538105061.pdf where
+    ``[Signature] ----`` was being injected into dash-only
+    cells — 19 such cells across the doc pre-fix).
     """
-    stripped = cell_text.strip()
-    if not stripped:
+    text = _TAG_STRIP_RE.sub("", cell_text).strip()
+    if not text:
         return True
-    if stripped in {"-", "—", "--", "---", "----"}:
+    if text in _FILLER_TOKENS:
         return True
-    # Date-only: strip dates, see if anything else remains.
-    without_dates = DATE_RE.sub("", stripped).strip()
+    # Repeated dash / underscore / dot runs of any length count
+    # as filler.
+    if all(c in "-—_." for c in text):
+        return True
+    return False
+
+
+def _is_date_only_or_empty(cell_text: str) -> bool:
+    """True for cells that should be considered signature-column-empty
+    AND contain a date.
+
+    Used by the L4 path: when a cell carries a date with NOTHING
+    else meaningful (after markup, filler, tags are stripped),
+    L4 treats the date as evidence that the row was signed
+    (the operator wrote the date but their initials weren't
+    captured by OCR — common with light pen strokes).
+
+    Tag-stripping handles ``<br>27/11/2025`` (1 page on the
+    UIIBEHSII28 run had this shape and was being missed
+    because the ``<br>`` survived the strip).
+
+    Filler-only cells (dashes, underscores, empty) return False
+    here — they're missing-signature findings, not date-only
+    signatures. Use :func:`_is_filler_only` to test for that.
+    """
+    text = _TAG_STRIP_RE.sub("", cell_text).strip()
+    if not text:
+        return False  # filler — handled separately
+    if text in _FILLER_TOKENS:
+        return False  # filler
+    # After tag/filler strip, must contain a date AND nothing
+    # else of substance.
+    if not DATE_RE.search(text):
+        return False
+    without_dates = DATE_RE.sub("", text).strip(" -—_.|")
     if not without_dates:
         return True
-    if without_dates in {"-", "—", "--", "---", "----"}:
+    if without_dates in _FILLER_TOKENS:
         return True
     return False
 
@@ -516,12 +554,16 @@ def _enrich_table(
                 modified = True
                 continue
 
-            # An empty cell in a signature column is a legitimate
-            # missing-signature finding — preserve it (don't
-            # inject anything below this point). Verified at the
-            # top of every layer's logic so the invariant stays
-            # universal.
-            if not cell.strip() or _is_empty(cell):
+            # An empty / filler-only cell in a signature column
+            # is a legitimate missing-signature finding —
+            # preserve it (don't inject anything below this
+            # point). Tightened on 2026-05-12 after Akhilesh
+            # reported false positives on dash-only cells
+            # (``[Signature] ----`` was being stamped).
+            # ``_is_filler_only`` returns True for whitespace,
+            # any-length dash / underscore / dot runs, and
+            # bare markup tags.
+            if _is_filler_only(cell):
                 continue
 
             # Compute the cell's "real" text content with dates,
