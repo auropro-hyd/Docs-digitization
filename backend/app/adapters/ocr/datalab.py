@@ -1086,16 +1086,52 @@ class DatalabOCRAdapter:
             _split_table_row,
             _normalize_for_match,
         )
+        try:
+            from app.observability.run_telemetry import record_event
+        except Exception:  # pragma: no cover — defensive
+            def record_event(*a, **kw):  # type: ignore[no-redef]
+                return None
 
         doc_dir = Path(pdf_path).parent
         images_dir = doc_dir / "images"
         doc_id = doc_dir.name
+
+        # Emit an always-fires "attempted" event at entry so post-run
+        # validation can see the crop pipeline ran. Captures counts
+        # of TableCells / sig-marker cells / unmatched cells per page
+        # so silent no-crop runs are no longer black-box.
+        total_table_cells = sum(
+            1 for bs in bbox_data.values() for (bt, _t, _p) in bs
+            if bt == "TableCell"
+        )
+        record_event(
+            "signature.crop_pipeline_attempted",
+            pages_in_chunk=len(pages),
+            total_table_cells_in_bbox_data=total_table_cells,
+            sig_columns_loaded=len(sig_columns),
+        )
+
+        if total_table_cells == 0:
+            # Datalab's JSON tree had no TableCell blocks for this
+            # chunk — common when the run uses Datalab's "fast" or
+            # "balanced" mode rather than "accurate", or when the
+            # API is in a flaky state. Without TableCells we have
+            # no cell-bbox info to crop. Bail loudly to telemetry.
+            record_event(
+                "signature.crop_pipeline_skipped",
+                level="warning",
+                reason="no TableCell blocks in bbox_data",
+                pages_in_chunk=len(pages),
+            )
+            return
 
         # Collect per-page cell crop work: which bboxes to crop +
         # which markdown positions to rewrite.
         crop_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
         # page_num -> [(cell_text_to_replace, bbox_key_index)]
         per_page_replacements: dict[int, list[tuple[str, int]]] = {}
+        # Per-page diagnostic counters
+        per_page_diag: dict[int, dict[str, int]] = {}
 
         # Build OCR-pixel page size map for the cropper.
         page_pixel_sizes: dict[int, tuple[float, float]] = {}
@@ -1196,20 +1232,35 @@ class DatalabOCRAdapter:
             crop_list: list[tuple[float, float, float, float]] = []
             replacements: list[tuple[str, int]] = []
             used_indices: dict[str, int] = {}
+            unmatched_keys: list[str] = []
             for raw_cell, cleaned in cell_specs:
                 # Pull the next bbox for this cleaned text
                 # (reading-order match for duplicates).
                 bboxes = cleaned_index.get(cleaned)
                 if not bboxes:
+                    unmatched_keys.append(cleaned)
                     continue
                 idx = used_indices.get(cleaned, 0)
                 if idx >= len(bboxes):
+                    unmatched_keys.append(cleaned + f"#{idx}")
                     continue  # ran out — mismatched
                 bbox = bboxes[idx]
                 used_indices[cleaned] = idx + 1
                 bbox_idx_in_crop = len(crop_list)
                 crop_list.append(bbox)
                 replacements.append((raw_cell, bbox_idx_in_crop))
+
+            per_page_diag[page_num] = {
+                "sig_marker_cells_without_img": len(cell_specs),
+                "table_cells_in_bbox_data": len(table_cells),
+                "table_cells_with_matchable_text": sum(
+                    len(v) for v in cleaned_index.values()
+                ),
+                "matched_to_bbox": len(crop_list),
+                "unmatched_sig_cells": len(unmatched_keys),
+                "sample_unmatched_keys": unmatched_keys[:5],
+                "sample_table_cell_keys": list(cleaned_index.keys())[:5],
+            }
 
             if crop_list:
                 crop_bboxes[page_num] = crop_list
@@ -1262,20 +1313,31 @@ class DatalabOCRAdapter:
                     total_injected += 1
             page.markdown = md
 
+        # Always emit a completion event so post-run validation can
+        # see the matcher's per-page diagnostics regardless of how
+        # many crops were generated. ``per_page_diag`` shows
+        # exactly where the matching falls off when zero crops
+        # land — most often "table_cells_with_matchable_text=0"
+        # (JSON tree was empty) or "matched_to_bbox=0" (cell
+        # text didn't match any TableCell text).
+        record_event(
+            "signature.crop_pipeline_completed",
+            total_injected=total_injected,
+            pages_touched=len(crop_bboxes),
+            pages_with_signatures_to_match=len(per_page_diag),
+            per_page_diag=per_page_diag,
+        )
+
         if total_injected:
             logger.info(
                 "signature crop: injected %d <img> tags across %d pages",
                 total_injected, len(crop_bboxes),
             )
-            try:
-                from app.observability.run_telemetry import record_event
-                record_event(
-                    "signature.crops_injected",
-                    total_injected=total_injected,
-                    pages_touched=len(crop_bboxes),
-                )
-            except Exception:
-                pass
+            record_event(
+                "signature.crops_injected",
+                total_injected=total_injected,
+                pages_touched=len(crop_bboxes),
+            )
 
     async def _process_single_chunk(
         self,
