@@ -209,6 +209,69 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
             state["pdf_path"],
             progress_callback=_on_ocr_progress,
         )
+
+        # ── Persist image binaries that Datalab cropped out of the
+        # PDF (signature regions, figures, diagrams). Without this
+        # step, the ``<img src="HASH_img.jpg"/>`` tags Datalab
+        # embeds in the markdown resolve to 404 on the frontend
+        # ("broken image" symptom reported on 2538105061.pdf).
+        # We also rewrite the markdown so the ``src`` attribute
+        # points at the API-served path the frontend can fetch.
+        from pathlib import Path
+        doc_dir = Path(state["pdf_path"]).parent
+        doc_id_local = doc_dir.name
+        images_dir = doc_dir / "images"
+        images_written = 0
+        try:
+            for page in result.pages:
+                if not page.images:
+                    continue
+                images_dir.mkdir(parents=True, exist_ok=True)
+                for name, blob in page.images.items():
+                    target = images_dir / name
+                    if not target.exists():
+                        target.write_bytes(blob)
+                        images_written += 1
+        except Exception:
+            logger.exception("Failed to persist some image binaries; continuing")
+
+        # Rewrite ``<img src="HASH.jpg"/>`` → API-served path so
+        # the frontend doesn't need to know the doc_dir layout.
+        # Done in-place on the per-page markdown the rest of the
+        # node returns.
+        import re as _re
+        _img_src_re = _re.compile(
+            r'(<img\b[^>]*\bsrc=)(["\'])([^"\']+_img\.\w+)\2',
+            _re.IGNORECASE,
+        )
+        api_prefix = f"/api/documents/{doc_id_local}/images/"
+
+        def _rewrite_md(md: str) -> str:
+            if not md or "<img" not in md:
+                return md
+            return _img_src_re.sub(
+                lambda m: f'{m.group(1)}{m.group(2)}{api_prefix}{m.group(3)}{m.group(2)}',
+                md,
+            )
+
+        for page in result.pages:
+            page.markdown = _rewrite_md(page.markdown)
+        if result.full_markdown:
+            result.full_markdown = _rewrite_md(result.full_markdown)
+
+        # Surface image-persistence telemetry. record_event is a
+        # no-op when no run-telemetry sink is bound (e.g. tests).
+        try:
+            from app.observability.run_telemetry import record_event
+            record_event(
+                "ocr.images_persisted",
+                doc_id=doc_id_local,
+                images_written=images_written,
+                images_dir=str(images_dir),
+            )
+        except Exception:
+            pass
+
         azure_results: dict = {}
         raw_markdown: dict = {}
 

@@ -89,6 +89,15 @@ logger = logging.getLogger(__name__)
 LAYER_CONFIDENCE: dict[str, float] = {
     "L0": 0.85,
     "L1": 0.80,
+    # L_IMG — Datalab classified the signature CELL as an image
+    # region rather than text, and emitted an
+    # ``<img data-bbox="..." src="HASH_img.jpg"/>`` tag inline
+    # in the markdown. Strong positive signal: Datalab cropped
+    # the region specifically because it detected handwritten
+    # content. Confidence 0.75 — below L1 (Datalab's explicit
+    # text marker) but above the heuristic layers because the
+    # block extraction is deterministic, not a guess.
+    "L_IMG": 0.75,
     "L2": 0.65,
     "L3": 0.45,
     # L4 — last-resort heuristic. Fires when NO JSON-tree
@@ -124,6 +133,19 @@ EXISTING_BLOCK_RE = re.compile(
 )
 
 
+# Datalab's image-region marker for handwriting/signature blocks.
+# Format: ``<img data-bbox="x1 y1 x2 y2" src="<HASH>_img.jpg"/>``
+# When this appears INSIDE a signature-named column cell, it's a
+# strong positive signature signal — Datalab cropped that exact
+# region because it detected non-text content there. Diagnostic
+# on the 2538105061.pdf run showed page 3 alone has 32 such tags
+# in Done-by / Checked-by cells.
+IMG_TAG_RE = re.compile(
+    r"<img\s+[^>]*data-bbox\s*=\s*\"[^\"]+\"[^>]*>",
+    re.IGNORECASE,
+)
+
+
 @dataclass(frozen=True)
 class JsonBlock:
     """A single block extracted from Datalab's JSON tree.
@@ -144,7 +166,9 @@ class EnrichmentTelemetry:
     """Per-page counters surfaced to ``extraction_telemetry``."""
 
     layer_counts: dict[str, int] = field(
-        default_factory=lambda: {"L0": 0, "L1": 0, "L2": 0, "L3": 0, "L4": 0}
+        default_factory=lambda: {
+            "L0": 0, "L1": 0, "L_IMG": 0, "L2": 0, "L3": 0, "L4": 0,
+        }
     )
     injected_count: int = 0
     skipped_idempotent: int = 0
@@ -368,16 +392,18 @@ def _enrich_table(
     telemetry.signature_columns_detected += len(sig_columns)
 
     # Choose the strongest available layer. L2 > L3 > L4.
-    layer: str | None = None
+    # The page-level layer used for cells without their own
+    # explicit evidence (i.e., date-only-or-empty cells the
+    # heuristic layers backfill).
+    page_layer: str | None = None
     if page_has_signature_block:
-        layer = "L2"
+        page_layer = "L2"
     elif page_has_handwriting_block:
-        layer = "L3"
+        page_layer = "L3"
     elif aggressive:
-        layer = "L4"
-    # else: no evidence + aggressive disabled — don't synthesize.
-    if layer is None:
-        return rows, telemetry
+        page_layer = "L4"
+    # else: no page-level evidence + aggressive disabled —
+    # heuristic layers don't fire. L_IMG still can.
 
     new_rows = list(rows)
     for i, row in enumerate(rows):
@@ -394,6 +420,27 @@ def _enrich_table(
             if EXISTING_MARKER_RE.search(cell):
                 telemetry.skipped_idempotent += 1
                 continue
+
+            # ── L_IMG: cell contains a Datalab image-region tag
+            # for handwritten content. Datalab cropped the region
+            # deliberately because it detected non-text; that's a
+            # strong positive signature signal regardless of any
+            # page-level block evidence. Inject ``[Signature]``
+            # text ALONGSIDE the <img> tag so frontends render
+            # both: the text marker (for grep/search/rule 5) AND
+            # the image (visual evidence for HITL reviewers).
+            if IMG_TAG_RE.search(cell):
+                cells[col_idx] = f" [Signature] {cell.strip()} "
+                telemetry.layer_counts["L_IMG"] += 1
+                telemetry.injected_count += 1
+                modified = True
+                continue
+
+            # ── L2/L3/L4: heuristic backfill for cells whose
+            # text content is date-only or filler. Needs a
+            # page-level layer to be eligible.
+            if page_layer is None:
+                continue
             if _is_date_only_or_empty(cell):
                 # Only inject when there's signal something was
                 # written. An empty cell with no handwriting on
@@ -401,7 +448,7 @@ def _enrich_table(
                 # finding and must NOT be papered over.
                 if cell.strip() and not _is_empty(cell):
                     cells[col_idx] = f" [Signature] {cell.strip()} "
-                    telemetry.layer_counts[layer] += 1
+                    telemetry.layer_counts[page_layer] += 1
                     telemetry.injected_count += 1
                     modified = True
         if modified:
@@ -470,15 +517,23 @@ def enrich_page(
     page_has_signature_block = any(b.block_type == "Signature" for b in page_blocks)
     page_has_handwriting_block = any(b.block_type == "Handwriting" for b in page_blocks)
 
-    # When ``aggressive`` is False and there's no JSON-tree
-    # evidence, short-circuit. With aggressive=True the L4 path
-    # in ``_enrich_table`` fires on column-header + date alone,
-    # which is the only signal available on docs where Datalab's
+    # When ``aggressive`` is False AND there's no JSON-tree
+    # evidence AND the markdown has no ``<img data-bbox>`` tags
+    # to drive L_IMG, short-circuit. The L_IMG path detects
+    # Datalab-emitted image regions in signature columns —
+    # those count as deterministic evidence (Datalab cropped
+    # the region) and fire even in strict mode. With
+    # aggressive=True the L4 path fires on column-header +
+    # date alone for cells without <img> evidence, which is
+    # the only signal available on docs where Datalab's
     # classifier emits ``[Signature]`` inline but doesn't tag
-    # individual blocks (the May 4 diagnostic showed
-    # ``handwritten_count=0`` on every page despite 53 inline
-    # markers — the JSON tree is unreliable as evidence).
-    if not aggressive and not (page_has_signature_block or page_has_handwriting_block):
+    # individual blocks.
+    has_img_tag_evidence = bool(IMG_TAG_RE.search(markdown))
+    if (
+        not aggressive
+        and not (page_has_signature_block or page_has_handwriting_block)
+        and not has_img_tag_evidence
+    ):
         return EnrichmentResult(markdown=markdown, telemetry=telemetry)
 
     tables = _enumerate_tables(markdown)

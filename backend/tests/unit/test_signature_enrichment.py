@@ -478,6 +478,76 @@ def test_l4_does_not_synthesize_in_empty_cells() -> None:
     assert result.telemetry.injected_count == 0
 
 
+def test_l_img_injects_alongside_img_tag_in_signature_column() -> None:
+    """L_IMG path: cell has ``<img data-bbox="...">`` Datalab tag in
+    a signature-named column → inject ``[Signature]`` text BEFORE
+    the img tag. Frontend then renders both: text marker for
+    grep/rule-5, image for HITL visual review.
+
+    This is the path that fixes Akhilesh's UIIBEHSII28 dispensing
+    table — page 3 alone had 32 such tags previously skipped
+    because the cells weren't 'date-only-or-empty'."""
+    md = """\
+| Step | Done by | Checked by |
+|------|---------|------------|
+| 1 | <img data-bbox="1268 582 1356 660" src="aaa_img.jpg"/> | <img data-bbox="1372 560 1532 660" src="bbb_img.jpg"/> |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" in result.markdown
+    # Both the text marker AND the img tag must coexist.
+    assert "<img" in result.markdown, "img tag must NOT be removed — frontend renders it"
+    assert result.telemetry.layer_counts["L_IMG"] == 2
+    assert result.telemetry.injected_count == 2
+
+
+def test_l_img_fires_even_in_strict_mode_aggressive_false() -> None:
+    """L_IMG is deterministic (Datalab cropped the region). It
+    must fire even when aggressive=False so strict-classifier
+    callers still get image-region signatures."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 | <img data-bbox="0 0 10 10" src="aaa_img.jpg"/> |
+"""
+    result = enrich_page(
+        md, [], page_num=3,
+        signature_column_headers=_SIGNATURE_COLUMNS, aggressive=False,
+    )
+    assert result.telemetry.layer_counts["L_IMG"] == 1
+    assert "[Signature]" in result.markdown
+
+
+def test_l_img_does_not_fire_on_img_outside_signature_column() -> None:
+    """A Datalab img tag in a NON-signature column (e.g.
+    figure / logo / chart) must NOT trigger signature
+    injection. Otherwise every page with a header logo
+    would be flagged as signed."""
+    md = """\
+| Step | Diagram | Done by |
+|------|---------|---------|
+| 1 | <img data-bbox="0 0 100 100" src="xxx_img.jpg"/> | 03/10/2025 |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    # No L_IMG injection — the img is in 'Diagram', not 'Done by'.
+    assert result.telemetry.layer_counts["L_IMG"] == 0
+    # But L4 still fires on the date-only Done by cell.
+    assert result.telemetry.layer_counts["L4"] == 1
+
+
+def test_l_img_outranks_l4_when_both_could_fire() -> None:
+    """A cell with both an img tag AND a date is a strong
+    L_IMG signal (Datalab cropped it) — must use L_IMG
+    confidence, not L4."""
+    md = """\
+| Step | Done by |
+|------|---------|
+| 1 | <img data-bbox="0 0 10 10" src="aaa.jpg"/> 03/10/2025 |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert result.telemetry.layer_counts["L_IMG"] == 1
+    assert result.telemetry.layer_counts["L4"] == 0
+
+
 def test_end_to_end_realistic_bpcr_dispensing_row() -> None:
     """A BPCR raw-material dispensing table — the exact shape
     Akhilesh's screenshot showed. Datalab classified the
