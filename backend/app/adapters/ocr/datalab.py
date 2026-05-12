@@ -858,6 +858,7 @@ class DatalabOCRAdapter:
         page_offset: int,
         bbox_data: dict[int, list[tuple[str, str, list[list[float]]]]] | None = None,
         extraction_data: dict | None = None,
+        pdf_path: str | None = None,
     ) -> tuple[list[OCRPageResult], str, list[dict], list[SignatureRegion], list[KeyValuePair]]:
         """Convert a Data Lab ConversionResult into OCR port models."""
         raw_md: str = getattr(result, "markdown", "") or ""
@@ -990,6 +991,30 @@ class DatalabOCRAdapter:
                 )
             )
 
+        # ── Cell-bbox crops for L_HWTEXT / L_TEXT cells ─────────
+        # Where Datalab transcribed handwritten initials as text
+        # (italic ``<i>FE</i>`` or plain ``N089``) instead of
+        # cropping them as ``<img data-bbox>`` regions, the cell
+        # now has ``[Signature]`` text but no visual signature.
+        # Akhilesh reported this gap on 2538105061.pdf: 29 pages
+        # affected. We close it by rendering the PDF page at the
+        # cell's TableCell bbox and writing the crop next to the
+        # other ``HASH_img.jpg`` files, then rewriting the
+        # markdown to include the ``<img>`` tag alongside the
+        # text marker.
+        #
+        # Fail-open: any crop failure is logged and the cell
+        # keeps its ``[Signature]`` text marker without an image.
+        if pdf_path and bbox_data and sig_columns:
+            try:
+                self._inject_signature_crops(
+                    pages, bbox_data, sig_columns, pdf_path,
+                )
+            except Exception:  # pragma: no cover — defensive
+                logger.exception(
+                    "signature crop injection failed; markdown unchanged"
+                )
+
         if sig_enrichment_telemetry:
             logger.info(
                 "signature enricher: enriched %d page(s); per-page telemetry=%s",
@@ -1024,6 +1049,226 @@ class DatalabOCRAdapter:
             all_kv_pairs = _enrich_critical_steps(all_kv_pairs)
 
         return pages, sanitized_md, all_table_meta, all_signatures, all_kv_pairs
+
+    def _inject_signature_crops(
+        self,
+        pages: list[OCRPageResult],
+        bbox_data: dict[int, list[tuple[str, str, list[list[float]]]]],
+        sig_columns: tuple[str, ...],
+        pdf_path: str,
+    ) -> None:
+        """For each ``[Signature]``-marked cell with no ``<img>``,
+        find the matching TableCell bbox in the JSON tree, crop
+        the PDF page at that bbox, save as
+        ``<doc_dir>/images/p{page}_sigcrop_{hash}.jpg``, and
+        rewrite the markdown to embed the ``<img>`` tag alongside
+        the ``[Signature]`` marker.
+
+        Matching strategy: text-based. The JSON-tree ``TableCell``
+        blocks carry both a polygon and an HTML-stripped text
+        content. We clean the markdown cell text the same way and
+        match by exact equality. When the match is unique we use
+        that bbox; when it's ambiguous (multiple cells share the
+        same text — common with ``N089`` repeated across rows) we
+        match by reading order.
+
+        Mutates ``pages[i].markdown`` in place. Fail-open: any
+        single-cell failure is logged and the cell keeps its
+        text marker without an image.
+        """
+        from pathlib import Path
+        from app.adapters.ocr.cell_image_crop import crop_cell_regions
+        from app.adapters.ocr.signature_enricher import (
+            EXISTING_MARKER_RE,
+            IMG_TAG_RE,
+            _is_separator_row,
+            _is_signature_column_header,
+            _split_table_row,
+            _clean_for_signature_check,
+        )
+
+        doc_dir = Path(pdf_path).parent
+        images_dir = doc_dir / "images"
+        doc_id = doc_dir.name
+
+        # Collect per-page cell crop work: which bboxes to crop +
+        # which markdown positions to rewrite.
+        crop_bboxes: dict[int, list[tuple[float, float, float, float]]] = {}
+        # page_num -> [(cell_text_to_replace, bbox_key_index)]
+        per_page_replacements: dict[int, list[tuple[str, int]]] = {}
+
+        # Build OCR-pixel page size map for the cropper.
+        page_pixel_sizes: dict[int, tuple[float, float]] = {}
+        for page in pages:
+            w = getattr(page, "page_width", None) or 0
+            h = getattr(page, "page_height", None) or 0
+            if w and h:
+                page_pixel_sizes[page.page_num] = (float(w), float(h))
+
+        for page in pages:
+            page_num = page.page_num
+            md = page.markdown
+            if not md or "[Signature]" not in md:
+                continue
+            page_blocks = bbox_data.get(page_num, []) or []
+            # All TableCell blocks on this page, in JSON order.
+            table_cells = [
+                (txt, poly) for (bt, txt, poly) in page_blocks
+                if bt == "TableCell" and poly
+            ]
+            if not table_cells:
+                continue
+
+            # Find each [Signature] cell without an <img>; collect
+            # its cleaned text content so we can match against
+            # TableCell texts.
+            cell_specs: list[tuple[str, str]] = []  # (raw_cell, cleaned)
+            rows = md.split("\n")
+            i = 0
+            while i < len(rows):
+                if not rows[i].strip().startswith("|"):
+                    i += 1; continue
+                ts = i
+                while i < len(rows) and rows[i].strip().startswith("|"):
+                    i += 1
+                table = rows[ts:i]
+                hdr_idx = next(
+                    (k for k, r in enumerate(table)
+                     if not _is_separator_row(r)),
+                    None,
+                )
+                if hdr_idx is None:
+                    continue
+                hdr_cells = _split_table_row(table[hdr_idx])
+                sig_col_idx = {
+                    ci for ci, h in enumerate(hdr_cells)
+                    if _is_signature_column_header(h, sig_columns)
+                }
+                if not sig_col_idx:
+                    continue
+                for k, row in enumerate(table):
+                    if k == hdr_idx or _is_separator_row(row):
+                        continue
+                    data_cells = _split_table_row(row)
+                    for ci in sig_col_idx:
+                        if ci >= len(data_cells):
+                            continue
+                        cell = data_cells[ci]
+                        if not EXISTING_MARKER_RE.search(cell):
+                            continue
+                        if IMG_TAG_RE.search(cell):
+                            continue  # already has crop
+                        # Cleaned text used for matching against
+                        # the TableCell.text field.
+                        without_marker = EXISTING_MARKER_RE.sub("", cell)
+                        cleaned = _clean_for_signature_check(without_marker)
+                        if not cleaned:
+                            continue
+                        cell_specs.append((cell, cleaned))
+
+            if not cell_specs:
+                continue
+
+            # Index TableCell texts the same way we cleaned the
+            # markdown cells. Match by exact cleaned equality;
+            # when multiple TableCells share the same text, pair
+            # by reading-order so first signature cell ↔ first
+            # matching TableCell, etc.
+            cleaned_index: dict[str, list[
+                tuple[float, float, float, float]
+            ]] = {}
+            for txt, poly in table_cells:
+                t_clean = _clean_for_signature_check(txt or "")
+                if not t_clean:
+                    continue
+                xs = [p[0] for p in poly]
+                ys = [p[1] for p in poly]
+                bbox = (min(xs), min(ys), max(xs), max(ys))
+                cleaned_index.setdefault(t_clean, []).append(bbox)
+
+            crop_list: list[tuple[float, float, float, float]] = []
+            replacements: list[tuple[str, int]] = []
+            used_indices: dict[str, int] = {}
+            for raw_cell, cleaned in cell_specs:
+                # Pull the next bbox for this cleaned text
+                # (reading-order match for duplicates).
+                bboxes = cleaned_index.get(cleaned)
+                if not bboxes:
+                    continue
+                idx = used_indices.get(cleaned, 0)
+                if idx >= len(bboxes):
+                    continue  # ran out — mismatched
+                bbox = bboxes[idx]
+                used_indices[cleaned] = idx + 1
+                bbox_idx_in_crop = len(crop_list)
+                crop_list.append(bbox)
+                replacements.append((raw_cell, bbox_idx_in_crop))
+
+            if crop_list:
+                crop_bboxes[page_num] = crop_list
+                per_page_replacements[page_num] = replacements
+
+        if not crop_bboxes:
+            return
+
+        # Run all crops in one pypdfium2 session.
+        crop_results = crop_cell_regions(
+            pdf_path=pdf_path,
+            cell_bboxes=crop_bboxes,
+            output_dir=images_dir,
+            page_pixel_sizes=page_pixel_sizes,
+        )
+
+        api_prefix = f"/api/documents/{doc_id}/images/"
+        total_injected = 0
+
+        # Rewrite each page's markdown to embed the <img> tag.
+        for page in pages:
+            page_num = page.page_num
+            replacements = per_page_replacements.get(page_num)
+            if not replacements:
+                continue
+            crops = crop_results.get(page_num) or []
+            if not crops:
+                continue
+            md = page.markdown
+            for raw_cell, bbox_idx in replacements:
+                if bbox_idx >= len(crops):
+                    continue
+                _, filename = crops[bbox_idx]
+                # Inject <img> immediately after [Signature] for
+                # the matched cell. Use a single replace so
+                # idempotency on rerun is preserved (the new
+                # cell content already has an <img> so a second
+                # pass would skip it via the IMG_TAG_RE guard).
+                new_cell = re.sub(
+                    r"(\[Signature\])(\s*)",
+                    rf'\1 <img data-sigcrop="1" src="{api_prefix}{filename}"/>\2',
+                    raw_cell,
+                    count=1,
+                )
+                # Replace only the first occurrence per row (raw_cell
+                # may appear elsewhere on the page if Datalab
+                # produces identical cell content).
+                if new_cell != raw_cell:
+                    md = md.replace(raw_cell, new_cell, 1)
+                    total_injected += 1
+            page.markdown = md
+
+        if total_injected:
+            logger.info(
+                "signature crop: injected %d <img> tags across %d pages",
+                total_injected, len(crop_bboxes),
+            )
+            try:
+                from app.observability.run_telemetry import record_event
+                record_event(
+                    "signature.crops_injected",
+                    total_injected=total_injected,
+                    pages_touched=len(crop_bboxes),
+                )
+            except Exception:
+                pass
 
     async def _process_single_chunk(
         self,
@@ -1080,6 +1325,7 @@ class DatalabOCRAdapter:
                 first_page_0 = int(page_range.split(",")[0].split("-")[0]) if page_range else 0
                 chunk_pages, chunk_md, t_meta, sigs, kv_pairs = self._process_result(
                     result, first_page_0, bbox_data, extraction_data,
+                    pdf_path=pdf_path,
                 )
             finally:
                 if in_flight is not None:

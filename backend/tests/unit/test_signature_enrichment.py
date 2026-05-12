@@ -370,13 +370,22 @@ def test_column_header_match_is_substring_and_case_insensitive() -> None:
 
 
 def test_date_only_predicate() -> None:
-    assert _is_date_only_or_empty("")
-    assert _is_date_only_or_empty(" ")
-    assert _is_date_only_or_empty("---")
+    """``_is_date_only_or_empty`` returns True ONLY when the
+    cell contains a date AND nothing else of substance.
+    Tightened on 2026-05-12 — filler-only cells (whitespace,
+    dashes) now route through ``_is_filler_only`` instead, so
+    L4 doesn't stamp ``[Signature] ----`` false positives.
+    """
+    # Date-only cases (date + filler):
     assert _is_date_only_or_empty("03/10/2025")
     assert _is_date_only_or_empty(" 03-10-2025 ")
     assert _is_date_only_or_empty("3/10/25")
-    # Not date-only:
+    assert _is_date_only_or_empty("<br>27/11/2025")
+    assert _is_date_only_or_empty("27/11/2025 -")
+    # Not date-only (no date present, or extra text):
+    assert not _is_date_only_or_empty("")
+    assert not _is_date_only_or_empty(" ")
+    assert not _is_date_only_or_empty("---")
     assert not _is_date_only_or_empty("[Signature]")
     assert not _is_date_only_or_empty("AK 03/10/2025")
     assert not _is_date_only_or_empty("OK")
@@ -622,6 +631,57 @@ def test_l_hwtext_outranks_l_text_when_italic_present() -> None:
     result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
     assert result.telemetry.layer_counts["L_HWTEXT"] == 1
     assert result.telemetry.layer_counts["L_TEXT"] == 0
+
+
+def test_dash_only_cell_never_stamped_filler_check() -> None:
+    """The false positive Akhilesh reported on 2538105061.pdf:
+    ``[Signature] ----`` and ``[Signature] —`` were appearing on
+    cells whose entire content was filler dashes. Those are
+    legitimate ``no data captured`` cells — a missing-signature
+    finding rule 5 will flag. Must never be stamped.
+
+    Tightened on 2026-05-12 via :func:`_is_filler_only`."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 | ---- | --- |
+| 2 | — | —— |
+| 3 | __ | __ |
+"""
+    result = enrich_page(md, [], page_num=3, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" not in result.markdown
+    assert result.telemetry.injected_count == 0
+
+
+def test_br_prefix_date_cell_recognized_as_date_only() -> None:
+    """Page 20 of 2538105061.pdf had cells like ``<br>27/11/2025``
+    that the L4 path was skipping because ``<br>`` survived the
+    strip. Fixed by tag-stripping inside ``_is_date_only_or_empty``.
+
+    The underlying cell IS a date-only cell (a row that was
+    signed-and-dated where OCR captured only the date) — L4
+    should fire."""
+    md = """\
+| Step | Done By | Checked By |
+|------|---------|------------|
+| 1 | <br>27/11/2025 | <br>27/11/2025 |
+"""
+    result = enrich_page(md, [], page_num=20, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" in result.markdown
+    assert result.telemetry.layer_counts["L4"] == 2
+
+
+def test_underscore_filler_treated_as_empty() -> None:
+    """Some templates use underscores instead of dashes as filler
+    (``___`` / ``____``). The filler predicate covers these too."""
+    md = """\
+| Step | Done By |
+|------|---------|
+| 1 | ___ |
+| 2 | ____ |
+"""
+    result = enrich_page(md, [], page_num=1, signature_column_headers=_SIGNATURE_COLUMNS)
+    assert "[Signature]" not in result.markdown
 
 
 def test_empty_cell_still_never_stamped_with_new_layers() -> None:
