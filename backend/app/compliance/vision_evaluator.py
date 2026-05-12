@@ -373,6 +373,50 @@ def _collect_visual_checks(rules: Sequence[AuditRule]) -> set[str]:
     return checks
 
 
+def audit_unused_vc_prompts(
+    rules: Sequence[AuditRule], agent: str = "",
+) -> list[str]:
+    """Emit a telemetry event for any VC-* prompt with no rule reference.
+
+    Diagnostic for the "VC-DOC-QUALITY never fires" symptom on run
+    e5e35ffc-… (2026-05-12): the prompt template existed and had been
+    extended in PR #43 to cover scan-process defects, but NO rule in
+    the active ``alcoa_rules.yaml`` carries ``visual_checks:
+    [VC-DOC-QUALITY]`` — so the prompt was unreachable. The audit
+    catches this gap by static comparison of defined-VC-IDs vs.
+    referenced-VC-IDs, without needing a successful VLM call.
+
+    Returns the list of unused VC IDs (empty when full coverage).
+    Telemetry is auto-no-op when no run sink is bound (e.g. tests).
+    """
+    defined = set(_VC_PROMPTS.keys())
+    referenced = _collect_visual_checks(rules)
+    unused = sorted(defined - referenced)
+    if not unused:
+        return unused
+    logger.warning(
+        "vlm.unused_check_prompt (agent=%s) — %d VC prompt(s) defined "
+        "but never referenced by any rule: %s. These checks will never "
+        "fire even if VLM is enabled. Either add ``visual_checks: "
+        "[<VC-ID>]`` to a rule or remove the prompt template.",
+        agent or "(unknown)", len(unused), unused,
+    )
+    try:
+        from app.observability.run_telemetry import record_event
+        record_event(
+            "vlm.unused_check_prompt",
+            level="warning",
+            agent=agent,
+            unused_vc_ids=unused,
+            unused_count=len(unused),
+            referenced_count=len(referenced),
+            defined_count=len(defined),
+        )
+    except Exception:  # pragma: no cover — never break eval
+        pass
+    return unused
+
+
 def _build_vision_prompt(rules: Sequence[AuditRule], page_num: int) -> str:
     """Compose a VLM prompt from the union of visual checks needed."""
     checks = _collect_visual_checks(rules)
