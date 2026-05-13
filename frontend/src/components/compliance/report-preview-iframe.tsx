@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -42,6 +43,9 @@ export function ReportPreviewIframe({
       <DialogContent className="max-w-5xl w-[92vw] h-[88vh] p-0 flex flex-col">
         <DialogHeader className="px-5 py-3 border-b">
           <DialogTitle className="text-sm">Compliance Report Preview</DialogTitle>
+          <DialogDescription className="text-xs">
+            Inline preview of the same artifact downloaded via Export.
+          </DialogDescription>
         </DialogHeader>
         <div className="flex-1 bg-muted">
           {open && (

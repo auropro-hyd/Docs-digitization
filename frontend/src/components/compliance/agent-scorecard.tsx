@@ -111,7 +111,11 @@ export function AgentScorecard({ report, onFindingClick }: AgentScorecardProps) 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {report.category_scores.map((cat, i) => (
           <motion.div
-            key={cat.category_id}
+            // Some agents emit the same ``category_id`` twice (e.g. a
+            // shared category split by sub-criteria). Suffix the index
+            // so React's reconciler doesn't get duplicate-key warnings
+            // and tear one of the cards down on every re-render.
+            key={`${cat.category_id}-${i}`}
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.03 }}

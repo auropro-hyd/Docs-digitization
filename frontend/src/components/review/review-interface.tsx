@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ConfidenceBadge } from "@/components/common/confidence-badge";
 import { PdfViewer } from "@/components/common/pdf-viewer";
-import { getDocumentPdfUrl, componentAction, bulkComponentAction, downloadExport, downloadExportAsPdf } from "@/lib/api";
+import { API_BASE, getDocumentPdfUrl, componentAction, bulkComponentAction, downloadExport, downloadExportAsPdf } from "@/lib/api";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -246,22 +246,37 @@ function applyPageMarkdownRecovery(page: ReviewPage, markdown: string): string {
   return `${headerTable}\n\n${text}`;
 }
 
-const markdownComponents = {
-  table: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
-    <div className="overflow-x-auto my-2">
-      <table {...props} className={cn("w-full border-collapse text-[12px]", props.className)} />
-    </div>
-  ),
-  th: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
-    <th {...props} className={cn("border border-border bg-muted/40 px-2 py-1 text-left align-top font-semibold", props.className)} />
-  ),
-  td: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
-    <td {...props} className={cn("border border-border px-2 py-1 align-top", props.className)} />
-  ),
-  p: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"p"> & { node?: unknown }) => (
-    <p {...props} className={cn("mb-2 leading-5", props.className)} />
-  ),
-};
+/** Factory so we can close over ``docId`` when rewriting Datalab's
+ * ``<hash>_img.jpg`` references to the backend's image-serving
+ * route. Otherwise the relative URLs resolve against the frontend
+ * origin and 404. */
+function buildMarkdownComponents(docId: string) {
+  return {
+    table: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"table"> & { node?: unknown }) => (
+      <div className="overflow-x-auto my-2">
+        <table {...props} className={cn("w-full border-collapse text-[12px]", props.className)} />
+      </div>
+    ),
+    th: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"th"> & { node?: unknown }) => (
+      <th {...props} className={cn("border border-border bg-muted/40 px-2 py-1 text-left align-top font-semibold", props.className)} />
+    ),
+    td: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"td"> & { node?: unknown }) => (
+      <td {...props} className={cn("border border-border px-2 py-1 align-top", props.className)} />
+    ),
+    p: ({ node: _node, ...props }: React.ComponentPropsWithoutRef<"p"> & { node?: unknown }) => (
+      <p {...props} className={cn("mb-2 leading-5", props.className)} />
+    ),
+    img: ({ node: _node, src, alt, ...props }: React.ComponentPropsWithoutRef<"img"> & { node?: unknown }) => {
+      const rawSrc = typeof src === "string" ? src : "";
+      const resolved =
+        rawSrc && !/^(https?:|data:|\/)/i.test(rawSrc)
+          ? `${API_BASE}/api/documents/${docId}/images/${rawSrc}`
+          : rawSrc;
+      // eslint-disable-next-line @next/next/no-img-element
+      return <img src={resolved} alt={alt ?? ""} {...props} />;
+    },
+  };
+}
 
 function CollapsibleKVList({
   pairs,
@@ -702,7 +717,7 @@ export function ReviewInterface({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeRaw, rehypeSanitize]}
-              components={markdownComponents}
+              components={buildMarkdownComponents(docId)}
             >
               {applyPageMarkdownRecovery(page, markdownContent)}
             </ReactMarkdown>
