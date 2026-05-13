@@ -1128,22 +1128,59 @@ def assemble_agent_report(
             if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(prev, 0):
                 per_rule_worst[ev.rule_id] = status
 
-            # Merge into audit trail (H2: keep worst status)
+            # Merge into audit trail (H2: keep worst status). The
+            # (status, reasoning, evidence, confidence) quadruple
+            # must stay internally consistent — a non_compliant
+            # verdict's confidence should reflect the verdict-
+            # producing eval's quality, not get diluted by either an
+            # earlier low-confidence pass on a different page (the
+            # PR #47 audit gap) OR a later lower-severity eval
+            # pulling confidence DOWN via min() despite contributing
+            # nothing to the verdict.
+            #
+            # Three-branch policy:
+            #
+            #   * Severity UPGRADE (new > existing): adopt the new
+            #     eval's (status, reasoning, evidence, confidence)
+            #     wholesale — it drives the verdict now.
+            #
+            #   * Severity EQUAL (new == existing): fill-if-empty
+            #     reasoning/evidence (preserve first crisp record),
+            #     ``min`` confidence (legitimately aggregate
+            #     uncertainty across same-severity evals).
+            #
+            #   * Severity LOWER (new < existing): fill-if-empty
+            #     reasoning/evidence only — confidence is NOT
+            #     touched. A lower-severity eval is not the verdict
+            #     and must not drag the verdict-driver's confidence
+            #     down.
             if ev.rule_id in raw_eval_map:
                 existing_re = raw_eval_map[ev.rule_id]
                 for pn in pn_list:
                     if pn not in existing_re.page_numbers:
                         existing_re.page_numbers.append(pn)
-                if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(existing_re.status, 0):
+                new_sev = _STATUS_SEVERITY.get(status, 0)
+                existing_sev = _STATUS_SEVERITY.get(existing_re.status, 0)
+                if new_sev > existing_sev:
                     existing_re.status = status
                     existing_re.reasoning = ev.reasoning or existing_re.reasoning
                     existing_re.evidence = ev.evidence or existing_re.evidence
-                else:
+                    existing_re.confidence = confidence
+                elif new_sev == existing_sev:
                     if ev.reasoning and not existing_re.reasoning:
                         existing_re.reasoning = ev.reasoning
                     if ev.evidence and not existing_re.evidence:
                         existing_re.evidence = ev.evidence
-                existing_re.confidence = min(existing_re.confidence, confidence)
+                    existing_re.confidence = min(existing_re.confidence, confidence)
+                else:
+                    # Lower-severity eval — record its presence
+                    # via the page list (already done above) and
+                    # the applicability trace (below), but do NOT
+                    # let it pull down the verdict's confidence.
+                    if ev.reasoning and not existing_re.reasoning:
+                        existing_re.reasoning = ev.reasoning
+                    if ev.evidence and not existing_re.evidence:
+                        existing_re.evidence = ev.evidence
                 for step in ev.applicability_trace:
                     if step not in existing_re.applicability_trace:
                         existing_re.applicability_trace.append(step)
