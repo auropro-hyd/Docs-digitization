@@ -124,6 +124,138 @@ def _record_submit_failure(config: Any, exc: BaseException, attempt: int) -> Non
         pass
 
 
+def _synthesize_table_cells_from_polygons(
+    pages: list[OCRPageResult],
+    bbox_data: dict[int, list[tuple[str, str, list[list[float]]]]],
+    sig_columns: tuple[str, ...],
+) -> dict[int, list[tuple[str, str, list[list[float]]]]]:
+    """Derive synthetic TableCell entries by uniformly subdividing
+    each ``Table`` polygon by the row/column count inferred from the
+    markdown table. Returns entries in the same shape as Datalab's
+    bbox_data so the rest of the crop pipeline doesn't need to know
+    the cells aren't from Datalab's classifier.
+
+    The fallback is intentionally lossy:
+
+    * Row heights are assumed uniform — header rows are typically
+      taller in real BPCRs but we lack per-row bboxes here.
+    * Column widths are assumed uniform — most BPCR tables have
+      roughly equal columns so this is acceptable; merged cells
+      and narrow date columns will be slightly off.
+    * Only rows containing ``[Signature]`` markers and only columns
+      whose header matches ``sig_columns`` produce synthetic
+      entries — saves cropping every cell, only the ones the
+      enricher would actually try to inject.
+    """
+    from app.adapters.ocr.signature_enricher import (
+        EXISTING_MARKER_RE,
+        _is_separator_row,
+        _is_signature_column_header,
+        _split_table_row,
+    )
+
+    synthesized: dict[int, list[tuple[str, str, list[list[float]]]]] = {}
+
+    for page in pages:
+        page_num = page.page_num
+        md = page.markdown or ""
+        if "[Signature]" not in md:
+            continue
+
+        # Each Table polygon on this page in JSON order.
+        page_blocks = bbox_data.get(page_num, []) or []
+        table_polygons = [
+            poly for (bt, _txt, poly) in page_blocks
+            if bt == "Table" and poly and len(poly) >= 2
+        ]
+        if not table_polygons:
+            continue
+
+        # Iterate the markdown's tables in document order, pair each
+        # with the next available Table polygon. Both lists are in
+        # reading order so positional pairing is correct for the
+        # common case where Datalab found N tables and our markdown
+        # parsed N tables. If counts diverge we still pair the
+        # leading min(N_md, N_polygon) tables — losing cell crops
+        # for the trailing tables is better than mis-aligning all
+        # of them.
+        rows = md.split("\n")
+        i = 0
+        md_table_idx = 0
+        while i < len(rows) and md_table_idx < len(table_polygons):
+            if not rows[i].strip().startswith("|"):
+                i += 1
+                continue
+            ts = i
+            while i < len(rows) and rows[i].strip().startswith("|"):
+                i += 1
+            table = rows[ts:i]
+            hdr_idx = next(
+                (k for k, r in enumerate(table) if not _is_separator_row(r)),
+                None,
+            )
+            if hdr_idx is None:
+                continue
+            hdr_cells = _split_table_row(table[hdr_idx])
+            sig_col_idx = {
+                ci for ci, h in enumerate(hdr_cells)
+                if _is_signature_column_header(h, sig_columns)
+            }
+            if not sig_col_idx:
+                md_table_idx += 1
+                continue
+
+            data_rows: list[tuple[int, list[str]]] = []
+            for k, row in enumerate(table):
+                if k == hdr_idx or _is_separator_row(row):
+                    continue
+                data_rows.append((k, _split_table_row(row)))
+            if not data_rows:
+                md_table_idx += 1
+                continue
+
+            polygon = table_polygons[md_table_idx]
+            md_table_idx += 1
+
+            xs = [p[0] for p in polygon]
+            ys = [p[1] for p in polygon]
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+
+            row_count = len(data_rows) + 1  # +1 to account for the header row
+            col_count = max(len(hdr_cells), 1)
+            if x_max <= x_min or y_max <= y_min:
+                continue
+            row_h = (y_max - y_min) / row_count
+            col_w = (x_max - x_min) / col_count
+
+            page_entries = synthesized.setdefault(page_num, [])
+            # Skip data row 0 = header position; data rows occupy
+            # rows 1..row_count-1 in the uniform grid.
+            for r_idx, (_md_row, data_cells) in enumerate(data_rows, start=1):
+                for ci in sig_col_idx:
+                    if ci >= len(data_cells):
+                        continue
+                    cell_text = data_cells[ci]
+                    if not EXISTING_MARKER_RE.search(cell_text):
+                        continue
+                    cx_left = x_min + col_w * ci
+                    cx_right = cx_left + col_w
+                    cy_top = y_min + row_h * r_idx
+                    cy_bottom = cy_top + row_h
+                    synthetic_polygon = [
+                        [cx_left, cy_top],
+                        [cx_right, cy_top],
+                        [cx_right, cy_bottom],
+                        [cx_left, cy_bottom],
+                    ]
+                    page_entries.append(
+                        ("TableCell", cell_text, synthetic_polygon)
+                    )
+
+    return synthesized
+
+
 def _count_pdf_pages(pdf_path: str) -> int:
     try:
         doc = pypdfium2.PdfDocument(pdf_path)
@@ -1350,15 +1482,57 @@ class DatalabOCRAdapter:
             # Datalab's JSON tree had no TableCell blocks for this
             # chunk — common when the run uses Datalab's "fast" or
             # "balanced" mode rather than "accurate", or when the
-            # API is in a flaky state. Without TableCells we have
-            # no cell-bbox info to crop. Bail loudly to telemetry.
-            record_event(
-                "signature.crop_pipeline_skipped",
-                level="warning",
-                reason="no TableCell blocks in bbox_data",
-                pages_in_chunk=len(pages),
+            # API is in a flaky state. Architectural fallback: if
+            # we still have ``Table`` blocks (just no per-cell
+            # decomposition), synthesize TableCell entries by
+            # uniformly subdividing each Table polygon by the row/
+            # column count inferred from the markdown table. This
+            # composes with the existing text-matching crop path —
+            # the synthesized entries carry the markdown's cell
+            # text so the downstream matcher doesn't know they're
+            # synthetic. Limitations: assumes uniform row heights
+            # and column widths; doesn't handle merged cells. First-
+            # pass crops on a doc Datalab couldn't TableCell-classify
+            # is better than no crops, and a follow-up can tighten
+            # alignment once we see how often this path actually fires.
+            synthesized = _synthesize_table_cells_from_polygons(
+                pages, bbox_data, sig_columns,
             )
-            return
+            synthesized_count = sum(len(v) for v in synthesized.values())
+            if synthesized_count == 0:
+                # Neither real TableCells nor inferrable Tables.
+                # Bail loudly to telemetry as before.
+                record_event(
+                    "signature.crop_pipeline_skipped",
+                    level="warning",
+                    reason="no TableCell blocks AND no Table polygons to subdivide",
+                    pages_in_chunk=len(pages),
+                )
+                return
+            # Inject synthetic entries into bbox_data so the rest of
+            # the pipeline runs unchanged. Telemetry distinguishes
+            # this code path so dashboards can track how often the
+            # fallback actually carries the run.
+            for page_num, entries in synthesized.items():
+                bbox_data.setdefault(page_num, []).extend(entries)
+            total_table_cells = synthesized_count
+            record_event(
+                "signature.crop_pipeline_fallback_subdivided",
+                level="warning",
+                reason=(
+                    "no TableCell blocks in bbox_data; synthesised "
+                    "from Table polygons + markdown row/column count"
+                ),
+                pages_in_chunk=len(pages),
+                synthesised_cell_count=synthesized_count,
+                pages_with_synthesis=sorted(synthesized.keys()),
+            )
+            logger.info(
+                "signature crop: TableCell blocks absent on this chunk; "
+                "synthesised %d cell(s) from Table polygon subdivision "
+                "(pages %s) to allow first-pass crops",
+                synthesized_count, sorted(synthesized.keys()),
+            )
 
         # Collect per-page cell crop work: which bboxes to crop +
         # which markdown positions to rewrite.
