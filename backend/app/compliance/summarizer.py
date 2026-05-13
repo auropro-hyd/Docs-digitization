@@ -13,6 +13,24 @@ from app.core.ports.llm import LLMProvider
 
 logger = logging.getLogger(__name__)
 
+# Per-doc asyncio.Lock guarding read-modify-write of page_summaries.json.
+# The original implementation did unsynchronised read-merge-write inside
+# every concurrent ``_summarize_one`` task; under ``asyncio.gather`` with
+# batch_size=10 the last writer wins → up to 9 summaries lost per batch.
+# Lock is keyed by doc_id so concurrent runs on different docs don't
+# serialize against each other.
+_DOC_WRITE_LOCKS: dict[str, asyncio.Lock] = {}
+_LOCK_REGISTRY_LOCK = asyncio.Lock()
+
+
+async def _get_doc_lock(doc_id: str) -> asyncio.Lock:
+    async with _LOCK_REGISTRY_LOCK:
+        lock = _DOC_WRITE_LOCKS.get(doc_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _DOC_WRITE_LOCKS[doc_id] = lock
+        return lock
+
 _PAGE_SUMMARY_SYSTEM = (
     "Extract and summarize the key data from this pharmaceutical document page in 3-5 sentences.\n"
     "Focus ONLY on the factual content — do NOT describe which form or section the page belongs to, "
@@ -65,28 +83,41 @@ def load_summary(doc_id: str, document_type: str, section_type: str | None) -> s
     return "\n\n".join(text for _, text in matching)
 
 
-def store_page_summary(
+def _build_entry(text: str, document_type: str, section_type: str | None) -> dict:
+    return {
+        "text": text,
+        "doc_type": document_type,
+        "section_type": section_type,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def store_page_summary(
     doc_id: str,
     page_num: int,
     document_type: str,
     section_type: str | None,
     text: str,
 ) -> None:
-    """Merge a single page summary entry into page_summaries.json (read-merge-write)."""
-    path = _summaries_file(doc_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data: dict = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {}
+    """Merge a single page summary entry into page_summaries.json.
 
-    data[str(page_num)] = {
-        "text": text,
-        "doc_type": document_type,
-        "section_type": section_type,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    Lock-guarded read-merge-write so concurrent callers don't trample
+    each other. Synchronous shape preserved for HITL callers — the
+    underlying coroutine is awaited on the per-doc lock.
+    """
+    lock = await _get_doc_lock(doc_id)
+    async with lock:
+        path = _summaries_file(doc_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            data: dict = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            data = {}
+        data[str(page_num)] = _build_entry(text, document_type, section_type)
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
 
 async def summarize_pages_in_batches(
@@ -98,7 +129,12 @@ async def summarize_pages_in_batches(
 ) -> None:
     """Generate page summaries for all pages not already in page_summaries.json.
 
-    Skips pages already present. Dispatches batches of `batch_size` in parallel.
+    Skips pages already present. Dispatches batches of ``batch_size`` in
+    parallel; per-batch results accumulate in memory and are merged into
+    the on-disk file via a single lock-guarded write per batch. The
+    original per-task read-merge-write under ``asyncio.gather`` was the
+    source of silent summary loss — tasks racing on the same file would
+    overwrite each other and the last writer's view stuck.
     """
     path = _summaries_file(doc_id)
     try:
@@ -110,21 +146,42 @@ async def summarize_pages_in_batches(
     if not pending:
         return
 
-    async def _summarize_one(ext: dict) -> None:
+    async def _summarize_one(ext: dict) -> tuple[int, dict] | None:
         page_num = ext.get("page_num", 0)
         markdown = str(ext.get("markdown", "") or "")
         if not markdown.strip():
-            return
+            return None
         meta = section_map.get(page_num, {})
         doc_type = meta.get("document_type") or ext.get("document_type", "")
         sec_type = meta.get("section_type") or ext.get("section_type")
         try:
             text = await llm.generate(markdown, system=_PAGE_SUMMARY_SYSTEM)
-            if text:
-                store_page_summary(doc_id, page_num, doc_type, sec_type, text)
+            if not text:
+                return None
+            return page_num, _build_entry(text, doc_type, sec_type)
         except Exception:
             logger.warning("Page summary generation failed for page %s", page_num, exc_info=True)
+            return None
 
+    lock = await _get_doc_lock(doc_id)
     for i in range(0, len(pending), batch_size):
         batch = pending[i : i + batch_size]
-        await asyncio.gather(*[_summarize_one(ext) for ext in batch])
+        results = await asyncio.gather(*[_summarize_one(ext) for ext in batch])
+        produced = [r for r in results if r is not None]
+        if not produced:
+            continue
+        # Single lock-guarded read-merge-write per batch. The lock plus
+        # batched flush together guarantee no entry from this run can
+        # be lost to a concurrent write.
+        async with lock:
+            try:
+                data: dict = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            for page_num, entry in produced:
+                data[str(page_num)] = entry
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
