@@ -275,7 +275,6 @@ async def run_agent_evaluation(
     batches: list[RuleBatch],
     extractions: list[dict],
     llm: LLMProvider,
-    document_type: str = "batch_record",
     max_concurrent: int = 10,
     progress_callback=None,
     prescreen_callback=None,
@@ -357,11 +356,12 @@ async def run_agent_evaluation(
                 nonlocal pages_done
                 page_num = ext.get("page_num", 0)
                 sec_info = section_map.get(page_num) if section_map else None
+                effective_doc_type = (sec_info.get("document_type") or "") if sec_info else ""
                 page_type = classify_page_type(ext)
                 try:
                     candidate_rules, _, _ = await gate.filter_rules_hybrid(
                         all_agent_rules,
-                        document_type=document_type,
+                        document_type=effective_doc_type,
                         page_type=page_type,
                         extraction=ext,
                         page_num=page_num,
@@ -435,6 +435,7 @@ async def run_agent_evaluation(
         nonlocal completed
         page_num = ext.get("page_num", 0)
         sec_info = section_map.get(page_num) if section_map else None
+        effective_doc_type = (sec_info.get("document_type") or "") if sec_info else ""
 
         if mode == "llm":
             if page_num not in page_type_cache:
@@ -442,7 +443,7 @@ async def run_agent_evaluation(
             page_type = page_type_cache[page_num]
             applicable_rules, gate_evals, gate_trace_map = await gate.filter_rules_hybrid(
                 batch.rules,
-                document_type=document_type,
+                document_type=effective_doc_type,
                 page_type=page_type,
                 extraction=ext,
                 page_num=page_num,
@@ -455,7 +456,7 @@ async def run_agent_evaluation(
                 page_type_cache[page_num] = classify_page_type(ext)
             page_type = page_type_cache[page_num]
             applicable_rules, gate_evals, gate_trace_map = gate.filter_rules(
-                batch.rules, document_type, page_type, sec_info, ext,
+                batch.rules, effective_doc_type, page_type, sec_info, ext,
             )
 
         if not applicable_rules:
@@ -836,11 +837,14 @@ def assemble_agent_report(
                         existing_re.page_numbers.append(pn)
                 if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(existing_re.status, 0):
                     existing_re.status = status
+                    existing_re.reasoning = ev.reasoning or existing_re.reasoning
+                    existing_re.evidence = ev.evidence or existing_re.evidence
+                else:
+                    if ev.reasoning and not existing_re.reasoning:
+                        existing_re.reasoning = ev.reasoning
+                    if ev.evidence and not existing_re.evidence:
+                        existing_re.evidence = ev.evidence
                 existing_re.confidence = min(existing_re.confidence, confidence)
-                if ev.reasoning and not existing_re.reasoning:
-                    existing_re.reasoning = ev.reasoning
-                if ev.evidence and not existing_re.evidence:
-                    existing_re.evidence = ev.evidence
                 for step in ev.applicability_trace:
                     if step not in existing_re.applicability_trace:
                         existing_re.applicability_trace.append(step)

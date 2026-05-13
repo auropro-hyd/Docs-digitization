@@ -58,7 +58,6 @@ categories:
           - "Page is not a cover_page (no preparation/review/approval table present) -> not_applicable"
 
       3:
-        keywords: ["reviewed by", "quality assurance", "qa"]
         applicable_document_types: [batch_record]
         applicable_section_types: [cover_page]
         pass_criteria: |
@@ -102,7 +101,7 @@ categories:
     applicable_section_types: []
     rules:
       5:
-        keywords: ["check list before starting", "before starting the batch", "before starting batch"]
+        applicable_section_types: [pre_production_checklist]
         pass_criteria: |
           APPLICABILITY CHECK (evaluate this first):
           This rule applies ONLY to pages whose title or heading contains
@@ -133,12 +132,12 @@ categories:
           (e.g., "Performed By", "Checked By", "Signature", "Date"), it must also
           contain a non-blank entry — a completely empty sign-off cell is NON-COMPLIANT.
         skip_conditions:
-          - "Page heading or title is not 'Check List Before Starting the Batch' (e.g., page is cross contamination checklist or reactor operations checklist) -> not_applicable"
+          - "Page has no pre-start inspection checklist table (no numbered rows with YES/NO/NA columns for equipment/batch readiness checks) -> not_applicable"
 
       6:
-        keywords: ["cross contamination", "cross-contamination"]
         applicable_document_types: [operation_checklist]
         applicable_section_types: [cross_contamination_checklist]
+        keywords: []
         pass_criteria: |
           APPLICABILITY CHECK (evaluate this first):
           This rule applies ONLY to pages whose title or heading contains
@@ -172,7 +171,7 @@ categories:
           A completely empty Done By or Checked By cell on an active (non-NA) row
           is NON-COMPLIANT.
         skip_conditions:
-          - "Page heading or title is not 'Check List for Cross Contamination' (e.g., page is pre-start checklist or reactor operations checklist) -> not_applicable"
+          - "Page has no cross-contamination inspection table (no numbered rows with Yes/No/N.A and Done By/Checked By columns for contamination prevention checks) -> not_applicable"
 
       7:
         keywords: ["reactor operations", "check list for reactor", "checklist for reactor"]
@@ -285,8 +284,19 @@ categories:
         keywords: ["equipment cleaning", "cleaning details", "previous batch", "cleaned by", "checked by"]
         pass_criteria: |
           The equipment cleaning log contains a cleaning record for each major piece of
-          equipment used in the batch. For each equipment row or entry:
-            (a) Equipment name or identifier is present (e.g., reactor, centrifuge, drier, mill),
+          equipment used in the batch.
+
+          STEP 1 — Identify N/A rows (skip entirely):
+            If ALL of the following columns for a row contain only dashes (-, --, ---,
+            ----) or are blank — Previous Batch No., Done By, and Checked By — treat
+            that row as "not applicable / not used in this batch step" and do NOT flag
+            it as non-compliant.
+
+          STEP 2 — Evaluate active rows:
+            An active row is any row where at least one of Previous Batch No., Done By,
+            or Checked By contains a non-dash value. For every active row:
+            (a) Equipment name or identifier is present (e.g., reactor, centrifuge,
+                drier, mill),
             (b) Previous batch number or "Prev. B.No." entry is present and non-blank,
             (c) Cleaning date and/or cleaning time is recorded,
             (d) A "Cleaned By" or "Done By" entry with a non-blank name, initial, or
@@ -321,7 +331,7 @@ categories:
           - "Page has no deviation section or deviation log heading -> not_applicable"
 
       11:
-        applicable_section_types: [cleaning_log, deviation]
+        applicable_section_types: []
         keywords: ["approved manufacturing chemist", "approved quality control chemist", "qa person", "sign off", "final release", "manufacturing chemist"]
         evaluation_strategy: llm_arbitrated
         visual_checks: [VC-SIGNATURE]
