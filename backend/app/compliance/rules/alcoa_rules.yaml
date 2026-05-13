@@ -42,18 +42,41 @@ categories:
         # SAME-PAGE INDIVIDUAL pattern.
         # Akhilesh: "is the entry there or not, are there any strike-offs"
         keywords: ["done by", "checked by", "signature", "initial", "date", "time"]
+        # text_and_vision: legibility is a visual property the OCR
+        # path cannot always recover (the reactor checklist whose
+        # middle rows were entirely blacked out by the scanner's
+        # threshold filter — Akhilesh, 2026-05-12). VC-DOC-QUALITY's
+        # scan-defect prompt (extended in PR #43) was previously
+        # unreachable because no rule referenced it; wiring it here
+        # closes that capability gap. _merge_text_vision gives vision
+        # precedence for visual aspects — exactly what we want when
+        # OCR declared a cell "empty" but the rendered page shows a
+        # scan-defect black band.
+        evaluation_strategy: text_and_vision
+        visual_checks: [VC-DOC-QUALITY]
         pass_criteria: |
           Every "Done by", "Checked by", signature/initial column, time
           column, and date column on this page is populated with a
           legible value. Dash-only ("---", "—") cells are acceptable
           ONLY where a manifest column is genuinely not applicable;
           otherwise an empty / blank / strikethrough row is non-compliant.
+
+          A cell whose content is unreadable due to a scan-process
+          defect (solid black band from a thresholding filter,
+          excessive darkening, over-compressed quality, missing page
+          area) is ALSO non-compliant — the underlying entry may
+          exist on paper but the digital record does not preserve it.
+          VC-DOC-QUALITY surfaces these defects from the page image
+          when OCR alone would have reported a clean "empty cell".
         skip_conditions:
           - "page is a cover_page or revision_summary (no operator entries expected)"
         notes: |
           Reference exemplar for the SAME-PAGE INDIVIDUAL pattern.
           Use this as the template for any rule that returns a verdict
-          per page based on field presence / completeness.
+          per page based on field presence / completeness. Note the
+          text_and_vision wiring with VC-DOC-QUALITY — replicate this
+          pattern for any rule whose verdict depends on whether the
+          digital record is legible enough to read at all.
 
   # ── Contemporaneous ──────────────────────────────────────────
   contemporaneous:
