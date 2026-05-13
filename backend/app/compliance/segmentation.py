@@ -76,6 +76,30 @@ class SegmentationIssue:
     page_range: tuple[int, int] | None = None
 
 
+def _find_gap_neighbours(
+    sections: list[DocumentSection],
+    gap_start: int,
+    gap_end: int,
+) -> tuple[DocumentSection | None, DocumentSection | None]:
+    """Return the sections immediately before and after a gap range.
+
+    "Before" = highest end_page strictly less than gap_start.
+    "After"  = lowest start_page strictly greater than gap_end.
+    Either may be None when the gap touches the document start or end.
+    """
+
+    before: DocumentSection | None = None
+    after: DocumentSection | None = None
+    for sec in sections:
+        if sec.end_page < gap_start:
+            if before is None or sec.end_page > before.end_page:
+                before = sec
+        elif sec.start_page > gap_end:
+            if after is None or sec.start_page < after.start_page:
+                after = sec
+    return before, after
+
+
 def validate_segmentation(
     seg: DocumentSegmentation,
     total_pages: int | None = None,
@@ -153,20 +177,60 @@ def validate_segmentation(
         all_pages = set(range(1, total_pages + 1))
         missing = sorted(all_pages - covered)
         if missing:
-            # Compress consecutive gap pages into ranges.
+            # Compress consecutive gap pages into ranges, then attach
+            # adjacency context to each gap so the operator sees what
+            # the gap is sandwiched between (load-bearing for triage —
+            # "gap between two reactor_checklist sections" almost
+            # certainly means the operator should extend one of them).
             run_start = missing[0]
             prev = missing[0]
             for p in missing[1:] + [None]:
                 if p != prev + 1 if p is not None else True:
                     if p is None or p != prev + 1:
+                        adj_before, adj_after = _find_gap_neighbours(
+                            seg.sections, run_start, prev,
+                        )
+                        before_desc = (
+                            f"after '{adj_before.section_id}' "
+                            f"({adj_before.section_type or '?'}, "
+                            f"pages {adj_before.start_page}-{adj_before.end_page})"
+                            if adj_before else "at the start of the document"
+                        )
+                        after_desc = (
+                            f"before '{adj_after.section_id}' "
+                            f"({adj_after.section_type or '?'}, "
+                            f"pages {adj_after.start_page}-{adj_after.end_page})"
+                            if adj_after else "at the end of the document"
+                        )
+                        same_type_hint = ""
+                        if (
+                            adj_before
+                            and adj_after
+                            and adj_before.section_type
+                            and adj_before.section_type == adj_after.section_type
+                        ):
+                            same_type_hint = (
+                                f" Both neighbours share section_type="
+                                f"'{adj_before.section_type}'; the gap is "
+                                f"most likely a continuation that the LLM "
+                                f"split incorrectly — consider extending the "
+                                f"preceding section to end_page={prev}."
+                            )
+                        adj_ids = tuple(
+                            s.section_id
+                            for s in (adj_before, adj_after)
+                            if s is not None
+                        )
                         issues.append(SegmentationIssue(
                             kind="gap",
                             message=(
                                 f"Pages {run_start}-{prev} are not covered "
-                                f"by any segmentation section. The compliance "
-                                f"pipeline will never evaluate rules against "
-                                f"this content."
+                                f"by any segmentation section ({before_desc}; "
+                                f"{after_desc}). The compliance pipeline will "
+                                f"never evaluate rules against this content."
+                                f"{same_type_hint}"
                             ),
+                            section_ids=adj_ids,
                             page_range=(run_start, prev),
                         ))
                         run_start = p if p is not None else prev
@@ -205,6 +269,89 @@ def validate_segmentation(
                 ))
 
     return issues
+
+
+def fill_gaps_with_unknown(
+    seg: DocumentSegmentation,
+    total_pages: int,
+) -> DocumentSegmentation:
+    """Replace LLM-left coverage gaps with explicit ``unknown`` sections.
+
+    The robust-coverage prompt instructs the LLM to emit
+    ``section_type='unknown'`` for pages it can't classify rather than
+    leave them out, but the LLM sometimes still drops them. This
+    post-process closes that failure mode deterministically: any page
+    range from 1..``total_pages`` not covered by an existing section
+    becomes its own ``DocumentSection`` with ``section_type='unknown'``
+    and ``document_type=''`` (so downstream filters degrade to "no
+    rules apply" rather than fabricating a verdict).
+
+    The fill is OBSERVABLE — each filled gap fires a
+    ``segmentation.gap_filled_with_unknown`` telemetry event so the
+    HITL reviewer can re-classify rather than letting the gap silently
+    become "unknown content nobody reviewed". This is the inverse of
+    silent loss: pages are kept (so compliance has a chance to look)
+    AND flagged (so reviewers know to fix the underlying segmentation).
+
+    Pure: returns a new ``DocumentSegmentation``. Idempotent: running
+    twice on the same output produces the same sections (the second
+    pass finds no gaps).
+    """
+
+    if total_pages <= 0:
+        return seg
+
+    covered: set[int] = set()
+    for sec in seg.sections:
+        for p in range(sec.start_page, sec.end_page + 1):
+            covered.add(p)
+    all_pages = set(range(1, total_pages + 1))
+    missing = sorted(all_pages - covered)
+    if not missing:
+        return seg
+
+    # Compress consecutive missing pages into ranges.
+    runs: list[tuple[int, int]] = []
+    run_start = missing[0]
+    prev = missing[0]
+    for p in missing[1:]:
+        if p == prev + 1:
+            prev = p
+            continue
+        runs.append((run_start, prev))
+        run_start = p
+        prev = p
+    runs.append((run_start, prev))
+
+    filled: list[DocumentSection] = list(seg.sections)
+    for start, end in runs:
+        filled.append(DocumentSection(
+            section_id=f"unknown_pages_{start}_{end}",
+            name=f"Unclassified pages {start}-{end}",
+            section_type="unknown",
+            document_type="",
+            start_page=start,
+            end_page=end,
+            description=(
+                "Pages left uncovered by LLM segmentation; preserved as an "
+                "explicit 'unknown' section so compliance reviewers can "
+                "re-classify rather than silently losing the content."
+            ),
+        ))
+        try:
+            from app.observability.run_telemetry import record_event
+            record_event(
+                "segmentation.gap_filled_with_unknown",
+                level="warning",
+                page_range=[start, end],
+                page_count=end - start + 1,
+            )
+        except Exception:  # pragma: no cover — never break segmentation
+            pass
+
+    # Re-sort so the section list stays page-ordered.
+    filled.sort(key=lambda s: (s.start_page, s.end_page))
+    return seg.model_copy(update={"sections": filled})
 
 
 def stamp_document_types(seg: DocumentSegmentation) -> DocumentSegmentation:
@@ -514,6 +661,18 @@ def _build_segmentation_prompt(
     return (
         f"Analyze this multi-part document and identify each distinct "
         f"sub-document/section.\n\n"
+        f"HARD COVERAGE CONSTRAINTS (the most important rule):\n"
+        f"* Every single page from 1 to the last page MUST be covered\n"
+        f"  by exactly one section. Page ranges must be contiguous.\n"
+        f"  There must be NO gaps and NO overlaps between sections.\n"
+        f"* If you genuinely cannot classify a page, place it in a\n"
+        f"  section with section_type='unknown' rather than leaving\n"
+        f"  it uncovered — the operator can then triage that section.\n"
+        f"* Before you return, mentally walk page 1 → N and confirm\n"
+        f"  every page appears in exactly one section's [start_page,\n"
+        f"  end_page] range. A gap is a worse failure than a wrong\n"
+        f"  section_type — wrong types can be corrected; lost pages\n"
+        f"  cannot.\n\n"
         f"CLASSIFICATION HEURISTICS (in priority order):\n"
         f"1. For every document type EXCEPT ``batch_record``: classify\n"
         f"   from the document HEADER on each page first. The header\n"
@@ -522,6 +681,19 @@ def _build_segmentation_prompt(
         f"   Request Cum Analysis Report', 'QC Analytical Data\n"
         f"   Review Checklist'). Same header repeating across pages\n"
         f"   = same document.\n"
+        f"   HEADER → DOC_TYPE LOAD-BEARING MAPPINGS (use these EXACT\n"
+        f"   matches; the LLM has been known to drift on them):\n"
+        f"   * 'In-Process Samples Request Cum Analysis Report' OR\n"
+        f"     'IPC Report' OR headers containing 'in-process samples'\n"
+        f"     → document_type=``ipc_report``, section_type=\n"
+        f"     ``in_process_report``. NEVER classify these as\n"
+        f"     ``analysis_report`` — that's reserved for instrument\n"
+        f"     analysis / particle-size reports without the IPC framing.\n"
+        f"   * 'QC Analytical Data Review Checklist' →\n"
+        f"     ``qc_analytical_package`` / ``analytical_data_review``.\n"
+        f"   * 'Check List for <Equipment> Operations' →\n"
+        f"     ``operation_checklist`` (one section per equipment;\n"
+        f"     see rule 5 below).\n"
         f"2. If a page has NO explicit header, infer document_type\n"
         f"   from CONTENT. Examples:\n"
         f"   * ``VDE0**`` identifiers + monitoring tables (temp,\n"
@@ -559,6 +731,40 @@ def _build_segmentation_prompt(
         f"   * Revision summary: columns like Change History,\n"
         f"     Revision Number, Change Description, Effective\n"
         f"     Date → ``revision_summary``\n"
+        f"5. OPERATION CHECKLIST BOUNDARIES (load-bearing):\n"
+        f"   Each operation_checklist starts with its OWN header\n"
+        f"   line of the form 'Check List for <Equipment>\n"
+        f"   Operations' (reactor, scrubber, centrifuge, vacuum\n"
+        f"   tray drier, sifter, pin mill, blender, co-mill, metal\n"
+        f"   detector). The header is followed by a small batch /\n"
+        f"   equipment ID block (Batch No., Equipment ID, Date)\n"
+        f"   and then the checklist items table. RULES:\n"
+        f"   * Whenever a new 'Check List for X Operations' header\n"
+        f"     appears, a NEW section starts on that page — even\n"
+        f"     if the previous page was a different document (e.g.\n"
+        f"     a batch_release_note immediately followed by a\n"
+        f"     reactor checklist). Do NOT glue the checklist's\n"
+        f"     first page onto the prior document.\n"
+        f"   * Within one equipment's checklist, pages BETWEEN the\n"
+        f"     header page and the next document's start (or the\n"
+        f"     next 'Check List for X Operations' header) all\n"
+        f"     belong to that ONE checklist section. Operators\n"
+        f"     historically split these — don't.\n"
+        f"   * Pick the section_type matching the equipment\n"
+        f"     (reactor_checklist, centrifuge_checklist,\n"
+        f"     vacuum_tray_dryer_checklist, sifter_checklist,\n"
+        f"     pin_mill_checklist, etc.). document_type stays\n"
+        f"     ``operation_checklist`` across all of them.\n"
+        f"6. SCADA REPORT CLUSTERS:\n"
+        f"   VDE0** instruments emit TWO companion artifacts per\n"
+        f"   batch: (a) a multi-page DATA MONITORING REPORT (temp /\n"
+        f"   pressure / vacuum tables, continuous timestamps) and\n"
+        f"   (b) a short ALARM REPORT (often one page, may be\n"
+        f"   labelled 'no alarms recorded'). Both have\n"
+        f"   document_type=``scada_report`` but they are SEPARATE\n"
+        f"   sections — the alarm report's distinct title page\n"
+        f"   starts a new section, do not merge it into the trailing\n"
+        f"   pages of the data report.\n"
         f"{doc_types_hint}"
         f"{section_types_hint}\n"
         f"GENERAL RULES:\n"
@@ -572,7 +778,14 @@ def _build_segmentation_prompt(
         f"* If a section truly doesn't fit any canonical type,\n"
         f"  emit a lowercase_snake_case free-form value — drift\n"
         f"  warnings will surface it so the doc_profiles can be\n"
-        f"  extended later.\n\n"
+        f"  extended later.\n"
+        f"* FINAL WALK: before you return, list the page ranges\n"
+        f"  in order — section 1: 1-X, section 2: X+1-Y, …. The\n"
+        f"  next section's start_page MUST equal the previous\n"
+        f"  section's end_page + 1. If you find a gap, either\n"
+        f"  extend an adjacent section over the gap (when the\n"
+        f"  pages clearly continue that section's content) or\n"
+        f"  emit a section_type='unknown' for the gap.\n\n"
         f"FILENAME: {filename}\n\n"
         f"KEY-VALUE PAIRS:\n{kv_text}\n\n"
         f"PAGE SUMMARIES:\n" + "\n\n".join(page_summaries) + "\n\n"
@@ -609,7 +822,38 @@ class DocumentSegmenter:
             )
             if not isinstance(result, DocumentSegmentation):
                 result = DocumentSegmentation.model_validate(result)
-            stamped = stamp_document_types(result)
+            # Fill any LLM-left coverage gaps with explicit ``unknown``
+            # sections BEFORE stamping doc_types so the rest of the
+            # pipeline sees full page coverage. Each filled gap fires
+            # a ``segmentation.gap_filled_with_unknown`` event.
+            filled = fill_gaps_with_unknown(result, total_pages=total_pages)
+            stamped = stamp_document_types(filled)
+            # Coverage-summary telemetry — single event per run carrying
+            # the pages-covered / total-pages ratio + section count so
+            # operators see whether the segmentation actually covered
+            # the doc at one glance. Auto-no-op when no sink is bound.
+            try:
+                from app.observability.run_telemetry import record_event
+                covered_pages: set[int] = set()
+                for sec in stamped.sections:
+                    for p in range(sec.start_page, sec.end_page + 1):
+                        covered_pages.add(p)
+                record_event(
+                    "segmentation.coverage_summary",
+                    total_pages=total_pages,
+                    covered_pages=len(covered_pages),
+                    coverage_ratio=(
+                        len(covered_pages) / total_pages
+                        if total_pages > 0 else None
+                    ),
+                    section_count=len(stamped.sections),
+                    unknown_section_count=sum(
+                        1 for s in stamped.sections
+                        if s.section_type == "unknown"
+                    ),
+                )
+            except Exception:  # pragma: no cover — never break segmentation
+                pass
             # Surface quality issues to the run log AND the on-disk
             # telemetry sink so post-run validation sees the
             # structured issue list, not just a log line. Pure
