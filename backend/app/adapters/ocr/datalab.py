@@ -1641,7 +1641,21 @@ class DatalabOCRAdapter:
         )
 
         try:
-            chunk_results = await asyncio.gather(
+            # ``return_exceptions=True`` so a single bad chunk does not
+            # abort the whole gather. Without this, one chunk that
+            # burns its submit_max_retries (typically on a transient
+            # Datalab 502 / timeout) discarded the work of every
+            # successful chunk — the user got an "OCR failed" result
+            # even when 3 of 5 chunks had completed end-to-end. With
+            # this, we collect both successes and failures, emit a
+            # structured ``ocr.partial_extraction`` event naming the
+            # failed page ranges, and return the successful chunks'
+            # pages. Downstream segmentation (PR #45's
+            # ``fill_gaps_with_unknown`` + ``segmentation.gap_filled``
+            # event) already handles missing-page ranges cleanly, so
+            # the partial result composes with the rest of the
+            # pipeline.
+            raw_results = await asyncio.gather(
                 *(
                     self._process_single_chunk(
                         idx, pr, total_chunks, pdf_path,
@@ -1649,7 +1663,8 @@ class DatalabOCRAdapter:
                         in_flight=in_flight,
                     )
                     for idx, pr in enumerate(page_ranges)
-                )
+                ),
+                return_exceptions=True,
             )
         finally:
             heartbeat_task.cancel()
@@ -1660,6 +1675,20 @@ class DatalabOCRAdapter:
                 await heartbeat_task
             except asyncio.CancelledError:
                 pass
+
+        chunk_results, failed_chunks = self._partition_chunk_results(
+            raw_results, page_ranges,
+        )
+
+        # All chunks failed — preserve the historic behaviour and raise
+        # the first exception (most callers catch ``RuntimeError`` and
+        # surface "OCR extraction failed"). Without this guard the
+        # caller would silently receive an empty ``OCRResult``.
+        if not chunk_results:
+            first_exc = failed_chunks[0]["error"]
+            raise first_exc if isinstance(first_exc, BaseException) else RuntimeError(
+                "Data Lab extraction failed: all chunks returned errors"
+            )
 
         all_pages: list[OCRPageResult] = []
         full_markdowns: list[tuple[int, str]] = []
@@ -1682,12 +1711,54 @@ class DatalabOCRAdapter:
         full_md = PAGE_SEPARATOR.join(md for _, md in full_markdowns)
 
         if progress_callback:
-            progress_callback(100, "Data Lab extraction complete")
+            if failed_chunks:
+                progress_callback(
+                    100,
+                    f"Data Lab extraction completed with {len(failed_chunks)} "
+                    f"of {total_chunks} chunk(s) failed — partial result "
+                    f"({len(all_pages)} page(s) returned)",
+                )
+            else:
+                progress_callback(100, "Data Lab extraction complete")
 
         raw_resp: dict[str, Any] = {}
         if quality_scores:
             raw_resp["parse_quality_score"] = sum(quality_scores) / len(quality_scores)
             raw_resp["quality_0_1"] = raw_resp["parse_quality_score"] / 5.0
+
+        if failed_chunks:
+            # Surface partial-extraction metadata to downstream so the
+            # compliance pipeline / HITL reviewer can see this run is
+            # incomplete. The list of failed page ranges is also fired
+            # as an ``ocr.partial_extraction`` telemetry event below.
+            raw_resp["partial"] = True
+            raw_resp["failed_chunk_ranges"] = [f["page_range"] for f in failed_chunks]
+            raw_resp["successful_chunk_count"] = len(chunk_results)
+            raw_resp["total_chunk_count"] = total_chunks
+            try:
+                from app.observability.run_telemetry import record_event
+                record_event(
+                    "ocr.partial_extraction",
+                    level="warning",
+                    successful_chunks=len(chunk_results),
+                    total_chunks=total_chunks,
+                    failed_chunk_count=len(failed_chunks),
+                    failed_chunk_ranges=[f["page_range"] for f in failed_chunks],
+                    failed_error_types=sorted({
+                        f["error_type"] for f in failed_chunks
+                    }),
+                    extracted_page_count=len(all_pages),
+                )
+            except Exception:  # pragma: no cover — never break OCR
+                pass
+            logger.warning(
+                "Data Lab extraction returned partial result — "
+                "%d of %d chunk(s) failed (page ranges %s); "
+                "downstream segmentation will fill missing pages with "
+                "section_type='unknown'",
+                len(failed_chunks), total_chunks,
+                [f["page_range"] for f in failed_chunks],
+            )
 
         return OCRResult(
             pages=all_pages,
@@ -1697,6 +1768,35 @@ class DatalabOCRAdapter:
             signatures=all_signatures,
             raw_response=raw_resp,
         )
+
+    @staticmethod
+    def _partition_chunk_results(
+        raw_results: list[Any],
+        page_ranges: list[str],
+    ) -> tuple[list[tuple], list[dict]]:
+        """Split ``gather(return_exceptions=True)`` output into
+        successes and failures.
+
+        Returns ``(successful_chunk_tuples, failed_chunk_records)``
+        where each failed record carries ``chunk_idx``, ``page_range``,
+        ``error_type``, ``error_message``, and the original exception
+        under ``error``. The split is shape-driven (BaseException →
+        failure, tuple → success) so no chunk gets silently dropped.
+        """
+        successes: list[tuple] = []
+        failures: list[dict] = []
+        for idx, item in enumerate(raw_results):
+            if isinstance(item, BaseException):
+                failures.append({
+                    "chunk_idx": idx,
+                    "page_range": page_ranges[idx] if idx < len(page_ranges) else "?",
+                    "error_type": type(item).__name__,
+                    "error_message": str(item)[:300],
+                    "error": item,
+                })
+            else:
+                successes.append(item)
+        return successes, failures
 
     def supports_handwriting(self) -> bool:
         return True
