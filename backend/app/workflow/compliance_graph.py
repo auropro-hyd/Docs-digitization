@@ -247,6 +247,39 @@ async def _run_compliance_pipeline_inner(
             "label": f"Identified {len(segmentation.sections)} document sections",
         })
 
+        # Phase 1.5b: Page summarization (load-then-generate-then-store)
+        # Runs ONLY when at least one applicable agent has an
+        # agentic_audit rule, OR when the operator forces it via
+        # ``ComplianceConfig.agentic_summaries_force``. Summarisation
+        # is an N-page LLM fan-out — skipping it when no downstream
+        # consumer exists saves real cost on every doc that doesn't
+        # need agentic context (which today is most of them).
+        needs_summaries = config.agentic_summaries_force or any(
+            rule.evaluation_strategy == "agentic_audit"
+            for agent_name in applicable
+            for rule in registry.get_rules(agent_name)
+        )
+        if needs_summaries:
+            from app.compliance.summarizer import summarize_pages_in_batches  # noqa: PLC0415
+            await _ws_progress(doc_id, {
+                "phase": "summarization",
+                "status": "running",
+                "label": f"Generating page summaries ({len(extractions)} pages)...",
+            })
+            summ_llm = container.compliance_cross_page_llm
+            await summarize_pages_in_batches(extractions, section_map, doc_id, summ_llm)
+            await _ws_progress(doc_id, {
+                "phase": "summarization",
+                "status": "complete",
+                "label": "Page summaries ready",
+            })
+        else:
+            logger.info(
+                "Skipping Phase 1.5b page summarisation — no applicable "
+                "agent has an agentic_audit rule (set "
+                "AT_COMPLIANCE__AGENTIC_SUMMARIES_FORCE=true to override)"
+            )
+
     # ── Phase 2: Per-page agent evaluation ────────────────────
     eval_llm = container.compliance_evaluator_llm
     vlm_provider = container.vlm

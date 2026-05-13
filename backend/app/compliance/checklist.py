@@ -5,8 +5,10 @@ Thin wrapper over the shared RuleBatchEvaluator.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
+from app.compliance.agentic.postpass import run_agentic_postpass
 from app.compliance.evaluator import assemble_agent_report, run_agent_evaluation
 from app.compliance.models import AgentReport
 from app.compliance.rules.registry import RuleRegistry
@@ -66,4 +68,11 @@ class ChecklistAgent:
             doc_id=doc_id,
         )
 
+        agentic_results = await run_agentic_postpass(
+            AGENT_NAME, self._registry, extractions,
+            section_map or {}, self._llm, self._config,
+            doc_id=doc_id or "",
+            progress_callback=progress_callback,
+        )
+        results = results + agentic_results
         return assemble_agent_report(AGENT_NAME, all_rules, results, pages)
