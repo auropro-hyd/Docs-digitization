@@ -758,7 +758,7 @@ def build_page_to_section(seg: DocumentSegmentation) -> dict[int, dict]:
             "section_type": normalize_section_type(sec.section_type),
             "start_page": sec.start_page,
             "end_page": sec.end_page,
-            "document_type": sec.document_type
+            "document_type": sec.document_type,
         }
         for p in range(sec.start_page, sec.end_page + 1):
             page_map[p] = info

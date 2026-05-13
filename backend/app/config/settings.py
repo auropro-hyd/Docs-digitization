@@ -324,7 +324,13 @@ class ComplianceConfig(BaseModel):
     agentic_page_cap: int = 50
     agentic_worker_page_limit: int = 12
     agentic_max_tool_calls: int = 5
-    
+    # Phase 1.5b page summarisation runs ONLY if at least one applicable
+    # rule has evaluation_strategy=agentic_audit. Setting this to True
+    # forces it on even when no agentic rule is selected — useful when
+    # operators want to populate the page_summaries.json cache for HITL
+    # or future agentic runs.
+    agentic_summaries_force: bool = False
+
     applicability_mode: str = "static"  # "static" | "llm"
 
     enable_cross_page: bool = True
