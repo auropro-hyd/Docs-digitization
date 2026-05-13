@@ -74,6 +74,56 @@ _BOLD_TAG_RE = re.compile(r"<b>|<strong>|\*\*[^*]+\*\*", re.IGNORECASE)
 # ── Utility functions ────────────────────────────────────────────
 
 
+# Error fragments that point at submit-side saturation (local
+# bandwidth or Datalab per-key concurrency cap) rather than
+# transient API errors. When any of these appear in a submit retry
+# we emit a hint telling the operator to lower
+# AT_DATALAB__MAX_CONCURRENT_CHUNKS — the same pattern that
+# deterministically failed a 117-page doc at concurrency=8 on
+# 2026-05-13 (709 s wall time, zero pages extracted).
+_SATURATION_HINTS: tuple[str, ...] = (
+    "timed out",
+    "Broken pipe",
+    "Bad Gateway",
+    "Service Unavailable",
+    "502",
+    "503",
+)
+
+
+def _record_submit_failure(config: Any, exc: BaseException, attempt: int) -> None:
+    """Emit a structured telemetry event for a submit retry.
+
+    Recognises saturation-shaped failures and tags the event with the
+    current ``max_concurrent_chunks`` value plus a hint to lower it
+    when the same pattern repeats. Without this hint operators see
+    only an unscoped ``submit attempt failed`` log line; with it the
+    fix is in the event payload.
+    """
+    msg = str(exc)
+    is_saturation = any(h in msg for h in _SATURATION_HINTS)
+    try:
+        from app.observability.run_telemetry import record_event
+        record_event(
+            "ocr.datalab_submit_failed",
+            level="warning",
+            attempt=attempt,
+            error_type=type(exc).__name__,
+            error_message=msg[:300],
+            saturation_shape=is_saturation,
+            current_max_concurrent_chunks=getattr(config, "max_concurrent_chunks", None),
+            hint=(
+                "Saturation-shaped failure. Lower "
+                "AT_DATALAB__MAX_CONCURRENT_CHUNKS (e.g. to 2 or 3) "
+                "to reduce concurrent submits — large docs at high "
+                "concurrency saturate Datalab's per-key submit cap."
+                if is_saturation else None
+            ),
+        )
+    except Exception:  # pragma: no cover — defensive
+        pass
+
+
 def _count_pdf_pages(pdf_path: str) -> int:
     try:
         doc = pypdfium2.PdfDocument(pdf_path)
@@ -756,6 +806,7 @@ class DatalabOCRAdapter:
                     exc,
                     delay,
                 )
+                _record_submit_failure(self._config, exc, attempt + 1)
                 await asyncio.sleep(delay)
             except (DatalabTimeoutError, RuntimeError) as exc:
                 last_exc = exc
@@ -766,6 +817,7 @@ class DatalabOCRAdapter:
                     exc,
                     delay,
                 )
+                _record_submit_failure(self._config, exc, attempt + 1)
                 await asyncio.sleep(delay)
 
         raise RuntimeError(
