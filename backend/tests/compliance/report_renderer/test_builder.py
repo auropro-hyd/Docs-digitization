@@ -349,3 +349,69 @@ def test_agent_filter_scopes_rows() -> None:
 
     assert len(doc.rows) == 1
     assert doc.rows[0].rule_id == "GMP-1"
+
+
+# ── Metadata overrides ──────────────────────────────────────────
+
+
+def test_metadata_overrides_replace_default_placeholders() -> None:
+    """Without overrides the Product / Batch No cells stay at the
+    ``-`` placeholder. The route handler extracts them from the OCR
+    ``result.json`` and threads them through ``metadata_overrides``;
+    matching labels MUST replace the placeholder so the header
+    actually carries the batch identifiers."""
+
+    report = _make_report(agent_reports=[AgentReport(agent="checklist")])
+
+    doc = build_report_document(
+        report,
+        now=_NOW,
+        metadata_overrides={
+            "Product": "Sertraline HCl",
+            "Batch No": "2538105062",
+        },
+    )
+
+    rows = dict(doc.header.metadata_rows)
+    assert rows["Product"] == "Sertraline HCl"
+    assert rows["Batch No"] == "2538105062"
+
+
+def test_metadata_overrides_append_extra_keys_in_order() -> None:
+    """Override keys that aren't in the default list (BPCR Number,
+    Batch Size, etc.) are appended after the defaults, preserving
+    the caller's order so the rendered header stays predictable."""
+
+    report = _make_report(agent_reports=[AgentReport(agent="checklist")])
+
+    doc = build_report_document(
+        report,
+        now=_NOW,
+        metadata_overrides={
+            "Product": "Sertraline HCl",
+            "BPCR Number": "UIIBEHSII28",
+            "Batch Size": "600.0 Kg",
+        },
+    )
+
+    labels = [label for label, _ in doc.header.metadata_rows]
+    assert labels[-2:] == ["BPCR Number", "Batch Size"]
+    assert dict(doc.header.metadata_rows)["BPCR Number"] == "UIIBEHSII28"
+
+
+def test_metadata_overrides_skip_empty_values() -> None:
+    """An empty override value (e.g. OCR picked up a label with a
+    blank cell) must NOT clobber the placeholder — otherwise the
+    header gets noisier than the empty default."""
+
+    report = _make_report(agent_reports=[AgentReport(agent="checklist")])
+
+    doc = build_report_document(
+        report,
+        now=_NOW,
+        metadata_overrides={"Product": "  ", "Batch No": "2538105062"},
+    )
+
+    rows = dict(doc.header.metadata_rows)
+    assert rows["Product"] == "-"
+    assert rows["Batch No"] == "2538105062"

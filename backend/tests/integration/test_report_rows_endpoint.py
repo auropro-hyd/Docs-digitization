@@ -196,3 +196,68 @@ def test_route_is_in_quiet_routes() -> None:
     from app.observability.middleware import _QUIET_ROUTES
 
     assert ("GET", "/api/compliance/{doc_id}/report-rows") in _QUIET_ROUTES
+
+
+# ── Metadata extraction from OCR result.json ───────────────────
+
+
+def _seed_with_ocr_metadata(doc_dir: Path) -> None:
+    """Seed both a compliance report and an OCR ``result.json``
+    carrying the cover-page identifiers — pins the end-to-end
+    Product / Batch / BPCR extraction path."""
+
+    _seed(doc_dir)
+    (doc_dir / "result.json").write_text(
+        json.dumps({
+            "total_pages": 20,
+            "key_value_pairs": [
+                # Cover page wins over later restatements (lowest
+                # page number for each label).
+                {"key": "Product Name", "value": "Sertraline HCl", "page_num": 1},
+                {"key": "Batch No", "value": "2538105062", "page_num": 1},
+                {"key": "BPCR Number", "value": "UIIBEHSII28", "page_num": 1},
+                {"key": "Batch Size", "value": "600.0 Kg", "page_num": 1},
+                # Later-page restatements with different values — the
+                # extractor should prefer page 1.
+                {"key": "Product Name", "value": "Sertraline (Different)", "page_num": 26},
+                # Empty value MUST NOT replace the page-1 value.
+                {"key": "Batch No", "value": "", "page_num": 51},
+                # Unrelated kv that shouldn't pollute the header.
+                {"key": "Manufacturing Steps[0].Step No", "value": "1", "page_num": 1},
+            ],
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_metadata_overrides_pulled_from_ocr_result(
+    client: TestClient, tmp_path: Path,
+) -> None:
+    """End-to-end pin: hitting /report-rows on a doc with an OCR
+    ``result.json`` populates the Product / Batch / BPCR cells from
+    its page-1 kv pairs, not the default ``-`` placeholders."""
+
+    _seed_with_ocr_metadata(tmp_path / _DOC_ID)
+
+    resp = client.get(f"/api/compliance/{_DOC_ID}/report-rows")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    rows = {label: value for label, value in body["header"]["metadata_rows"]}
+    assert rows["Product"] == "Sertraline HCl", "page-1 cover wins over page-26 restatement"
+    assert rows["Batch No"] == "2538105062"
+    assert rows["BPCR Number"] == "UIIBEHSII28"
+    assert rows["Batch Size"] == "600.0 Kg"
+
+
+def test_metadata_extraction_handles_missing_result_json(
+    client: TestClient,
+) -> None:
+    """When no OCR ``result.json`` is present we still want a
+    well-formed header — Product / Batch No fall back to ``-``."""
+
+    resp = client.get(f"/api/compliance/{_DOC_ID}/report-rows")
+    assert resp.status_code == 200
+    rows = {label: value for label, value in resp.json()["header"]["metadata_rows"]}
+    assert rows["Product"] == "-"
+    assert rows["Batch No"] == "-"

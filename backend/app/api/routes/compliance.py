@@ -615,6 +615,68 @@ def _slugify_filename_part(value: str) -> str:
     return slug or "agent"
 
 
+# Cover-page labels the BPCR/BMR form factor uses for the
+# identifiers Akhilesh expects in the report header. Mapped from
+# the raw OCR key to the canonical label the renderer surfaces.
+_DOC_METADATA_KEYS: dict[str, str] = {
+    "product name": "Product",
+    "product": "Product",
+    "batch no": "Batch No",
+    "batch no.": "Batch No",
+    "batch number": "Batch No",
+    "bpcr number": "BPCR Number",
+    "batch size": "Batch Size",
+    "mpcr no.": "MPCR No.",
+    "mpcr no": "MPCR No.",
+    "revision number": "Revision Number",
+    "stage": "Stage",
+}
+
+
+def _extract_doc_metadata(doc_dir: Path) -> dict[str, str]:
+    """Pull product / batch / BPCR-style identifiers off the OCR
+    ``result.json``.
+
+    The compliance pipeline doesn't capture these fields on
+    ``ComplianceReport`` — they live as key-value pairs in the OCR
+    output. We surface them in the report header by reading from
+    the earliest page that carries each label (typically page 1
+    where the cover sheet lives). Empty values are skipped so a
+    later page's populated value wins.
+
+    Returns an empty dict when ``result.json`` is missing or
+    unparseable — the renderer falls back to the default ``-``
+    placeholders.
+    """
+
+    result_path = doc_dir / "result.json"
+    if not result_path.exists():
+        return {}
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Could not read OCR result.json for metadata at %s", doc_dir)
+        return {}
+
+    # Track the earliest page each label was found on so the cover
+    # sheet wins over later-page restatements.
+    by_label: dict[str, tuple[int, str]] = {}
+    for kv in data.get("key_value_pairs", []) or []:
+        raw_key = (kv.get("key") or "").strip().lower()
+        label = _DOC_METADATA_KEYS.get(raw_key)
+        if not label:
+            continue
+        value = (kv.get("value") or "").strip()
+        if not value:
+            continue
+        page = int(kv.get("page_num") or 0)
+        prev = by_label.get(label)
+        if prev is None or page < prev[0]:
+            by_label[label] = (page, value)
+
+    return {label: value for label, (_, value) in by_label.items()}
+
+
 _FORMAT_EXT: dict[str, str] = {"pdf": "pdf", "html": "html", "md": "md"}
 _FORMAT_MEDIA: dict[str, str] = {
     "pdf": "application/pdf",
@@ -682,13 +744,21 @@ async def export_compliance_report(
     # doc_id as a placeholder so we can compute the cache path
     # before parsing.
     cache_dir = doc_dir / "exports"
+    # The header pulls Product / Batch No / BPCR Number from OCR
+    # ``result.json`` (via ``_extract_doc_metadata``), so a touched
+    # OCR file must also invalidate the cache — otherwise a stale
+    # export with empty metadata sticks around forever.
+    ocr_result_path = doc_dir / "result.json"
+    cache_inputs_mtime = result_path.stat().st_mtime
+    if ocr_result_path.exists():
+        cache_inputs_mtime = max(cache_inputs_mtime, ocr_result_path.stat().st_mtime)
 
     # ── Cache lookup ──
     cache_path = cache_dir / _cache_filename(format, agent)
     if (
         not nocache
         and cache_path.exists()
-        and cache_path.stat().st_mtime >= result_path.stat().st_mtime
+        and cache_path.stat().st_mtime >= cache_inputs_mtime
     ):
         body = cache_path.read_bytes()
         report_data = _load_report(doc_id) or {}
@@ -748,6 +818,7 @@ async def export_compliance_report(
         product_name=settings.compliance.report_product_name,
         logo_path=logo_path,
         agent_filter=agent,
+        metadata_overrides=_extract_doc_metadata(doc_dir),
     )
 
     stem = Path(report.filename or doc_id).stem
@@ -854,6 +925,7 @@ async def get_report_rows(
         operator=operator,
         product_name=settings.compliance.report_product_name,
         agent_filter=agent,
+        metadata_overrides=_extract_doc_metadata(_doc_dir(doc_id)),
     )
     return report_document_to_dict(doc)
 
@@ -882,9 +954,13 @@ async def preview_compliance_report(
 
     cache_dir = doc_dir / "exports"
     cache_path = cache_dir / _cache_filename("pdf", agent)
+    ocr_result_path = doc_dir / "result.json"
+    cache_inputs_mtime = result_path.stat().st_mtime
+    if ocr_result_path.exists():
+        cache_inputs_mtime = max(cache_inputs_mtime, ocr_result_path.stat().st_mtime)
     if (
         cache_path.exists()
-        and cache_path.stat().st_mtime >= result_path.stat().st_mtime
+        and cache_path.stat().st_mtime >= cache_inputs_mtime
     ):
         return Response(
             content=cache_path.read_bytes(),
@@ -920,6 +996,7 @@ async def preview_compliance_report(
         product_name=settings.compliance.report_product_name,
         logo_path=logo_path,
         agent_filter=agent,
+        metadata_overrides=_extract_doc_metadata(doc_dir),
     )
 
     try:

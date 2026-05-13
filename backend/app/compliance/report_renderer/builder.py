@@ -68,6 +68,7 @@ def build_report_document(
     logo_path: Path | None = None,
     agent_filter: str | None = None,
     now: datetime | None = None,
+    metadata_overrides: dict[str, str] | None = None,
 ) -> ReportDocument:
     """Derive the client-aligned ``ReportDocument`` from the raw
     ``ComplianceReport`` JSON shape.
@@ -83,6 +84,12 @@ def build_report_document(
       surface (e.g. an operator wants the GMP-only export).
     * ``now`` — clock injection point for tests; defaults to
       ``datetime.now(UTC)``.
+    * ``metadata_overrides`` — extra header rows from outside the
+      ``ComplianceReport`` shape (typically Product / Batch No /
+      BPCR Number, extracted from the OCR ``result.json`` by the
+      route handler). Keys that already exist in the default
+      metadata list (Document, Product, Batch No, Date Of
+      Validation) replace the default value; new keys are appended.
     """
 
     now = now or datetime.now(UTC)
@@ -124,7 +131,7 @@ def build_report_document(
         product_name=product_name,
         title=_derive_title(report),
         is_draft=True,  # Stays True until HITL sign-off lands (future).
-        metadata_rows=_build_metadata_rows(report),
+        metadata_rows=_build_metadata_rows(report, metadata_overrides),
         logo_path=logo_path,
     )
 
@@ -219,23 +226,25 @@ def _derive_title(report: ComplianceReport) -> str:
     return title_map.get(dt, "Compliance Review")
 
 
-def _build_metadata_rows(report: ComplianceReport) -> list[tuple[str, str]]:
-    """Build the (label, value) pairs for the metadata block."""
+def _build_metadata_rows(
+    report: ComplianceReport,
+    overrides: dict[str, str] | None = None,
+) -> list[tuple[str, str]]:
+    """Build the (label, value) pairs for the metadata block.
 
-    # Best-effort extraction of product / batch info from the
-    # report. The fields aren't currently captured at the top level
-    # of ComplianceReport — they live in OCR extractions. For v1 we
-    # surface what the report has; the route handler can enrich
-    # this map with extractions data in a follow-up.
+    The base rows come from ``ComplianceReport`` (filename + report
+    generation date). Product / Batch / BPCR style fields live in
+    the OCR ``result.json`` not the compliance report, so the route
+    handler extracts them and threads them through ``overrides``.
+    A matching key replaces the default placeholder; new keys are
+    appended in the order they're given.
+    """
+
     rows: list[tuple[str, str]] = [
         ("Document", report.filename or report.doc_id or "-"),
+        ("Product", "-"),
+        ("Batch No", "-"),
     ]
-
-    # Product / batch — pull from agent_reports' first row's
-    # description if it carries product info; else leave as
-    # placeholders the route handler can fill.
-    rows.append(("Product", "-"))
-    rows.append(("Batch No", "-"))
 
     # Date of validation = generation date (the report was created
     # when compliance ran). Format YYYY-MM-DD to match the reference.
@@ -253,5 +262,16 @@ def _build_metadata_rows(report: ComplianceReport) -> list[tuple[str, str]]:
             rows.append(("Date Of Validation", "-"))
     else:
         rows.append(("Date Of Validation", "-"))
+
+    if overrides:
+        existing = {label: i for i, (label, _) in enumerate(rows)}
+        for label, value in overrides.items():
+            value = (value or "").strip()
+            if not value:
+                continue
+            if label in existing:
+                rows[existing[label]] = (label, value)
+            else:
+                rows.append((label, value))
 
     return rows
