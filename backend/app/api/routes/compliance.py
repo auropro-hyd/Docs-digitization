@@ -6,7 +6,7 @@ GET  /{doc_id}/status     — return current run status + progress
 POST /{doc_id}/findings/{finding_id}/resolve — mark finding resolved
 POST /{doc_id}/findings/{finding_id}/review  — HITL review (approve/reject/modify)
 GET  /{doc_id}/hitl-summary                  — summary of HITL review status
-GET  /{doc_id}/export     — export compliance report as HTML or Markdown
+GET  /{doc_id}/export     — export client-aligned compliance report (PDF / HTML / MD)
 """
 
 from __future__ import annotations
@@ -20,8 +20,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
+from app.compliance.models import ComplianceReport
+from app.compliance.report_renderer.builder import build_report_document
+from app.compliance.report_renderer.render_html import render_html
+from app.compliance.report_renderer.render_md import render_md
+from app.compliance.report_renderer.render_pdf import PdfRenderError, render_pdf
 from app.config.settings import get_settings
 from app.core.task_manager import task_manager
 
@@ -598,584 +603,206 @@ async def hitl_summary(doc_id: str):
 # ── GET /export ───────────────────────────────────────────────
 
 
-_EXPORT_CSS = """<style>
-:root { --bg: #ffffff; --fg: #1a1a2e; --muted: #6b7280; --border: #e5e7eb;
-  --critical: #dc2626; --major: #ea580c; --minor: #ca8a04; --observation: #6b7280;
-  --success: #16a34a; --info: #2563eb; }
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Inter', system-ui, -apple-system, sans-serif; max-width: 960px;
-  margin: 0 auto; padding: 2rem 1.5rem; color: var(--fg); line-height: 1.6; }
-h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-h2 { font-size: 1.2rem; margin-top: 2rem; padding-bottom: 0.5rem; border-bottom: 2px solid var(--border); }
-h3 { font-size: 1rem; margin-top: 1.25rem; color: #374151; }
-p, li { font-size: 0.9rem; }
-.meta { color: var(--muted); font-size: 0.8rem; }
-.cover { text-align: center; padding: 2rem 0; border-bottom: 3px solid var(--fg); margin-bottom: 2rem; }
-.cover .score-ring { display: inline-block; font-size: 3rem; font-weight: 800; padding: 0.5rem 1rem;
-  border-radius: 50%; width: 100px; height: 100px; line-height: 100px; margin: 1rem 0; }
-.score-high { background: #dcfce7; color: var(--success); border: 3px solid var(--success); }
-.score-med  { background: #fef3c7; color: var(--minor); border: 3px solid var(--minor); }
-.score-low  { background: #fef2f2; color: var(--critical); border: 3px solid var(--critical); }
-table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; font-size: 0.85rem; }
-th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-th { background: #f9fafb; font-weight: 600; }
-.finding { border-left: 4px solid var(--muted); padding: 0.75rem 1rem; margin: 0.75rem 0;
-  background: #f9fafb; border-radius: 0 6px 6px 0; }
-.finding.resolved { border-left-color: var(--success); background: #f0fdf4; }
-.finding.severity-critical { border-left-color: var(--critical); background: #fef2f2; }
-.finding.severity-major { border-left-color: var(--major); background: #fff7ed; }
-.finding.severity-minor { border-left-color: var(--minor); background: #fefce8; }
-.finding.severity-observation { border-left-color: var(--observation); background: #f9fafb; }
-.sev { font-weight: 700; text-transform: uppercase; font-size: 0.7rem; padding: 2px 6px;
-  border-radius: 3px; display: inline-block; }
-.sev-critical { background: #fee2e2; color: var(--critical); }
-.sev-major { background: #ffedd5; color: var(--major); }
-.sev-minor { background: #fef9c3; color: var(--minor); }
-.sev-observation { background: #f3f4f6; color: var(--observation); }
-.hitl { font-size: 0.75rem; padding: 1px 5px; border-radius: 3px; }
-.hitl-needs_review { background: #fef3c7; color: #92400e; }
-.hitl-approved { background: #dcfce7; color: #166534; }
-.hitl-user_rejected { background: #fee2e2; color: #991b1b; }
-.hitl-user_modified { background: #e0e7ff; color: #3730a3; }
-.reasoning-block { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #eff6ff;
-  border-left: 3px solid var(--info); border-radius: 0 4px 4px 0; font-size: 0.82rem; }
-.evidence-block { margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #f9fafb;
-  border-left: 3px solid var(--minor); border-radius: 0 4px 4px 0; font-style: italic; font-size: 0.82rem; }
-.section { margin-top: 1.5rem; }
-ol, ul { padding-left: 1.5rem; margin: 0.5rem 0; }
-.page-break { page-break-before: always; }
-.rule-detail-group { margin-top: 1rem; }
-.rule-detail-group h4 { font-size: 0.92rem; margin-bottom: 0.5rem; padding: 4px 8px;
-  background: #f3f4f6; border-radius: 4px; display: flex; justify-content: space-between; }
-.rule-row { display: flex; gap: 0.5rem; align-items: baseline; padding: 6px 8px;
-  border-bottom: 1px solid #f3f4f6; font-size: 0.82rem; }
-.rule-row:hover { background: #fafbfc; }
-.rule-id { font-weight: 600; white-space: nowrap; min-width: 80px; font-family: 'SF Mono', 'Cascadia Code', monospace; }
-.rule-text { flex: 1; color: #374151; }
-.rule-pages { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
-.rule-reasoning { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
-.st { font-weight: 700; text-transform: uppercase; font-size: 0.65rem; padding: 1px 5px;
-  border-radius: 3px; display: inline-block; white-space: nowrap; }
-.st-compliant { background: #dcfce7; color: #166534; }
-.st-non_compliant { background: #fee2e2; color: #991b1b; }
-.st-not_applicable { background: #f3f4f6; color: #6b7280; }
-.st-uncertain { background: #fef3c7; color: #92400e; }
-.st-error { background: #fce7f3; color: #9d174d; }
-.cat-summary { font-size: 0.75rem; color: var(--muted); font-weight: 400; }
-@media print { body { max-width: 100%; padding: 1rem; } .page-break { break-before: page; }
-  .rule-row { break-inside: avoid; } }
-</style>"""
-
-
-def _format_page_ranges(pages: list) -> str:
-    """Collapse consecutive page numbers into ranges for the export."""
-    if not pages:
-        return ""
-    nums = sorted(set(int(p) for p in pages if isinstance(p, int) or (isinstance(p, str) and p.isdigit())))
-    if not nums:
-        return ""
-    ranges: list[str] = []
-    start = end = nums[0]
-    for n in nums[1:]:
-        if n == end + 1:
-            end = n
-        else:
-            ranges.append(f"{start}" if start == end else f"{start}–{end}")
-            start = end = n
-    ranges.append(f"{start}" if start == end else f"{start}–{end}")
-    return ", ".join(ranges)
-
-
-def _smart_page_display(pages: list, total_pages: int, status: str) -> str:
-    """Human-friendly page display that avoids listing all 185 pages."""
-    if not pages:
-        if status == "not_applicable":
-            return "Document scope"
-        return "Document scope"
-    n = len(pages)
-    if total_pages > 0 and n >= total_pages - 5:
-        if status == "not_applicable":
-            return "N/A across all pages"
-        return "All pages"
-    return _format_page_ranges(pages)
-
-
-_STATUS_LABELS = {
-    "compliant": "Compliant",
-    "non_compliant": "Non-Compliant",
-    "not_applicable": "N/A",
-    "uncertain": "Uncertain",
-    "error": "Error",
-}
-
-
-def _score_class(score: float) -> str:
-    if score >= 75:
-        return "score-high"
-    if score >= 45:
-        return "score-med"
-    return "score-low"
-
-
 def _slugify_filename_part(value: str) -> str:
     """Return a filesystem-safe, lowercase slug for filenames."""
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return slug or "agent"
 
 
-def _build_agent_scoped_report(report: dict, agent_id: str) -> dict:
-    """Return a report payload scoped to a single agent."""
-    target = None
-    for ar in report.get("agent_reports", []):
-        if ar.get("agent") == agent_id:
-            target = ar
-            break
-    if target is None:
-        raise HTTPException(status_code=404, detail=f"Agent report not found for '{agent_id}'.")
+_FORMAT_EXT: dict[str, str] = {"pdf": "pdf", "html": "html", "md": "md"}
+_FORMAT_MEDIA: dict[str, str] = {
+    "pdf": "application/pdf",
+    "html": "text/html; charset=utf-8",
+    "md": "text/markdown; charset=utf-8",
+}
 
-    scoped = dict(report)
-    scoped["agent_reports"] = [target]
-    scoped_findings = [f for f in report.get("findings", []) if f.get("agent") == agent_id]
-    scoped["findings"] = scoped_findings
-    scoped["total_findings"] = len(scoped_findings)
-    scoped["severity_counts"] = target.get("severity_counts", {})
-    scoped["overall_score"] = target.get("model_score", target.get("score", report.get("overall_score", 0)))
-    scoped["model_score"] = target.get("model_score", target.get("score", report.get("overall_score", 0)))
-    scoped["review_adjusted_score"] = target.get("review_adjusted_score", scoped["overall_score"])
-    scoped["score_decomposition"] = target.get("score_decomposition", {})
-    scoped["skipped_agents"] = []
 
-    summary = dict(report.get("executive_summary", {}))
-    summary["overall_assessment"] = (
-        f"Agent-specific compliance report for "
-        f"{target.get('agent_display', AGENT_LABELS.get(agent_id, agent_id))}."
-    )
-    scoped["executive_summary"] = summary
-    return scoped
+def _cache_filename(delivered_format: str, agent: str | None) -> str:
+    """Compose the cache filename for a rendered export."""
+    suffix = f"_{_slugify_filename_part(agent)}" if agent else ""
+    return f"report{suffix}.{_FORMAT_EXT[delivered_format]}"
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` via a temp file + replace.
+
+    Best-effort: cache write failures are swallowed so they can't
+    break the export response (logged for ops visibility).
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    except OSError:
+        logger.exception("Failed to write export cache to %s", path)
 
 
 @router.get("/{doc_id}/export")
 async def export_compliance_report(
     doc_id: str,
-    format: str = Query("html", pattern="^(md|html)$"),
+    format: str = Query("pdf", pattern="^(pdf|html|md)$"),
     agent: str | None = Query(None, description="Optional agent ID for scoped export."),
+    operator: str = Query("System", description="Operator name surfaced in the footer disclaimer."),
+    nocache: bool = Query(False, description="Bypass the export cache and re-render."),
 ):
-    """Export the compliance report as HTML or Markdown."""
-    report = _load_report(doc_id)
-    if report is None:
+    """Export the client-aligned compliance report (Spec 008).
+
+    PDF is the default; HTML and Markdown are available for clients
+    that can't display PDF. The PDF path falls back to HTML when
+    WeasyPrint's native deps aren't loadable on the host — the
+    fallback response carries ``X-Render-Fallback: html`` so the
+    caller can detect it.
+
+    Per FR-007 the exported artifact carries no score fields; scores
+    remain available via ``GET /report`` for the on-screen view.
+
+    Rendered artifacts are cached at
+    ``data/documents/{doc_id}/exports/report[_<agent>].{ext}`` and
+    served back when the cached file's mtime is newer than
+    ``compliance_result.json`` (so HITL edits invalidate the cache
+    automatically). Pass ``?nocache=1`` to force a fresh render.
+    """
+
+    import time
+
+    doc_dir = _doc_dir(doc_id)
+    result_path = doc_dir / _COMPLIANCE_RESULT
+    if not result_path.exists():
         raise HTTPException(status_code=404, detail="No compliance report found.")
-    _recompute_review_adjusted_scores(report)
 
-    export_report = report
-    stem = Path(report.get("filename", doc_id)).stem
-    filename_stem = f"{stem}_compliance"
-    if agent:
-        export_report = _build_agent_scoped_report(report, agent)
-        agent_slug = _slugify_filename_part(agent)
-        filename_stem = f"{filename_stem}_{agent_slug}"
+    stem = Path(doc_id).stem
+    # Real filename comes after we load the report; for now use
+    # doc_id as a placeholder so we can compute the cache path
+    # before parsing.
+    cache_dir = doc_dir / "exports"
 
-    if format == "md":
-        md_content = _build_report_markdown(export_report)
+    # ── Cache lookup ──
+    cache_path = cache_dir / _cache_filename(format, agent)
+    if (
+        not nocache
+        and cache_path.exists()
+        and cache_path.stat().st_mtime >= result_path.stat().st_mtime
+    ):
+        body = cache_path.read_bytes()
+        report_data = _load_report(doc_id) or {}
+        stem = Path(report_data.get("filename", doc_id)).stem
+        filename_stem = f"{stem}_compliance"
+        if agent:
+            filename_stem = f"{filename_stem}_{_slugify_filename_part(agent)}"
+        logger.info(
+            "compliance.report_rendered",
+            extra={
+                "doc_id": doc_id,
+                "requested_format": format,
+                "delivered_format": format,
+                "agent_filter": agent,
+                "fallback": False,
+                "cache": "hit",
+                "byte_size": len(body),
+            },
+        )
         return Response(
-            content=md_content,
-            media_type="text/markdown; charset=utf-8",
-            headers={"Content-Disposition": f'attachment; filename="{filename_stem}.md"'},
+            content=body,
+            media_type=_FORMAT_MEDIA[format],
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename_stem}.{_FORMAT_EXT[format]}"',
+                "X-Cache": "hit",
+            },
         )
 
-    html_doc = _build_report_html(export_report, stem)
-    return Response(
-        content=html_doc,
-        media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename_stem}.html"'},
+    report_data = _load_report(doc_id)
+    if report_data is None:
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+    # Keeps the in-memory dict's score fields current for callers
+    # that hit /report; the export pipeline never reads them.
+    _recompute_review_adjusted_scores(report_data)
+
+    if agent and not any(
+        ar.get("agent") == agent for ar in report_data.get("agent_reports", [])
+    ):
+        raise HTTPException(status_code=404, detail=f"Agent report not found for '{agent}'.")
+
+    try:
+        report = ComplianceReport.model_validate(report_data)
+    except ValidationError as exc:
+        logger.exception("Stored compliance report failed validation for %s", doc_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Stored compliance report failed schema validation.",
+        ) from exc
+
+    settings = get_settings()
+    logo_raw = settings.compliance.report_logo_path
+    logo_path = Path(logo_raw) if logo_raw else None
+
+    doc = build_report_document(
+        report,
+        operator=operator,
+        product_name=settings.compliance.report_product_name,
+        logo_path=logo_path,
+        agent_filter=agent,
     )
 
+    stem = Path(report.filename or doc_id).stem
+    filename_stem = f"{stem}_compliance"
+    if agent:
+        filename_stem = f"{filename_stem}_{_slugify_filename_part(agent)}"
 
-def _esc(text: object) -> str:
-    """HTML escape, safe for None and non-string values."""
-    from html import escape
-    if text is None:
-        return ""
-    return escape(str(text))
+    t0 = time.perf_counter()
+    delivered_format = format
+    fallback = False
+    extra_headers: dict[str, str] = {}
+    if format == "md":
+        body = render_md(doc).encode("utf-8")
+    elif format == "html":
+        body = render_html(doc).encode("utf-8")
+    else:  # format == "pdf"
+        try:
+            body = render_pdf(doc)
+        except PdfRenderError as exc:
+            # WeasyPrint native deps missing — degrade gracefully to
+            # HTML so the user still gets the report.
+            logger.warning("PDF render unavailable for %s, falling back to HTML (%s)", doc_id, exc)
+            body = render_html(doc).encode("utf-8")
+            delivered_format = "html"
+            fallback = True
+            extra_headers["X-Render-Fallback"] = "html"
+            extra_headers["X-Render-Fallback-Reason"] = "weasyprint_unavailable"
 
+    # Cache the delivered artifact for future requests. Fallback
+    # HTML gets cached under report[_agent].html — same path a
+    # direct format=html request would hit.
+    _atomic_write(cache_dir / _cache_filename(delivered_format, agent), body)
 
-def _build_report_html(report: dict, stem: str) -> str:
-    """Build a professional HTML compliance report."""
-    score = report.get("model_score", report.get("overall_score", 0))
-    review_score = report.get("review_adjusted_score", score)
-    summary = report.get("executive_summary", {})
-    sev = report.get("severity_counts", {})
-    trail = report.get("audit_trail", {})
-    methodology = report.get("score_methodology", {})
+    logger.info(
+        "compliance.report_rendered",
+        extra={
+            "doc_id": doc_id,
+            "requested_format": format,
+            "delivered_format": delivered_format,
+            "agent_filter": agent,
+            "fallback": fallback,
+            "cache": "miss",
+            "rows": doc.stats.row_count,
+            "compliant": doc.stats.compliant_count,
+            "action_required": doc.stats.action_required_count,
+            "needs_attention": doc.stats.needs_attention_count,
+            "byte_size": len(body),
+            "duration_ms": round((time.perf_counter() - t0) * 1000, 1),
+        },
+    )
 
-    h = []
-    h.append("<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>")
-    h.append(f"<title>{_esc(stem)} — Compliance Audit Report</title>")
-    h.append(_EXPORT_CSS)
-    h.append("</head><body>")
-
-    # --- Cover ---
-    h.append('<div class="cover">')
-    h.append("<h1>Compliance Audit Report</h1>")
-    h.append(f'<p class="meta">{_esc(report.get("filename", stem))} &mdash; '
-             f'{_esc(report.get("document_type", ""))} &mdash; '
-             f'{report.get("total_pages", "?")} pages</p>')
-    h.append(f'<p class="meta">Generated: {_esc(str(report.get("generated_at", "")))}</p>')
-    h.append(f'<div class="score-ring {_score_class(score)}">{score:.0f}</div>')
-    h.append('<p class="meta">Model Score (out of 100)</p>')
-    if review_score is not None:
-        h.append(f'<p class="meta" style="margin-top:0.35rem">Review-Adjusted Score: <strong>{float(review_score):.1f}</strong>/100</p>')
-    h.append("</div>")
-
-    # --- Executive Summary ---
-    if summary:
-        h.append("<h2>Executive Summary</h2>")
-        if summary.get("overall_assessment"):
-            h.append(f'<p>{_esc(summary["overall_assessment"])}</p>')
-
-        if summary.get("strengths"):
-            h.append("<h3>Strengths</h3><ul>")
-            for s in summary["strengths"]:
-                h.append(f"<li>{_esc(s)}</li>")
-            h.append("</ul>")
-
-        if summary.get("key_risks"):
-            h.append("<h3>Key Risks</h3><ul>")
-            for r in summary["key_risks"]:
-                h.append(f"<li>{_esc(r)}</li>")
-            h.append("</ul>")
-
-        if summary.get("priority_actions"):
-            h.append("<h3>Priority Actions</h3><ol>")
-            for a in summary["priority_actions"]:
-                h.append(f"<li>{_esc(a)}</li>")
-            h.append("</ol>")
-
-    # --- Severity Distribution ---
-    if sev:
-        h.append("<h2>Severity Distribution</h2>")
-        h.append("<table><tr><th>Severity</th><th>Count</th></tr>")
-        for s in ["critical", "major", "minor", "observation"]:
-            cnt = sev.get(s, 0)
-            if cnt:
-                h.append(f'<tr><td><span class="sev sev-{s}">{s.upper()}</span></td><td>{cnt}</td></tr>')
-        total = sum(sev.values())
-        h.append(f'<tr><th>Total</th><th>{total}</th></tr>')
-        h.append("</table>")
-
-    # --- Per-Agent Breakdown ---
-    for ar in report.get("agent_reports", []):
-        agent_name = ar.get("agent_display", ar.get("agent", "?"))
-        h.append(f'<h2 class="page-break">{_esc(agent_name)}</h2>')
-        model_score = ar.get("model_score", ar.get("score", "N/A"))
-        review_adj = ar.get("review_adjusted_score")
-        score_text = f'Model: <strong>{model_score}/100</strong>'
-        if review_adj is not None:
-            score_text += f' &mdash; Review-adjusted: <strong>{review_adj}/100</strong>'
-        h.append(f'<p>{score_text} &mdash; '
-                 f'Rules: {ar.get("total_rules", 0)} &mdash; '
-                 f'Findings: {ar.get("total_findings", 0)}</p>')
-
-        cat_scores = ar.get("category_scores", [])
-        if cat_scores:
-            h.append("<table><tr><th>Category</th><th>Score</th>"
-                     "<th>Compliant</th><th>Non-Compliant</th><th>N/A</th></tr>")
-            for cs in cat_scores:
-                h.append(f'<tr><td>{_esc(cs.get("category_display", ""))}</td>'
-                         f'<td>{cs.get("score", "")}/100</td>'
-                         f'<td>{cs.get("compliant", 0)}</td>'
-                         f'<td>{cs.get("non_compliant", 0)}</td>'
-                         f'<td>{cs.get("not_applicable", 0)}</td></tr>')
-            h.append("</table>")
-
-        findings = ar.get("findings", [])
-        if findings:
-            h.append(f"<h3>Findings ({len(findings)})</h3>")
-            for f in findings:
-                sev_cls = f.get("severity", "observation")
-                resolved_cls = " resolved" if f.get("resolved") else ""
-                hitl = f.get("hitl_status", "")
-                hitl_label = {
-                    "needs_review": "Needs Review",
-                    "auto_approved": "Auto Approved",
-                    "user_approved": "Approved",
-                    "user_rejected": "Rejected",
-                    "user_modified": "Modified",
-                }.get(hitl, hitl)
-                hitl_cls = "approved" if "approved" in hitl else hitl
-
-                pages_str = _format_page_ranges(f.get("page_numbers", []))
-
-                h.append(f'<div class="finding severity-{sev_cls}{resolved_cls}">')
-                hitl_html = f' &mdash; <span class="hitl hitl-{hitl_cls}">{_esc(hitl_label)}</span>' if hitl else ""
-                resolved_html = "  &#10003; Resolved" if f.get("resolved") else ""
-                h.append(
-                    f'<p><strong>{_esc(f.get("rule_id", ""))}</strong> '
-                    f'<span class="sev sev-{sev_cls}">{sev_cls.upper()}</span>'
-                    f'{hitl_html}{resolved_html}</p>'
-                )
-
-                desc = f.get("description", "")
-                if desc:
-                    h.append(f"<p>{_esc(desc)}</p>")
-
-                reasoning = f.get("reasoning", "")
-                if reasoning:
-                    h.append(f'<div class="reasoning-block"><strong>Reasoning:</strong> {_esc(reasoning)}</div>')
-
-                evidence = f.get("evidence", "")
-                if evidence:
-                    h.append(f'<div class="evidence-block"><strong>Evidence:</strong> &ldquo;{_esc(evidence)}&rdquo;</div>')
-
-                rec = f.get("recommendation", "")
-                if rec:
-                    h.append(f'<p><strong>Recommendation:</strong> {_esc(rec)}</p>')
-
-                if pages_str:
-                    h.append(f'<p class="meta">Pages: {pages_str}</p>')
-
-                h.append("</div>")
-
-        # --- Rule-Level Detail ---
-        all_evals = ar.get("all_evaluations", [])
-        if all_evals:
-            total_pages = report.get("total_pages", 0)
-            cat_order = [cs.get("category_id", "") for cs in cat_scores]
-            by_cat: dict[str, list[dict]] = {}
-            for ev in all_evals:
-                cat = ev.get("rule_category", "other")
-                by_cat.setdefault(cat, []).append(ev)
-
-            for cat in by_cat:
-                if cat not in cat_order:
-                    cat_order.append(cat)
-
-            cat_display_map = {
-                cs.get("category_id", ""): cs.get("category_display", cs.get("category_id", ""))
-                for cs in cat_scores
-            }
-
-            h.append('<h3 class="page-break">Rule-Level Detail</h3>')
-            for cat_id in cat_order:
-                rules_in_cat = by_cat.get(cat_id, [])
-                if not rules_in_cat:
-                    continue
-                rules_in_cat.sort(key=lambda r: r.get("rule_id", ""))
-                cat_label = _esc(cat_display_map.get(cat_id, cat_id.title()))
-
-                n_comp = sum(1 for r in rules_in_cat if r.get("status") == "compliant")
-                n_nc = sum(1 for r in rules_in_cat if r.get("status") == "non_compliant")
-                n_na = sum(1 for r in rules_in_cat if r.get("status") == "not_applicable")
-                n_unc = sum(1 for r in rules_in_cat if r.get("status") in ("uncertain", "error"))
-
-                h.append('<div class="rule-detail-group">')
-                h.append(
-                    f'<h4>{cat_label} '
-                    f'<span class="cat-summary">{len(rules_in_cat)} rules &mdash; '
-                    f'{n_comp} pass, {n_nc} fail, {n_na} N/A'
-                    f'{f", {n_unc} uncertain" if n_unc else ""}'
-                    f'</span></h4>'
-                )
-
-                for rv in rules_in_cat:
-                    st = rv.get("status", "unknown")
-                    st_label = _STATUS_LABELS.get(st, st.replace("_", " ").title())
-                    pages_display = _smart_page_display(
-                        rv.get("page_numbers", []), total_pages, st,
-                    )
-                    rule_text = _esc(rv.get("rule_text", ""))
-                    reasoning = rv.get("reasoning", "")
-
-                    h.append('<div class="rule-row">')
-                    h.append(f'<span class="rule-id">{_esc(rv.get("rule_id", ""))}</span>')
-                    h.append(f'<span class="st st-{st}">{st_label}</span>')
-                    h.append(f'<span class="rule-text">{rule_text}</span>')
-                    h.append(f'<span class="rule-pages">{_esc(pages_display)}</span>')
-                    h.append('</div>')
-                    if reasoning:
-                        trimmed = reasoning[:250] + ("..." if len(reasoning) > 250 else "")
-                        h.append(f'<div class="rule-reasoning" style="padding-left:90px">{_esc(trimmed)}</div>')
-
-                h.append("</div>")
-
-    # --- Skipped Agents ---
-    skipped = report.get("skipped_agents", [])
-    if skipped:
-        h.append("<h2>Skipped Agents</h2><ul>")
-        for s in skipped:
-            h.append(f'<li><strong>{_esc(s.get("category", ""))}</strong>: {_esc(s.get("reason", ""))}</li>')
-        h.append("</ul>")
-
-    # --- Audit Trail ---
-    if trail:
-        h.append('<h2>Audit Trail &amp; Methodology</h2>')
-        h.append("<table>")
-        h.append(f'<tr><td>Duration</td><td>{trail.get("duration_seconds", 0):.1f}s</td></tr>')
-        h.append(f'<tr><td>LLM Calls</td><td>{trail.get("total_llm_calls", 0)}</td></tr>')
-        h.append(f'<tr><td>Rules Evaluated</td><td>{trail.get("total_rules_evaluated", 0)}</td></tr>')
-        h.append(f'<tr><td>Evaluator Model</td><td>{_esc(trail.get("evaluator_model", "N/A"))}</td></tr>')
-        h.append(f'<tr><td>Orchestrator Model</td><td>{_esc(trail.get("orchestrator_model", "N/A"))}</td></tr>')
-        h.append("</table>")
-
-    if methodology:
-        h.append(f'<p class="meta" style="margin-top:0.5rem">'
-                 f'<strong>Scoring formula:</strong> {_esc(methodology.get("formula", ""))}</p>')
-
-    h.append("</body></html>")
-    return "\n".join(h)
-
-
-def _build_report_markdown(report: dict) -> str:
-    """Build a markdown version of the compliance report."""
-    lines: list[str] = []
-    lines.append(f"# Compliance Audit Report — {report.get('filename', 'Document')}")
-    lines.append("")
-
-    summary = report.get("executive_summary", {})
-    model_score = report.get("model_score", report.get("overall_score", "N/A"))
-    review_score = report.get("review_adjusted_score")
-    if review_score is not None:
-        lines.append(f"**Model Score: {model_score}/100**  \n**Review-Adjusted Score: {review_score}/100**")
-    else:
-        lines.append(f"**Overall Score: {model_score}/100**")
-    lines.append("")
-    if summary.get("overall_assessment"):
-        lines.append(f"## Executive Summary\n\n{summary['overall_assessment']}")
-        lines.append("")
-
-    if summary.get("strengths"):
-        lines.append("### Strengths\n")
-        for s in summary["strengths"]:
-            lines.append(f"- {s}")
-        lines.append("")
-
-    if summary.get("key_risks"):
-        lines.append("### Key Risks\n")
-        for risk in summary["key_risks"]:
-            lines.append(f"- {risk}")
-        lines.append("")
-
-    if summary.get("priority_actions"):
-        lines.append("### Priority Actions\n")
-        for i, action in enumerate(summary["priority_actions"], 1):
-            lines.append(f"{i}. {action}")
-        lines.append("")
-
-    sev = report.get("severity_counts", {})
-    if sev:
-        lines.append("## Severity Breakdown\n")
-        lines.append("| Severity | Count |")
-        lines.append("|----------|-------|")
-        for s in ["critical", "major", "minor", "observation"]:
-            if sev.get(s, 0):
-                lines.append(f"| {s.title()} | {sev[s]} |")
-        lines.append("")
-
-    for ar in report.get("agent_reports", []):
-        lines.append(f"## {ar.get('agent_display', ar.get('agent', '?'))}")
-        ar_model = ar.get("model_score", ar.get("score", "N/A"))
-        ar_review = ar.get("review_adjusted_score")
-        score_line = f"Model Score: **{ar_model}/100**"
-        if ar_review is not None:
-            score_line += f" | Review-Adjusted: **{ar_review}/100**"
-        lines.append(f"\n{score_line} | "
-                      f"Rules: {ar.get('total_rules', 0)} | "
-                      f"Findings: {ar.get('total_findings', 0)}\n")
-
-        for cs in ar.get("category_scores", []):
-            lines.append(f"### {cs.get('category_display', cs.get('category_id', '?'))}")
-            lines.append(f"Score: {cs.get('score', 'N/A')}/100 | "
-                          f"Compliant: {cs.get('compliant', 0)} | "
-                          f"Non-compliant: {cs.get('non_compliant', 0)}\n")
-
-        if ar.get("findings"):
-            lines.append("### Findings\n")
-            for f in ar["findings"]:
-                pages = _format_page_ranges(f.get("page_numbers", []))
-                resolved = " [Resolved]" if f.get("resolved") else ""
-                hitl = f.get("hitl_status", "")
-                lines.append(f"**{f.get('rule_id', '')}** [{f.get('severity', '').upper()}]{resolved}")
-                if hitl:
-                    lines.append(f"  *Review: {hitl}*")
-                desc = f.get("description", "")
-                if desc:
-                    lines.append(f"  {desc}")
-                reasoning = f.get("reasoning", "")
-                if reasoning:
-                    lines.append(f"  > **Reasoning:** {reasoning}")
-                evidence = f.get("evidence", "")
-                if evidence:
-                    lines.append(f'  > **Evidence:** "{evidence}"')
-                rec = f.get("recommendation", "")
-                if rec:
-                    lines.append(f"  **Recommendation:** {rec}")
-                if pages:
-                    lines.append(f"  Pages: {pages}")
-                lines.append("")
-
-        all_evals = ar.get("all_evaluations", [])
-        if all_evals:
-            total_pages = report.get("total_pages", 0)
-            cat_order = [cs.get("category_id", "") for cs in ar.get("category_scores", [])]
-            by_cat: dict[str, list[dict]] = {}
-            for ev in all_evals:
-                cat = ev.get("rule_category", "other")
-                by_cat.setdefault(cat, []).append(ev)
-            for cat in by_cat:
-                if cat not in cat_order:
-                    cat_order.append(cat)
-
-            cat_display_map = {
-                cs.get("category_id", ""): cs.get("category_display", cs.get("category_id", ""))
-                for cs in ar.get("category_scores", [])
-            }
-
-            lines.append("### Rule-Level Detail\n")
-            for cat_id in cat_order:
-                rules_in_cat = by_cat.get(cat_id, [])
-                if not rules_in_cat:
-                    continue
-                rules_in_cat.sort(key=lambda r: r.get("rule_id", ""))
-                cat_label = cat_display_map.get(cat_id, cat_id.title())
-                lines.append(f"#### {cat_label} ({len(rules_in_cat)} rules)\n")
-                lines.append("| Rule | Status | Rule Text | Pages | Reasoning |")
-                lines.append("|------|--------|-----------|-------|-----------|")
-                for rv in rules_in_cat:
-                    st = rv.get("status", "unknown")
-                    st_label = _STATUS_LABELS.get(st, st.replace("_", " ").title())
-                    pages_display = _smart_page_display(
-                        rv.get("page_numbers", []), total_pages, st,
-                    )
-                    rule_text = rv.get("rule_text", "")[:80]
-                    reasoning = rv.get("reasoning", "")[:120]
-                    reasoning = reasoning.replace("|", "/").replace("\n", " ")
-                    rule_text = rule_text.replace("|", "/").replace("\n", " ")
-                    lines.append(
-                        f"| {rv.get('rule_id', '')} | {st_label} "
-                        f"| {rule_text} | {pages_display} | {reasoning} |"
-                    )
-                lines.append("")
-
-    skipped = report.get("skipped_agents", [])
-    if skipped:
-        lines.append("## Skipped Agents\n")
-        for s in skipped:
-            lines.append(f"- **{s.get('category', '?')}**: {s.get('reason', '')}")
-        lines.append("")
-
-    trail = report.get("audit_trail", {})
-    if trail:
-        lines.append("## Audit Trail\n")
-        lines.append(f"- Duration: {trail.get('duration_seconds', 0):.1f}s")
-        lines.append(f"- LLM calls: {trail.get('total_llm_calls', 0)}")
-        lines.append(f"- Rules evaluated: {trail.get('total_rules_evaluated', 0)}")
-        lines.append(f"- Evaluator model: {trail.get('evaluator_model', 'N/A')}")
-        lines.append(f"- Orchestrator model: {trail.get('orchestrator_model', 'N/A')}")
-
-    methodology = report.get("score_methodology", {})
-    if methodology:
-        lines.append(f"\n*Scoring: {methodology.get('formula', '')}*")
-
-    return "\n".join(lines)
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename_stem}.{_FORMAT_EXT[delivered_format]}"',
+        "X-Cache": "miss",
+        **extra_headers,
+    }
+    return Response(
+        content=body,
+        media_type=_FORMAT_MEDIA[delivered_format],
+        headers=headers,
+    )
 
 
 # ── Segmentation endpoints ────────────────────────────────────

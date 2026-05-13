@@ -339,6 +339,25 @@ class ComplianceConfig(BaseModel):
     # or future agentic runs.
     agentic_summaries_force: bool = False
 
+    # Spec 008 — report rendering. Masthead product name shown
+    # centered in the exported PDF's header band. Two-brand-layer
+    # model: this is the product / masthead name; the disclaimer
+    # footer carries the engine name ("Pharmix AI") separately.
+    # Override via AT_COMPLIANCE__REPORT_PRODUCT_NAME for a
+    # different brand without code changes.
+    report_product_name: str = "BMR Compliance Intelligence Suite"
+    # Path to the generic compliance-suite logo asset rendered
+    # top-left of the header band. Resolved relative to the
+    # repo root when relative; absolute paths used as-is.
+    # When missing at runtime the renderer falls back to a
+    # text-only header and emits a missing_asset warning.
+    report_logo_path: str = "backend/app/compliance/report_renderer/assets/logo.svg"
+    # Per-export cap on mitigation-synthesis LLM spend. Synthesis
+    # endpoint rejects with 429 when the estimated cumulative
+    # spend exceeds this. Renderer falls back to boilerplate
+    # mitigation text rather than spending past the cap.
+    mitigation_synth_cost_ceiling_usd: float = 0.50
+
     applicability_mode: str = "static"  # "static" | "llm"
 
     enable_cross_page: bool = True

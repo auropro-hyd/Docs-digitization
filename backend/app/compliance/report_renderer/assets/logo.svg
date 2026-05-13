@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 80" role="img" aria-label="BMR Compliance Intelligence Suite logo">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a73e8"/>
+      <stop offset="1" stop-color="#0f3d8a"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="10" width="60" height="60" rx="10" fill="url(#g)"/>
+  <path d="M20 28 L20 62 M20 28 L36 28 Q44 28 44 36 Q44 42 36 44 Q46 46 46 54 Q46 62 36 62 L20 62 M20 44 L36 44" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="76" y="38" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#1a1a2e">BMR</text>
+  <text x="76" y="58" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="500" fill="#4a5568">Compliance Intelligence</text>
+</svg>
