@@ -36,7 +36,6 @@ class GMPAgent:
     async def review_document(
         self,
         extractions: list[dict],
-        document_type: str = "batch_record",
         progress_callback=None,
         prescreen_callback=None,
         section_map: dict[int, dict] | None = None,
@@ -57,7 +56,6 @@ class GMPAgent:
             batches,
             extractions,
             self._llm,
-            document_type=document_type,
             max_concurrent=self._config.max_concurrent_batches,
             progress_callback=progress_callback,
             prescreen_callback=prescreen_callback,
