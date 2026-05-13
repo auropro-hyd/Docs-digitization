@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -77,6 +78,9 @@ export function VisualEvidenceViewer({
               </Badge>
             ))}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            VLM-detected regions overlaid on the original page image for rule {ruleId}.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2 pb-2 border-b">

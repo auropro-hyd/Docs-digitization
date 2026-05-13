@@ -7,7 +7,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { rehypeTableFix } from "@/lib/rehype-table-fix";
 import type { PageData } from "@/stores/document-store";
-import { getDocument } from "@/lib/api";
+import { API_BASE, getDocument } from "@/lib/api";
 import { ConfidenceBadge } from "@/components/common/confidence-badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
@@ -75,9 +75,33 @@ function TableWrapper({ children, ...props }: React.ComponentPropsWithoutRef<"ta
   );
 }
 
-const mdComponents = {
-  table: TableWrapper,
-};
+/** Build the ReactMarkdown component map for a given document.
+ *
+ * Datalab OCR emits image crops as ``![alt](HASH_img.jpg)``. The
+ * frontend renders these via ReactMarkdown, where a bare relative
+ * URL resolves against the frontend origin (e.g.
+ * ``http://localhost:3100/HASH_img.jpg``) and 404s. The backend
+ * serves the crops at
+ * ``/api/documents/{doc_id}/images/{filename}`` — this custom
+ * ``img`` renderer rewrites Datalab's relative refs to point at
+ * that endpoint. Absolute / data URIs pass through unchanged. */
+function buildMdComponents(docId: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ImgRenderer = (props: any) => {
+    const { src, alt, ...rest } = props;
+    const rawSrc = typeof src === "string" ? src : "";
+    let resolved = rawSrc;
+    if (rawSrc && !/^(https?:|data:|\/)/i.test(rawSrc)) {
+      resolved = `${API_BASE}/api/documents/${docId}/images/${rawSrc}`;
+    }
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={resolved} alt={alt ?? ""} {...rest} />;
+  };
+  return {
+    table: TableWrapper,
+    img: ImgRenderer,
+  };
+}
 
 interface PageDetailModalProps {
   page: PageData | null;
@@ -156,7 +180,11 @@ export function PageDetailModal({ page, docId, onClose }: PageDetailModalProps) 
             </div>
           ) : markdown ? (
             <div className="prose prose-sm prose-slate dark:prose-invert max-w-none text-[13px] pt-2">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeTableFix]} components={mdComponents}>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeTableFix]}
+                components={buildMdComponents(docId)}
+              >
                 {markdown}
               </ReactMarkdown>
             </div>
