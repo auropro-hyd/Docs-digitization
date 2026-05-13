@@ -149,17 +149,40 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
 
     build_payload = make_progress_payload_builder()
     last_logged_percent = -1
+    last_logged_label = ""
 
     def _on_ocr_progress(percent: int, label: str) -> None:
-        """Thread-safe bridge: schedule the async WS broadcast from the executor thread."""
-        nonlocal last_logged_percent
+        """Thread-safe bridge: schedule the async WS broadcast from the executor thread.
+
+        Log policy (composes with the upstream heartbeat throttle —
+        Datalab adapter only fires the callback on state-change or
+        per ``heartbeat_quiet_interval_s``):
+
+          * First emit ever (``last_logged_percent < 0``) — log so
+            the operator sees OCR has started.
+          * Significant jump (≥5%) — log the transition.
+          * Terminal 100% — log so the operator sees completion.
+          * Otherwise (e.g. a quiet-interval liveness ping at the
+            same 0% the heartbeat last emitted) — broadcast on the
+            WS but do NOT log.
+
+        The previous implementation matched ``percent in (0, 100)``
+        unconditionally, which made every 0% heartbeat tick log —
+        the per-second flood the user saw was the wrapper bypassing
+        its own percent-jump throttle.
+        """
+        nonlocal last_logged_percent, last_logged_label
 
         payload = build_payload(percent, label)
         if payload is None:
             return
 
-        if percent >= last_logged_percent + 5 or percent in (0, 100):
+        first_emit = last_logged_percent < 0
+        significant_jump = percent >= last_logged_percent + 5
+        terminal_complete = percent == 100 and last_logged_percent < 100
+        if first_emit or significant_jump or terminal_complete:
             last_logged_percent = percent
+            last_logged_label = label
             logger.info("[%s] OCR progress %s%% - %s", doc_id, percent, label)
 
         try:
