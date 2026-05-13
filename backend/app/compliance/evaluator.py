@@ -437,6 +437,44 @@ async def run_agent_evaluation(
         sec_info = section_map.get(page_num) if section_map else None
         effective_doc_type = (sec_info.get("document_type") or "") if sec_info else ""
 
+        # Akhilesh's a2f690e replaced the legacy static
+        # ``document_type="batch_record"`` default with a per-page
+        # derivation from ``section_map``. That fixes the multi-section
+        # case where operation_checklist rules silently skipped on
+        # checklist pages, but introduces a NEW silent-skip class: when
+        # a page has no section assigned (or the section has no
+        # document_type), every rule with ``applicable_document_types``
+        # gets ``not_applicable`` with no aggregate signal. Without this
+        # telemetry the operator can't tell whether a per-page-N skip
+        # is "rule doesn't apply" or "segmentation didn't cover the
+        # page". Fire ONCE per (agent, page) when the missing doc_type
+        # actually causes any rule to be skipped.
+        if not effective_doc_type:
+            doc_type_scoped_rule_ids = [
+                r.id for r in batch.rules if r.applicable_document_types
+            ]
+            if doc_type_scoped_rule_ids:
+                try:
+                    from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                    record_event(
+                        "compliance.rule_skipped_missing_doc_type",
+                        level="warning",
+                        agent=agent,
+                        page_num=page_num,
+                        batch_id=batch.batch_id,
+                        skipped_count=len(doc_type_scoped_rule_ids),
+                        skipped_rule_ids=doc_type_scoped_rule_ids[:20],
+                        reason=(
+                            "page has no document_type in section_map "
+                            "(segmentation didn't cover this page or "
+                            "its section has an empty document_type); "
+                            "doc_type-scoped rules degrade to "
+                            "not_applicable"
+                        ),
+                    )
+                except Exception:  # pragma: no cover — never break eval
+                    pass
+
         if mode == "llm":
             if page_num not in page_type_cache:
                 page_type_cache[page_num] = classify_page_type(ext)
