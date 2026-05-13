@@ -75,3 +75,46 @@ class ReportDocument:
     rows: list[ReportRow]
     footer: ReportFooter
     stats: ReportStats
+
+
+def report_document_to_dict(doc: "ReportDocument") -> dict:
+    """JSON-friendly view for ``/report-rows``.
+
+    Path / datetime values are normalised to strings here so the
+    route handler doesn't need a custom encoder. The shape mirrors
+    the frontend ``ReportDocument`` TypeScript type.
+    """
+    return {
+        "header": {
+            "product_name": doc.header.product_name,
+            "title": doc.header.title,
+            "is_draft": doc.header.is_draft,
+            "metadata_rows": [[label, value] for label, value in doc.header.metadata_rows],
+            "logo_path": str(doc.header.logo_path) if doc.header.logo_path else None,
+        },
+        "rows": [
+            {
+                "rule_id": r.rule_id,
+                "agent": r.agent,
+                "question": r.question,
+                "compliance_label": r.compliance_label,
+                "compliance_kind": r.compliance_kind,
+                "evidence_pages": r.evidence_pages,
+                "detailed_evidence": r.detailed_evidence,
+                "mitigation": r.mitigation,
+            }
+            for r in doc.rows
+        ],
+        "footer": {
+            "operator_name": doc.footer.operator_name,
+            "generated_at": doc.footer.generated_at.isoformat(),
+            "disclaimer": doc.footer.disclaimer,
+        },
+        "stats": {
+            "row_count": doc.stats.row_count,
+            "compliant_count": doc.stats.compliant_count,
+            "action_required_count": doc.stats.action_required_count,
+            "needs_attention_count": doc.stats.needs_attention_count,
+            "excluded_not_applicable_count": doc.stats.excluded_not_applicable_count,
+        },
+    }

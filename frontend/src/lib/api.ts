@@ -165,21 +165,26 @@ export async function getComplianceHITLSummary(docId: string) {
   return response.json();
 }
 
+export type ComplianceExportFormat = "pdf" | "html" | "md";
+
 export function getComplianceExportUrl(
   docId: string,
-  format: "md" | "html",
-  options?: { agent?: string },
+  format: ComplianceExportFormat,
+  options?: { agent?: string; nocache?: boolean },
 ): string {
   const params = new URLSearchParams({ format });
   if (options?.agent) {
     params.set("agent", options.agent);
+  }
+  if (options?.nocache) {
+    params.set("nocache", "1");
   }
   return `${API_BASE}/api/compliance/${docId}/export?${params.toString()}`;
 }
 
 export async function downloadComplianceExport(
   docId: string,
-  format: "md" | "html",
+  format: ComplianceExportFormat,
   options?: { agent?: string },
 ): Promise<void> {
   const url = getComplianceExportUrl(docId, format, options);
@@ -189,7 +194,12 @@ export async function downloadComplianceExport(
   const blob = await response.blob();
   const disposition = response.headers.get("content-disposition") ?? "";
   const filenameMatch = disposition.match(/filename="([^"]+)"/);
-  const filename = filenameMatch?.[1] ?? `compliance_report.${format}`;
+  // When the backend falls back from PDF to HTML (WeasyPrint deps
+  // missing on the host) it advertises ``X-Render-Fallback: html``;
+  // download under that extension so the file opens cleanly.
+  const fallback = response.headers.get("x-render-fallback");
+  const effectiveFormat = fallback ?? format;
+  const filename = filenameMatch?.[1] ?? `compliance_report.${effectiveFormat}`;
 
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -198,6 +208,71 @@ export async function downloadComplianceExport(
   a.click();
   a.remove();
   URL.revokeObjectURL(a.href);
+}
+
+// ── Spec 008 — rule table + preview ─────────────────────────
+
+import type { ReportDocument } from "@/types/compliance";
+
+export async function getComplianceReportRows(
+  docId: string,
+  options?: { agent?: string },
+): Promise<ReportDocument> {
+  const params = new URLSearchParams();
+  if (options?.agent) params.set("agent", options.agent);
+  const query = params.toString();
+  const url = `${API_BASE}/api/compliance/${docId}/report-rows${query ? `?${query}` : ""}`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch rule rows: ${response.statusText}`);
+  return response.json();
+}
+
+export function getCompliancePreviewUrl(
+  docId: string,
+  options?: { agent?: string },
+): string {
+  const params = new URLSearchParams();
+  if (options?.agent) params.set("agent", options.agent);
+  const query = params.toString();
+  return `${API_BASE}/api/compliance/${docId}/preview${query ? `?${query}` : ""}`;
+}
+
+export interface MitigationSynthesizeResponse {
+  doc_id: string;
+  force: boolean;
+  counts: Record<string, number>;
+  cost_estimate_usd: number;
+  duration_ms: number;
+  per_finding: Array<{
+    rule_id: string;
+    finding_id: string;
+    agent: string;
+    status: string;
+    cost_estimate_usd: number;
+    duration_ms: number;
+    error: string | null;
+  }>;
+}
+
+export async function synthesizeMitigations(
+  docId: string,
+  options?: { ruleIds?: string[]; force?: boolean },
+): Promise<MitigationSynthesizeResponse> {
+  const response = await fetch(
+    `${API_BASE}/api/compliance/${docId}/mitigation/synthesize`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        rule_ids: options?.ruleIds ?? null,
+        force: options?.force ?? false,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Mitigation synthesis failed: ${response.statusText}`);
+  }
+  return response.json();
 }
 
 // ── Export / Download ───────────────────────────────────────

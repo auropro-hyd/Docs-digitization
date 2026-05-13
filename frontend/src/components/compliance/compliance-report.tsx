@@ -33,13 +33,19 @@ import {
   ListChecks,
   Route,
   FileText,
+  Wand2,
 } from "lucide-react";
 import { ExecutiveSummary } from "./executive-summary";
 import { AgentScorecard } from "./agent-scorecard";
-import { FindingsTable } from "./findings-table";
+import { RuleTable } from "./rule-table";
+import { ReportPreviewIframe } from "./report-preview-iframe";
 import { SegmentationEditor } from "./segmentation-editor";
 import { DiscoveredRulesPanel } from "./discovered-rules-panel";
-import { downloadComplianceExport } from "@/lib/api";
+import {
+  downloadComplianceExport,
+  synthesizeMitigations,
+  type ComplianceExportFormat,
+} from "@/lib/api";
 import { toast } from "sonner";
 
 interface ComplianceReportProps {
@@ -202,10 +208,7 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
   // a finding. Falls back to the persisted value when no live update exists.
 
   const [activeTab, setActiveTab] = useState(initialFocus?.tab || "all");
-  const [highlightFinding, setHighlightFinding] = useState<string | null>(null);
   const [findings, setFindings] = useState<Finding[]>((report.findings || []) as Finding[]);
-  const [viewHitlFilter, setViewHitlFilter] = useState<"all" | "needs_review" | "reviewed" | "auto">(initialFocus?.hitlFilter || "all");
-  const [viewSeverityFilter, setViewSeverityFilter] = useState<"all" | "critical" | "major" | "minor" | "observation">(initialFocus?.severityFilter || "all");
 
   // Live overlay for the report-level scores. Starts unset; HITL reviews
   // populate it via onScoresUpdate so the displayed scorecards refresh
@@ -290,17 +293,7 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
 
   useEffect(() => {
     if (initialFocus?.tab) setActiveTab(initialFocus.tab);
-    if (initialFocus?.hitlFilter) setViewHitlFilter(initialFocus.hitlFilter);
-    if (initialFocus?.severityFilter) setViewSeverityFilter(initialFocus.severityFilter);
-  }, [initialFocus?.tab, initialFocus?.hitlFilter, initialFocus?.severityFilter]);
-
-  useEffect(() => {
-    if (viewHitlFilter !== "needs_review") return;
-    const firstPending = findings.find((f) => f.hitl_status === "needs_review");
-    if (firstPending) {
-      setHighlightFinding(firstPending.finding_id);
-    }
-  }, [viewHitlFilter, findings]);
+  }, [initialFocus?.tab]);
 
   const activeAgentReport =
     activeTab === "all"
@@ -314,7 +307,10 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
     ? findings.filter((f) => f.agent === activeAgentId)
     : findings;
 
-  const handleExport = async (format: "html" | "md", scope: "all" | "agent" = "all") => {
+  const handleExport = async (
+    format: ComplianceExportFormat,
+    scope: "all" | "agent" = "all",
+  ) => {
     try {
       const agent = scope === "agent" ? activeAgentId ?? undefined : undefined;
       await downloadComplianceExport(docId, format, { agent });
@@ -325,6 +321,31 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
       }
     } catch {
       toast.error("Export failed");
+    }
+  };
+
+  const [synthLoading, setSynthLoading] = useState(false);
+  const handleSynthesizeMitigations = async () => {
+    setSynthLoading(true);
+    try {
+      const result = await synthesizeMitigations(docId);
+      const synthed = result.counts.synthesized ?? 0;
+      const skipped = result.counts.skipped_cost_ceiling ?? 0;
+      const errors = result.counts.error ?? 0;
+      if (synthed === 0 && skipped === 0 && errors === 0) {
+        toast.info("Every finding already has mitigation text — nothing to synthesise.");
+      } else {
+        const bits = [
+          synthed > 0 ? `${synthed} synthesised` : null,
+          skipped > 0 ? `${skipped} over cost ceiling` : null,
+          errors > 0 ? `${errors} errored` : null,
+        ].filter(Boolean);
+        toast.success(`Mitigation synthesis: ${bits.join(", ")}.`);
+      }
+    } catch {
+      toast.error("Mitigation synthesis failed");
+    } finally {
+      setSynthLoading(false);
     }
   };
 
@@ -351,6 +372,17 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={synthLoading}
+            onClick={handleSynthesizeMitigations}
+            title="Warm the mitigation cache by asking the LLM for remediation text on every non-compliant / uncertain finding"
+          >
+            <Wand2 className="size-4 mr-2" />
+            {synthLoading ? "Synthesising…" : "Synthesise mitigation"}
+          </Button>
+          <ReportPreviewIframe docId={docId} agent={activeAgentId ?? undefined} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -358,6 +390,9 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => handleExport("pdf", "all")}>
+                Export complete report (PDF)
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => handleExport("html", "all")}>
                 Export complete report (HTML)
               </DropdownMenuItem>
@@ -366,6 +401,9 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
               </DropdownMenuItem>
               {activeAgentId && activeAgentLabel && (
                 <>
+                  <DropdownMenuItem onClick={() => handleExport("pdf", "agent")}>
+                    Export selected agent: {activeAgentLabel} (PDF)
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleExport("html", "agent")}>
                     Export selected agent: {activeAgentLabel} (HTML)
                   </DropdownMenuItem>
@@ -519,14 +557,11 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
               </span>
             </CardContent>
           </Card>
-          <FindingsTable
-            findings={findings}
+          <RuleTable
             docId={docId}
+            findings={findings}
             onFindingUpdate={handleFindingUpdate}
             onScoresUpdate={handleScoresUpdate}
-            highlightId={highlightFinding || undefined}
-            initialHitlFilter={viewHitlFilter}
-            initialSeverityFilter={viewSeverityFilter}
           />
         </TabsContent>
 
@@ -584,17 +619,13 @@ export function ComplianceReportView({ report, docId, onReRun, initialFocus }: C
               </Card>
               <AgentScorecard
                 report={ar as Parameters<typeof AgentScorecard>[0]["report"]}
-                onFindingClick={(fid) => setHighlightFinding(fid)}
               />
-              <FindingsTable
-                findings={agentFindings}
+              <RuleTable
                 docId={docId}
+                findings={agentFindings}
+                agent={agent}
                 onFindingUpdate={handleFindingUpdate}
                 onScoresUpdate={handleScoresUpdate}
-                highlightId={highlightFinding || undefined}
-                initialHitlFilter={viewHitlFilter}
-                initialAgentFilter={agent}
-                initialSeverityFilter={viewSeverityFilter}
               />
               <RuleEvaluationsList evaluations={allEvals} />
             </TabsContent>

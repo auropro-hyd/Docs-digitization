@@ -86,6 +86,9 @@ _QUIET_ROUTES: frozenset[tuple[str, str]] = frozenset({
     # on every panel open. Same renderer as /export so the trace adds
     # nothing /export doesn't already log.
     ("GET", "/api/compliance/{doc_id}/preview"),
+    # Rule-table JSON feed for the on-screen view; refetched on
+    # every report-page open and on every HITL action.
+    ("GET", "/api/compliance/{doc_id}/report-rows"),
     # Static-ish read endpoints the frontend re-fetches on every
     # page render. The trace lines emit no business state — pure
     # overhead at INFO level.
