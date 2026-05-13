@@ -144,6 +144,14 @@ class DatalabConfig(BaseModel):
     page_range: str | None = None
     max_polls: int = 300
     poll_interval: float = 1.0
+    # Aggregate heartbeat emits only when chunk-state changes OR
+    # when this many seconds have elapsed since the last emit with
+    # the same state. Default 30 s — long enough to suppress the
+    # per-second repetition that drowned the log on a 200-second
+    # wait, short enough to give an operator a periodic liveness
+    # signal. Set lower (e.g. 10.0) for verbose dev sessions; higher
+    # (e.g. 60.0) for production where each line costs ingest.
+    heartbeat_quiet_interval_s: float = 30.0
     chunk_pages: int = 50
     max_concurrent_chunks: int = 8
     submit_max_retries: int = 3

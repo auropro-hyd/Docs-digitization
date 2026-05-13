@@ -801,14 +801,30 @@ class DatalabOCRAdapter:
         total_chunks: int,
         progress_callback: ProgressCallback | None,
     ) -> None:
-        """Single coordinating heartbeat — one broadcast per poll interval.
+        """Single coordinating heartbeat — emits only when state
+        changes OR after a quiet-period threshold.
 
-        Replaces the previous per-chunk heartbeat where N concurrent
-        chunks each fired their own tick and only one survived the
-        downstream WS throttle. By aggregating here, every tick
-        carries the full picture (chunks active / oldest age / newest
-        age / completed count) so a reviewer can tell the system is
-        working even when the percent hasn't moved yet.
+        Original behaviour ticked once per ``poll_interval`` (1 s
+        default) and broadcast even when the state was identical to
+        the previous tick. For a 200-second wait on a flaky-Datalab
+        run that produced 200 indistinguishable
+        ``OCR progress 0% • 5/5 chunks analyzing`` lines, drowning
+        all other log signal.
+
+        New behaviour:
+
+        * Polls the in-flight map every ``poll_interval``.
+        * Computes a coarse state key (active count + completed count).
+          When that key CHANGES vs. the last emit, broadcast
+          immediately — operators see the meaningful transition.
+        * When the state key is UNCHANGED, broadcast at most once
+          per ``HEARTBEAT_QUIET_INTERVAL_S`` (default 30 s) with a
+          summary noting how long the same state has held — gives
+          the reviewer a periodic liveness signal without flooding.
+        * The emit interval is configurable via
+          ``AT_DATALAB__HEARTBEAT_QUIET_INTERVAL_S`` for operators
+          who want even quieter (e.g. 60 s) or more frequent (e.g.
+          10 s) heartbeats.
 
         Stops when cancelled (``extract()`` cancels it once
         ``asyncio.gather`` over all chunks resolves).
@@ -818,6 +834,11 @@ class DatalabOCRAdapter:
             return
 
         loop = asyncio.get_running_loop()
+        last_state_key: tuple[int, int] | None = None
+        last_emit_t: float = 0.0
+        quiet_threshold = float(
+            getattr(self._config, "heartbeat_quiet_interval_s", 30.0)
+        )
 
         try:
             while True:
@@ -830,8 +851,20 @@ class DatalabOCRAdapter:
                     continue
 
                 now = loop.time()
-                ages = sorted(now - start for _, start in snapshot)
                 completed = completed_counter["n"]
+                state_key = (len(snapshot), completed)
+
+                state_changed = state_key != last_state_key
+                time_since_emit = now - last_emit_t
+                quiet_elapsed = time_since_emit >= quiet_threshold
+
+                if not state_changed and not quiet_elapsed:
+                    # Same state, not long enough since last emit:
+                    # stay silent. This is the load-bearing change
+                    # that drops the per-second repetition.
+                    continue
+
+                ages = sorted(now - start for _, start in snapshot)
                 baseline = int((completed / total_chunks) * 90)
                 label = (
                     f"Datalab • {len(snapshot)}/{total_chunks} chunks analyzing"
@@ -839,7 +872,14 @@ class DatalabOCRAdapter:
                 )
                 if completed:
                     label += f" • {completed} completed"
+                if not state_changed and last_emit_t:
+                    # Periodic liveness ping with the same state —
+                    # tag it so the operator sees why this line
+                    # appeared.
+                    label += f" • no change for {time_since_emit:.0f}s"
                 progress_callback(baseline, label)
+                last_state_key = state_key
+                last_emit_t = now
         except asyncio.CancelledError:
             # Normal shutdown when extract() finishes.
             return
