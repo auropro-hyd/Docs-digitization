@@ -1,0 +1,685 @@
+# ═══════════════════════════════════════════════════════════════
+#  Checklist Review Rule Configuration
+#  Rule text lives in checklist_rules.md — only behavior here.
+# ═══════════════════════════════════════════════════════════════
+
+defaults:
+  scope: page
+  severity: major
+  evaluation_mode: llm
+  applicable_document_types: []
+  excluded_document_types: []
+  applicable_page_types: []
+  applicable_section_types: []
+  cross_section_requirements: []
+  keywords: []
+  pass_criteria: ""
+  skip_conditions: []
+  cannot_evaluate_reason: ""
+  requires_external_data: []
+  notes: ""
+
+categories:
+
+  # ── Document Completeness Checks (rules 1-8) ──────────────────────
+  document_completeness_checks:
+    severity: major
+    rules:
+      1:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        context_sources:
+        - document_type: batch_record
+          section_types: [manufacturing_operations]
+        pass_criteria: >
+          TARGET: This page is from the "Raw Material Weighing and Dispensing" table
+          of the batch record. Columns: S.No. | Raw Material Name | Batch No./Lot No. |
+          Used at Step No's | UOM | Standard Quantity | Gross Qty | Tare Qty | Net Qty |
+          Done by | Checked by. Ignore any sub-tables titled "LIST OF RAW MATERIALS FOR
+          EQUIPMENT CLEANING" — those are not part of this check.
+          Note: Done by / Checked by cells often contain embedded signature images
+          (shown as <img .../>) rather than plain text — treat any non-empty cell
+          (image or text) as "signed".
+
+          CONTEXT: The pre-loaded context contains the manufacturing operations steps
+          from the batch record (the numbered step table with Done by / Checked by /
+          Date columns). In those context pages, Done by and Checked by cells often
+          contain embedded signature images (shown as <img .../>) rather than plain
+          text — treat any non-empty cell (image or text, including a date alone) as
+          "executed/signed". Only blank cells or cells containing solely dashes ("—"
+          or "-") should be treated as unsigned/not executed.
+
+          ROW STRUCTURE: Each material in the weighing table has a multi-row structure:
+          - Summary header row: lists ALL step numbers in "Used at Step No's", total Qty,
+            and a final Done by / Checked by sign-off for the overall dispensing.
+          - Individual step sub-rows (indented below): one row per step number with its
+            own Qty, Done by, and Checked by. These sub-rows represent dispensing for
+            that SPECIFIC step.
+          When sub-rows exist, use the SUB-ROW's Done by / Checked by to determine
+          whether material was dispensed for THAT step — do not use the summary header's
+          signature to infer dispensing for all steps. The summary header sign-off is a
+          final totalling sign-off, not per-step confirmation.
+
+          WHAT TO CHECK: For each individual step sub-row where Done by OR Checked by
+          is filled (meaning material was dispensed for that specific step):
+          (1) Note the step number from that sub-row's "Used at Step No's" cell.
+          (2) In the manufacturing operations context, find that step number.
+          (3) Verify the step was actually executed: its Done by and/or Checked by
+              columns must be non-empty (signature image or text). A step row showing
+              only dashes/blanks in Time, Done by, and Checked by means it was NOT
+              executed.
+          (4) Verify the step involves using/charging/dissolving the same raw material
+              (or a recognisable abbreviation/synonym — minor OCR spelling differences
+              are acceptable).
+
+          SKIP sub-rows where Done by AND Checked by are both empty/dashes — those
+          represent conditional steps not executed (e.g. pH re-wash steps that were
+          skipped because the test passed) and do not need verification.
+          If a material has NO sub-rows (only a summary header row), use the header
+          row's Done by / Checked by to determine dispensing status.
+
+          VERDICT:
+          - COMPLIANT if every dispensed raw material row on this page has its
+            step number(s) executed and linked to the correct material in manufacturing ops.
+          - NON-COMPLIANT if any dispensed row's step number is missing from
+            manufacturing ops, was not executed, or does not match the material;
+            cite the specific S.No., material name, and step number.
+          - NOT_APPLICABLE if this page contains no weighing/dispensing rows (e.g.
+            it is a raw material requisition form, equipment cleaning table, or cover page).
+        skip_conditions:
+          - "Page is a raw material requisition form (no 'Used at Step No\\'s' column) -> not_applicable"
+          - "Page has no dispensing rows at all -> not_applicable"
+      2:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        context_sources:
+        - document_type: raw_material_request
+          section_types: [] 
+        pass_criteria: >
+          check the material dispensing section, for each raw material used (row has done by or checked by filled), check the corresponding raw material request form to see if the material name, quantity, and container details are mentioned. if it is mentioned then it is compliant.
+        skip_conditions:
+          - "Page has no material dispensing section -> not_applicable"
+
+      3:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [ipc_report]
+        applicable_section_types: []
+        context_sources:
+          - document_type: batch_record
+            section_types: [manufacturing_operations, pin_milling_mixing]
+        pass_criteria: >
+          TARGET: The In-Process Samples Request Cum Analysis Report spans
+          multiple pages. Each row has: REQUEST FROM MANUFACTURING (S.No.,
+          Test, Requested by, Time of request) and REPORT FROM QUALITY
+          CONTROL (Specifications, Result, A.R. No., Analyzed by, Checked
+          by, Time of reporting).
+
+          WHAT COUNTS AS "REQUESTED BY FILLED": Any non-dash, non-blank
+          value in "Requested by" means the test was performed. This
+          includes italic-wrapped text such as <i>D</i>, <i>K</i>,
+          <i>NAW</i>, or similar initials/codes optionally followed by a
+          date on the next line (e.g. <i>NAW</i>\n02/10/2025). Do NOT
+          treat italic-formatted initials as dashes. Only a literal dash
+          (—, -) or a completely blank cell means the test was skipped.
+
+          CONTEXT: The pre-loaded context contains manufacturing steps from
+          the batch record (manufacturing_operations and pin_milling_mixing).
+          Each step has: Step No., Operations, Time From, Time To, Duration,
+          Temp, Remarks/In-process Results, Done by, Checked by.
+          Done by / Checked by cells often contain embedded signature images
+          (shown as <img .../>) rather than plain text — treat any non-empty
+          cell (image, text, or date alone) as "executed/signed".
+
+          WHAT TO CHECK: For each IPC row where "Requested by" is filled
+          (i.e. contains initials, a name, or an italic-wrapped code):
+
+          (1) IDENTIFY THE RESULT STEP: The Test description typically
+              says "X at Steps N and M". Step M (higher number) is the
+              result-recording step — its Operations text begins with
+              "Result of [X]. [Limit: ...]". Focus on step M.
+              For tests without explicit step numbers (e.g. "Particle size
+              after 1st time Mixing"), search pin_milling_mixing context
+              for the particle size result step.
+
+          (2) VERIFY THE STEP WAS EXECUTED: Find step M in the context.
+              Its Done by cell must be non-empty (not blank or dash-only).
+
+          (3) VERIFY THE REMARKS VALUE MATCHES the IPC Result:
+              - Numeric (e.g. pH 7.47, water content 0.12%): Remarks
+                should contain the same numeric value.
+              - Qualitative (e.g. "Complies", "Form-I polymorph"): Remarks
+                should indicate conformance (exact OCR phrasing may differ).
+              - "Report results" specs (no pass/fail limit): just verify
+                a result value is present in both columns.
+
+          SKIP: Rows where "Requested by" is a literal dash (—, -) or
+          blank — conditional tests that were not performed.
+
+          VERDICT:
+          - COMPLIANT if every performed IPC row has its result step
+            executed and Remarks value consistent with the IPC result.
+          - NON_COMPLIANT if any performed row fails either check; cite
+            IPC S.No., test name, step number, and specific mismatch.
+          - NOT_APPLICABLE only if ALL rows on ALL pages of the IPC report
+            have "Requested by" as dash/blank (no tests performed at all).
+        skip_conditions:
+          - "Page has no IPC test rows (only a header or cover row) -> not_applicable"
+
+      4:
+        evaluation_strategy: text
+        applicable_document_types: [raw_material_request]
+        applicable_section_types: [material_request]
+        pass_criteria: >
+          This page is a packing material request form (title contains "PACKING
+          MATERIAL" or item descriptions are packing materials such as HDPE drums,
+          LLDPE bags, laminated bags, strip seals, or similar packaging items).
+
+          For each line item on this page:
+          (1) Request Quantity must be non-blank and non-zero.
+          (2) Issued Quantity must equal Request Quantity (exact match or within
+              rounding tolerance of ±0.001).
+          (3) Batch No. / Lot No. must be non-blank.
+          (4) AR No. must be non-blank.
+          (5) Issued Date must be non-blank.
+
+          Additionally, the form must have at least one of: "Checked By" or
+          "Verified By" signature/name filled at the bottom.
+
+          COMPLIANT if all filled line items satisfy (1)–(5) and a sign-off
+          is present. Items with blank Allocated/Issued Quantity may be skipped
+          (not yet issued, e.g. "Triple Laminated Bag" with no quantity filled).
+          NON_COMPLIANT if any issued item has a mismatch or missing required field.
+          NOT_APPLICABLE if this page is a raw material request (not packing
+          materials) or contains no line items at all.
+        keywords: [packing material, HDPE, LLDPE, bag, drum, strip seal, issued quantity]
+        skip_conditions:
+          - "Page title contains '& ALLOCATED' or 'ALLOCATED' without 'ISSUE' (WMS allocation printout, no sign-off expected) -> not_applicable"
+          - "Page is a raw material request form (items are chemicals/APIs, not packaging materials) -> not_applicable"
+          - "Page has no line items with quantities -> not_applicable"
+
+      5:
+        evaluation_strategy: agentic_audit
+        applicable_document_types: [batch_record]
+        applicable_section_types: [manufacturing_operations]
+        context_sources:
+          - document_type: batch_record
+            section_types: [yield_calculation]
+        pass_criteria: >
+          TARGET: The Manufacturing Instructions section of the batch record.
+          The first page of this section has a header line reading
+          "Date & Time of starting: DD/MM/YYYY HH-MM" (e.g.
+          "Date & Time of starting: 29/09/2025 20-30").
+          Each step row has: Step No., Operations, Time From, Time To,
+          Duration, Temp, Remarks, Done by, Checked by.
+
+          CONTEXT: The yield_calculation section contains the yield details
+          table (Theoretical weight, Obtained weight, Yield Range, Yield %).
+          The "Calculated By" and "Checked By" cells in that table have dates
+          showing when the yield was confirmed — this is the batch completion date.
+
+          WHAT TO CHECK:
+
+          (1) BATCH START: On the first page of the manufacturing instructions,
+              find the "Date & Time of starting" line. It must be non-blank and
+              contain a valid date (DD/MM/YYYY) and time (HH-MM).
+
+          (2) BATCH COMPLETION: Look at the "Done by" dates in the last executed
+              manufacturing step (the highest step number where Done by is filled).
+              Alternatively, use the date on the Calculated By / Checked By cells
+              in the yield_calculation context — that date is the completion date.
+              The completion date must be present and must be on or after the
+              batch start date.
+
+          (3) DATE CONSISTENCY: The batch start date and completion date must be
+              plausible (start ≤ completion; dates within a reasonable
+              manufacturing window of days to weeks, not years apart).
+
+          VERDICT:
+          - COMPLIANT if batch start date/time is present, a completion date
+            can be determined, and both dates are consistent.
+          - NON_COMPLIANT if the "Date & Time of starting" line is blank or
+            missing, or if the completion date cannot be determined from the
+            last step dates or yield context.
+          - NOT_APPLICABLE if this page has no "Date & Time of starting" header
+            and no manufacturing step rows (e.g. a non-first-page that is a
+            continuation of steps only — let the first page carry the verdict).
+        keywords: [date, time, starting, completion, manufacturing date]
+        skip_conditions:
+          - "Page has no manufacturing step rows and no 'Date & Time of starting' header -> not_applicable"
+
+      6:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        pass_criteria: >
+          This page contains the "List of Raw Materials and Weighing Details"
+          table with columns: S.No., Raw Material Name, Batch No./Lot No.,
+          Used at Step No's, UOM, Standard Quantity, Gross Qty, Tare Qty,
+          Net Qty, Done by, Checked by.
+
+          For each SUMMARY row (the top-level row per material that lists all
+          step numbers in "Used at Step No's" and a total quantity):
+          (1) Compare Net Qty to Standard Quantity.
+          (2) PASS if Net Qty matches Standard Quantity exactly or within ±1%
+              rounding tolerance.
+          (3) PASS if Standard Quantity is expressed as a RANGE (e.g. "4305 – 5228 L")
+              and Net Qty falls within that range.
+          (4) PASS if the material is marked with an asterisk (*) in the Standard
+              Quantity column or in the material name — asterisked materials may
+              vary (pH adjustment, recovered solvents) and are exempt from exact
+              matching; verify only that Net Qty is non-blank.
+          (5) FAIL if Net Qty is blank or dashes for a dispensed material
+              (Done by is filled), unless the step is a conditional skipped step.
+
+          Ignore sub-rows (individual step sub-rows below the summary header)
+          and the "List of Raw Materials for Equipment Cleaning" sub-table.
+
+          COMPLIANT if all summary rows pass (1)–(4) above.
+          NON_COMPLIANT if any dispensed material has Net Qty outside Standard
+          Quantity (beyond tolerance) without an asterisk or range annotation;
+          cite the S.No., material name, Standard Quantity, and Net Qty.
+          NOT_APPLICABLE if this page has no weighing table (e.g. equipment
+          cleaning sub-table only, or a raw material requisition form).
+
+          IMPORTANT: Evaluate based on the OCR markdown text content above.
+          Do NOT use "structured metadata" (signatures detected, tables detected)
+          as evidence of absence — those counters are unreliable for handwritten
+          pharmaceutical forms. If the OCR text contains a table with Standard
+          Quantity and Net Qty columns, evaluate it regardless of metadata counts.
+        keywords: [standard quantity, net qty, gross qty, tare qty, weighing]
+        skip_conditions:
+          - "Page has no weighing details table (no Standard Quantity / Net Qty columns) -> not_applicable"
+          - "Page contains only the equipment cleaning sub-table -> not_applicable"
+
+      7:
+        evaluation_strategy: text
+        applicable_document_types: [batch_closure]
+        applicable_section_types: [bpcr_review_checklist]
+        pass_criteria: >
+          This page is the BPCR Review Checklist table. Each row has: S.No |
+          Check Points | Manufacturing Reviewer | In charge | QA | Remarks.
+
+          Find the row for item 7: "Are all the relevant steps followed as per
+          BPCR and within standard limits?"
+
+          Check the three reviewer columns for that row:
+          - Manufacturing Reviewer column
+          - In charge column
+          - QA column
+
+          COMPLIANT if all three columns contain ✓ (yes/checked).
+          NON_COMPLIANT if any column contains X (no/not done) — this
+          means one or more reviewers flagged that steps were not followed.
+          NOT_APPLICABLE if item 7 row is absent from this page (it appears
+          on the first checklist page; continuation pages may not have it).
+
+          NA in a column is acceptable if the other columns are ✓.
+          A completely blank cell should be treated as not reviewed — flag
+          as NON_COMPLIANT if all three columns are blank for item 7.
+        skip_conditions:
+          - "Page has no BPCR review checklist table -> not_applicable"
+          - "Item 7 row does not appear on this page -> not_applicable"
+
+      8:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [material_dispensing]
+        pass_criteria: >
+          This page contains the "List of Raw Materials and Weighing Details"
+          table with columns: S.No., Raw Material Name, Batch No./Lot No.,
+          Used at Step No's, UOM, Standard Quantity, Gross Qty, Tare Qty,
+          Net Qty, Done by, Checked by.
+
+          For each DISPENSED sub-row (where Done by is filled or Net Qty is
+          a numeric value):
+
+          (1) BATCH/LOT NUMBER: The Batch No./Lot No. cell must be non-blank
+              for solid raw materials (APIs, excipients). Dashes/blanks are
+              acceptable only for in-process utilities like Purified Water
+              where the lot is recorded by date notation (e.g. "PW-29-09-2025")
+              or is genuinely lot-less.
+
+          (2) WEIGHT ARITHMETIC: If Gross Qty AND Tare Qty are both numeric
+              (not dashes), then Net Qty must equal Gross Qty − Tare Qty
+              within a tolerance of ±0.02 Kg (to allow for rounding).
+              Example: Gross 124.24, Tare 13.34 → Net must be 110.90 (±0.02).
+
+          (3) LIQUID / SOLVENT ROWS: If Gross Qty and Tare Qty are dashes or
+              blank (material weighed by volume or metered directly), skip
+              the arithmetic check and only verify Net Qty is non-blank for
+              dispensed rows.
+
+          (4) SUMMARY ROW TOTAL: For each material that has multiple container
+              sub-rows, the summary header row's Net Qty must approximately
+              equal the sum of sub-row Net Qtys (±0.05 Kg tolerance for
+              rounding across containers).
+
+          Ignore the "List of Raw Materials for Equipment Cleaning" sub-table.
+
+          COMPLIANT if all dispensed rows satisfy (1)–(4).
+          NON_COMPLIANT if any row fails weight arithmetic or has a blank
+          Batch/Lot No. for a solid material; cite the S.No., material name,
+          and specific discrepancy.
+          NOT_APPLICABLE if this page has no weighing detail rows (e.g. it
+          is the equipment cleaning sub-table only or a cover page).
+
+          IMPORTANT: Evaluate based on the OCR markdown text content.
+          Do NOT use "structured metadata" as evidence of absence.
+        keywords: [gross qty, tare qty, net qty, batch lot, weighing]
+        skip_conditions:
+          - "Page has no weighing details table (no Gross Qty / Tare Qty columns) -> not_applicable"
+          - "Page contains only the equipment cleaning sub-table -> not_applicable"
+
+  # ── BPCR Review Checklist (rules 9-19) ───────────────────────────
+  bpcr_review_checklist:
+    severity: major
+    rules:
+      9:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [manufacturing_operations, material_dispensing, yield_calculation]
+        pass_criteria: |
+          Both "Done by" and "Checked by" columns must be populated for every
+          critical manufacturing step on this page.
+
+          HOW TO IDENTIFY A CRITICAL STEP:
+          A step (row) is critical if its Operations cell contains ANY of:
+          - Bold formatting (rendered as **text**, <b>text</b>, or ### **text**):
+            especially result-and-limit declarations like
+            "<b>Result of pH. [Limit: 7.0 to 8.0]</b>" or
+            "<b>Result of water content. [Limit: NMT 0.5%w/w]</b>" or
+            "<b>Inspect</b> equipment for cleanliness"
+          - A bolded quantity value indicating a specified/critical amount:
+            e.g. "Charge <b>3.0 Kg</b> of ..." or "Charge <b>400 L</b> of ..."
+          - Action keywords indicating weighing, charging, sampling, or
+            quality-impacting activities: "weigh", "charge", "add", "sample",
+            "inspect", "result", "limit", "IPC", "QC", "filter", "transfer"
+
+          NOTE: Italic text (<i>...</i> or *...*) in the Operations cell indicates
+          safety warnings or conditional notes — these are NOT critical step
+          markers. Do NOT treat italic-only rows as critical steps.
+
+          WHAT COUNTS AS A VALID ENTRY (same rules as Rule 1):
+          - Operator names, codes, initials, or short codes (e.g. "K", "N088")
+          - Handwritten signature OCR: "[Signature]", "<i>[Signature]</i>",
+            garbled text like "Noga", "staten", "3cleader"
+          - Italic-wrapped text in the Done by/Checked by cell (e.g.
+            "<i>QJ 04/10/2025</i>", "<i>R 07/10/2025</i>") — these are OCR
+            representations of handwritten signatures and count as valid entries
+          - An image element in the cell (visual block) with or without a date
+          - A date alone in the cell (e.g. "01/10/2025")
+          - Dashes or dash sequences ("--", "---", "----") — step not required,
+            valid completion marker
+          - "N.A.", "NA", "N/A" — step not applicable, valid annotation
+          - Caret "^" — OCR artifact of a diagonal strike-through across the
+            table; treat the table as cancelled and NOT evaluate it
+
+          A row is non-compliant ONLY when a Done by / Checked by cell is
+          completely blank (no text, no dash, no image) for a critical step.
+
+          MANDATORY OVERRIDE — WEIGHING / CONTAINER TABLES (same as Rule 1):
+          For tables with "Weighed by" and "Checked by" columns (e.g. dispensing,
+          container/weighing records): one valid entry anywhere in the column
+          satisfies compliance for the whole column. Rows 2–N blank in these
+          columns are expected (merged cell layout). Do NOT flag them.
+
+          VISION/TEXT CONFLICT TIEBREAKER — MANDATORY:
+          When text OCR and vision disagree on whether a Done by / Checked by
+          cell is filled:
+          - TEXT shows blank/date-only/dash BUT VISION confirms a handwritten
+            marking (name, initials, signature, or any mark) is visually present
+            → TRUST VISION. OCR routinely fails to capture handwritten names
+            and initials; a date alone in OCR text often means the operator
+            signed name+date but only the date was captured. If vision sees a
+            marking, the cell is filled — do NOT flag it.
+          - TEXT shows any entry (name, initials, date, "[Signature]", dash, "^",
+            italic-wrapped text) but vision cannot confirm → TRUST TEXT. The
+            presence of any OCR-captured text means someone filled the cell.
+          - Only mark non-compliant if BOTH text AND vision agree the cell
+            is completely empty (no marking of any kind).
+
+          IGNORE DOCUMENT INTELLIGENCE METADATA COUNTS — MANDATORY:
+          The context may include lines like "Signatures detected: 0" or
+          "Handwritten regions: 0 (all text appears to be printed/typed)".
+          These are Azure Document Intelligence counters and are UNRELIABLE
+          for this rule — they routinely miss handwritten dates, short codes,
+          and initials. You MUST NOT use these counts to override or qualify
+          the valid-entry list above. A date alone (e.g. "03/10/2025") in a
+          Done by / Checked by cell is a valid entry REGARDLESS of what
+          "Signatures detected" or "Handwritten regions" say. Evaluate only
+          the OCR text in the Done by / Checked by columns.
+
+          STRICT ADHERENCE TO VALID ENTRIES:
+          The list of valid entries above is exhaustive and authoritative.
+          You MUST accept all entries on that list as compliant — including
+          date-alone entries and dash entries — regardless of GMP convention
+          you may know from training. Do NOT substitute your own reasoning
+          about what "should" be in these fields.
+
+          Vision: verify wet ink signatures are present in Done by and Checked by
+          columns for visually identifiable critical steps.
+        skip_conditions:
+          - "Page has no Done by / Checked by columns -> not_applicable"
+          - "An entire table is diagonally struck through (evidenced by OCR note about diagonal line or Done by/Checked by cells contain only '^' symbols) -> that table is not_applicable; evaluate remaining tables independently"
+          - "A step row where ALL operational fields across the ENTIRE ROW — Time From, Time To, Duration, Temperature, Remarks/Results, Done By, AND Checked By — are ALL '-', 'N.A.', or blank (no actual values anywhere in the row) -> the step was conditionally not executed; treat as not_applicable and do NOT flag as non-compliant, even if the step text is bold or matches critical keywords. This applies to steps skipped due to a preceding conditional instruction (e.g. step N says 'if condition met, proceed to step M', skipping all rows between N and M)"
+          - "A step row where ALL fields are '-' means the operator used dashes to explicitly mark the step as not performed — this is a valid GMP annotation and MUST NOT be treated as a blank or missing entry, even under vision evaluation"
+        keywords: [done by, checked by, result, limit, inspect, charge, weigh, sample]
+
+      10:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record,batch_closure]
+        applicable_section_types: [cover_page, batch_release_note, bpcr_review_checklist]
+        pass_criteria: >
+         OCR text must contain
+          validation batch detection patterns such as "validation batch", "✓validation",
+          or explicit marking of validation option via check marks, checkboxes, or
+          X symbols in corresponding fields.
+        keywords: [pre-validation, validation, batch type]
+        skip_conditions:
+          - "Page has no BPCR review checklist -> not_applicable"
+          - "Page has no batch release note or cover page -> not_applicable"
+
+      11:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        pass_criteria: >
+          Look for the entries in the page which indicates that additional steps are added Out of sequence.
+          If no deviations are found, then no additional steps are added.
+        skip_conditions:
+          - "Page has no additional manufacturing steps related content -> not_applicable"
+
+      12:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [manufacturing_operations, sifting_record, pin_milling_mixing, micronization, co_mill_operation, metal_detection, material_dispensing, yield_calculation]
+        pass_criteria: |
+          Evaluate critical manufacturing steps on this page that contain explicit
+          parameter limits in their Operations description.
+
+          HOW TO IDENTIFY A CRITICAL STEP (same as Rule 9):
+          A step (row) is critical if its Operations cell contains ANY of:
+          - Bold formatting (rendered as **text**, <b>text</b>, or ### **text**):
+            especially result-and-limit declarations like
+            "<b>Result of pH. [Limit: 7.0 to 8.0]</b>" or
+            "<b>Result of water content. [Limit: NMT 0.5%w/w]</b>"
+          - A bolded quantity value indicating a specified/critical amount:
+            e.g. "Charge <b>3.0 Kg</b> of ..." or "Charge <b>400 L</b> of ..."
+          - Action keywords indicating weighing, charging, sampling, or
+            quality-impacting activities: "weigh", "charge", "add", "sample",
+            "inspect", "result", "limit", "IPC", "QC", "filter", "transfer"
+
+          NOTE: Italic-only rows (safety warnings, conditional notes) are NOT
+          critical steps. Do NOT evaluate italic-only rows under this rule.
+
+          HOW TO IDENTIFY A PARAMETER LIMIT IN THE STEP:
+          Among critical steps, evaluate only those whose Operations cell contains
+          an explicit numeric parameter limit such as:
+          - "NLT <value> <unit>"  (Not Less Than, e.g. "NLT 650 mmHg")
+          - "NMT <value> <unit>"  (Not More Than, e.g. "NMT 0.5%w/w")
+          - "<value> to <value> <unit>" or "<value>–<value> <unit>" (range,
+            e.g. "50 – 55°C", "60 – 65°C", "7.0 to 8.0")
+          - "[Limit: <expression>]" or similar bracketed limit declarations
+
+          EVALUATION RULES FOR CRITICAL STEPS WITH PARAMETER LIMITS:
+
+          1. EXECUTED STEP (From time and To time are NOT both dashes/N.A.):
+             → The Remarks/In-process Results column MUST contain a recorded value
+               (e.g. "Vacuum: 708 mmHg", "pH: 1", "Average Temperature set point: 52.5").
+             → The recorded value MUST be within the stated limit(s) in Operations.
+             → A dash (-), blank, or "N.A." in Remarks is NON-COMPLIANT when the
+               step was executed and has a parameter limit.
+
+          2. SKIPPED STEP (BOTH From time AND To time are "-", "—", or "N.A."):
+             → The Remarks column MUST NOT contain a parameter value.
+             → Remarks should be blank, dash (-/—), or "N.A."
+             → A numeric measurement value in Remarks for a skipped step is NON-COMPLIANT.
+
+          UNIT-IS-LABEL EXCEPTION:
+          Some parameters use their label as the unit — no separate unit suffix is
+          required in the recorded value. Treat a bare numeric value as compliant
+          when the row or column label IS the unit:
+          - RPM (revolutions per minute): a value of "40" in an RPM-labeled column
+            or row is COMPLIANT. Do NOT flag it as missing units.
+          - pH: a value of "7.2" with no suffix is COMPLIANT (pH is its own scale).
+          Do NOT flag these as non-compliant solely because the recorded value
+          lacks a unit suffix.
+
+          REAL EXAMPLES (from this batch record):
+          - Step "Apply Vacuum (NLT 650 mmHg)" executed (From=17-30, To=20-10),
+            Remarks="Vacuum: 708 mmHg" → PASS (708 ≥ 650)
+          - Step "Heat hot water temperature to 50–55°C" executed,
+            Remarks="Average Temperature set point: 52.5" → PASS (52.5 within 50–55)
+          - RPM column value "40" in PIN MILLING RECORD → PASS (RPM is the unit;
+            bare numeric is sufficient)
+          - Step with From=N.A., To=N.A., Remarks=N.A. → PASS (skipped, no value recorded)
+          - Step with From=N.A., To=N.A., Remarks="Vacuum: 700 mmHg" → FAIL
+            (skipped step should not record a parameter value)
+        keywords: [NLT, NMT, limit, vacuum, temperature, remarks, in-process results]
+        skip_conditions:
+          - "Page has no critical manufacturing steps with explicit parameter limits -> not_applicable"
+          - "Page has no Remarks/In-process Results column -> not_applicable"
+          - "An entire table is diagonally struck through (evidenced by OCR note about diagonal line or Done by/Checked by cells contain only '^' symbols) -> that table is not_applicable; evaluate remaining tables independently"
+
+      13:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [yield_calculation]
+        pass_criteria: >
+          validate the calculated yield values against the standard yield thresholds defined in the BPCR. 
+          the calculated yield must be within the acceptable range specified in the BPCR for the batch to be considered compliant.
+        keywords: [yield, output, standard yield]
+        skip_conditions:
+          - "Page has no yield calculations -> not_applicable"
+
+      14:
+        evaluation_strategy: text
+        applicable_document_types: [batch_closure, qc_analytical_package]
+        applicable_section_types: [sampling, batch_release_note]
+        pass_criteria: >
+          Verify that the following key fields are filled in (non-blank) on this page:
+
+          For a Sample Request to Quality Control form (sampling_checklist):
+          - Product name: a non-blank product name must be present
+          - Batch No.: a non-blank batch number must be present
+          - Batch Qty.: a non-blank quantity value must be present
+          - No. of Containers: a non-blank container count must be present
+          - Specification number: a reference number (e.g. SPC-XXXXXXXXXX) appearing
+            above the "Filled by Quality Control" table must be present
+          - A.R Number: found in the "Filled by Quality Control" section, must be non-blank
+
+          For a Batch Release Note (batch_release_note):
+          - Name of the Product: a non-blank product name must be present
+          - Batch No.: a non-blank batch number must be present
+          - Quantity: a non-blank batch quantity must be present
+          - A.R. No.: a non-blank AR number must be present
+
+          Fail if any of the above fields applicable to the current page type is blank or missing.
+        keywords: [product name, batch no, batch qty, no of containers, AR number, specification, quantity]
+        skip_conditions:
+          - "Page has no Sample Request to Quality Control form and no Batch Release Note -> not_applicable"
+
+      15:
+        evaluation_strategy: text
+        applicable_document_types: [batch_closure, batch_record]
+        applicable_section_types: [bpcr_review_checklist, deviation]
+        pass_criteria: >
+          In the BPCR Review checklist, If the rule on change control initiated or not. if yes/tick or no/x is present consider it as compliant.
+          In the deviations report, check if change control reference numbers are mentioned. if it is mentioned consider it as compliant. 
+          (HIGHILIGHT THIS IN EVIDENCE) However, the actual verification of whether a change control was properly initiated and linked to the batch requires access to the 
+          Agile application, which is beyond the scope of document review. Therefore, this rule cannot be fully evaluated based on the document alone and requires external data verification.
+        requires_external_data: [agile_change_control_records]
+        keywords: [change control, CRF, agile]
+        skip_conditions:
+          - "Page has no BPCR review checklist or deviation details -> not_applicable"
+
+      16:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record]
+        applicable_section_types: [deviation]
+        pass_criteria: >
+          Check the deviation report. and share the findings. 
+          If cells are blank without any indication of filling in, then mark it as non-compliant.
+          HIGHILIGHT THIS IN EVIDENCE) However, the actual verification of whether a change control was properly initiated and linked to the batch requires access to the 
+          Agile application, which is beyond the scope of document review. Therefore, this rule cannot be fully evaluated based on the document alone and requires external data verification.
+        requires_external_data: [agile_deviation_records]
+        keywords: [deviation, reference number, agile]
+        skip_conditions:
+          - "Page has no deviation -> not_applicable"
+
+      17:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record,batch_closure]
+        applicable_section_types: [bpcr_review_checklist]
+        pass_criteria: >
+          check BPCR review checklist or batch release note or cover page to see if there are any re-process & re-work related mentions are there. if it is not left blank then it is compliant.
+          HIGHILIGHT THIS IN EVIDENCE) However, the actual verification of whether a change control was properly initiated and linked to the batch requires access to the 
+          Agile application, which is beyond the scope of document review. Therefore, this rule cannot be fully evaluated based on the document alone and requires external data verification.
+        requires_external_data: [agile_oos_oot_deviation_market_complaint_records]
+        keywords: [re-process, rework, OOS, OOT, market complaint]
+        skip_conditions:
+          - "Page has no cover page -> not_applicable"
+
+      18:
+        evaluation_strategy: text
+        applicable_document_types: [batch_record,batch_closure]
+        applicable_section_types: [cover_page, batch_release_note, bpcr_review_checklist]
+        pass_criteria: >
+          check on the cover page or batch release note or BPCR review checklist for "stability" or "annual addition" mentions. if either is mentioned consider it as compliant. if both are blank, then mark it as non-compliant.
+          HIGHILIGHT THIS IN EVIDENCE) However, the actual verification of whether a change control was properly initiated and linked to the batch requires access to the 
+          Agile application, which is beyond the scope of document review. Therefore, this rule cannot be fully evaluated based on the document alone and requires external data verification.
+        requires_external_data: [agile_oos_oot_deviation_market_complaint_records]
+        keywords: [re-process, rework, OOS, OOT, market complaint]
+        skip_conditions:
+          - "Page has no cover page or batch release note or BPCR review checklist -> not_applicable"
+      
+  # ── Audit Trail Review (rules 20-21) ──────────────────────────
+  audit_trail_review:
+    severity: major
+    applicable_section_types: [bpcr_review_checklist]
+    rules:
+      20:
+        evaluation_strategy: text
+        
+        pass_criteria: >
+          The checklist item for alarms exceeding predefined timelines is
+          explicitly marked (√/✓ or X). If marked √ (yes), a related deviation
+          or incident reference must be present. A dash (-) is acceptable
+          (electronic application not available). Blank is non-compliant.
+        keywords: [alarm, predefined timeline, SOP, deviation, incident]
+        skip_conditions:
+          - "Page has no audit trail review section -> not_applicable"
+          - "Electronic manufacturing applications are not available for this batch -> not_applicable"
+
+      21:
+        evaluation_strategy: text
+        pass_criteria: >
+          The checklist item for temperature/vacuum/process parameter excursions
+          is explicitly marked (√/✓ or X). If marked √ (yes), a deviation or
+          incident reference must be present. A dash (-) is acceptable
+          (electronic application not available). Blank is non-compliant.
+        keywords: [excursion, temperature, vacuum, process parameters, deviation, incident]
+        skip_conditions:
+          - "Page has no audit trail review section -> not_applicable"
+          - "Electronic manufacturing applications are not available for this batch -> not_applicable"
