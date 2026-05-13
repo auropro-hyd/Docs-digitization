@@ -113,6 +113,35 @@ def _resolve_log_level() -> int:
 _CONFIGURED = False
 
 
+# Verbose keys that are valuable in the JSON sink (machine-queryable
+# distributed-trace fields) but pure noise in the terminal renderer.
+# In dev mode we strip them BEFORE the ConsoleRenderer runs so a
+# reviewer sees readable lines. The JSON sink still carries them
+# because the telemetry-capture processor runs BEFORE the dev
+# stripper.
+_DEV_NOISE_KEYS: frozenset[str] = frozenset({
+    "trace_id",
+    "span_id",
+    "parent_span_id",
+})
+
+
+def _dev_compact_processor(
+    _logger: Any, _method_name: str, event_dict: dict[str, Any]
+) -> dict[str, Any]:
+    """Strip distributed-trace IDs from terminal output.
+
+    The keys are valuable in JSON / on-disk telemetry but the
+    ConsoleRenderer prints them as a long ``parent_span_id=...
+    span_id=... trace_id=...`` suffix on every line that wrecks
+    readability. Only applied in dev mode (when ConsoleRenderer is
+    the renderer); the JSON renderer keeps everything.
+    """
+    for k in _DEV_NOISE_KEYS:
+        event_dict.pop(k, None)
+    return event_dict
+
+
 def configure(*, force: bool = False) -> None:
     """Configure structlog + stdlib logging. Idempotent unless ``force``."""
 
@@ -141,11 +170,30 @@ def configure(*, force: bool = False) -> None:
 
     if mode == "json":
         renderer: Any = structlog.processors.JSONRenderer()
+        # Renderer-side chain matches shared_processors so foreign
+        # (stdlib) logs get the same treatment as structlog logs.
+        renderer_processors = list(shared_processors)
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
+        # In dev mode the ConsoleRenderer prints every field as
+        # ``key=value`` after the event name. Strip the verbose
+        # trace-id triple just before rendering — the telemetry
+        # sink already captured them via _telemetry_capture_processor.
+        renderer_processors = list(shared_processors) + [_dev_compact_processor]
 
+    # Use ``ProcessorFormatter.wrap_for_formatter`` as the FINAL
+    # structlog processor. Without this, a structlog logger that
+    # routes through stdlib (via ``LoggerFactory``) renders ONCE in
+    # structlog and then again in the stdlib handler — producing the
+    # ``[info     ] [info     ] trace.request.started`` double-
+    # prefix AND duplicated trace-id suffixes that drown the terminal
+    # output. With ``wrap_for_formatter``, the structlog side packs
+    # the event_dict for the formatter, the formatter applies the
+    # renderer once.
     structlog.configure(
-        processors=shared_processors + [renderer],
+        processors=shared_processors + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -153,12 +201,15 @@ def configure(*, force: bool = False) -> None:
     )
 
     # Stdlib bridge — replace the root handler so `logging.getLogger(...)`
-    # routes through the same processor chain.
+    # routes through the same processor chain. The ProcessorFormatter
+    # detects whether the record came from structlog (uses the wrapped
+    # event_dict) or from stdlib (runs ``foreign_pre_chain`` to
+    # normalize) and then applies the renderer exactly once.
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             processor=renderer,
-            foreign_pre_chain=shared_processors,
+            foreign_pre_chain=renderer_processors,
         )
     )
     root = logging.getLogger()
@@ -172,6 +223,11 @@ def configure(*, force: bool = False) -> None:
         "azure.ai.documentintelligence",
         "httpx",
         "httpcore",
+        # Uvicorn's per-request access log duplicates the trace
+        # middleware's structured events AND ignores the quiet-routes
+        # demotion (it logs every request at INFO regardless). Demote
+        # to WARNING so only abnormal (4xx/5xx) responses surface.
+        "uvicorn.access",
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 

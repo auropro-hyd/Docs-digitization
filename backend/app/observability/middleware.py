@@ -58,6 +58,31 @@ def _path_params(request: Request) -> dict[str, Any]:
     return request.scope.get("path_params") or {}
 
 
+# Routes that the frontend polls continuously (every 1-2 seconds while a
+# pipeline run is in progress). Their trace.request.started / finished
+# events are downgraded to DEBUG so they don't drown the log on a long
+# wait. Real state-changing requests stay at INFO. Prometheus metrics
+# (HTTP_REQUESTS / HTTP_DURATION) are still recorded for these routes
+# so dashboards keep their counts.
+#
+# Operators who want every poll back at INFO can set
+# ``AT_OBS__LOG_LEVEL=DEBUG`` — the events still fire, they just live
+# below INFO by default.
+_QUIET_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("GET", "/api/documents/{doc_id}/progress"),
+    ("GET", "/api/documents/{doc_id}"),
+    ("GET", "/api/runs/{run_id}/progress"),
+    ("GET", "/api/runs/{run_id}"),
+    ("GET", "/health"),
+    ("GET", "/metrics"),
+})
+
+
+def _is_quiet_route(method: str, route: str) -> bool:
+    """True when this method+route is in the always-polling allowlist."""
+    return (method, route) in _QUIET_ROUTES
+
+
 class ObservabilityMiddleware(BaseHTTPMiddleware):
     """Parse inbound traceparent, bind request scope, emit telemetry.
 
@@ -107,8 +132,10 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         route = _route_template(request)
         method = request.method
+        quiet = _is_quiet_route(method, route)
+        request_log = logger.debug if quiet else logger.info
 
-        logger.info(
+        request_log(
             "trace.request.started",
             source=source,
             route=route,
@@ -176,7 +203,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 except Exception:
                     pass
 
-            logger.info(
+            request_log(
                 "trace.request.finished",
                 route=route,
                 method=method,
