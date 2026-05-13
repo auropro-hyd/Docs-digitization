@@ -16,7 +16,12 @@
   <div class="report-footer">{{ footer.disclaimer }}</div>
 
   <header class="report-header">
-    {% if header.logo_path %}
+    {# Gate on the resolved data URI rather than the requested path —
+       a missing asset returns an empty URI from the renderer and we
+       must NOT emit ``<img src="">`` (renders as a broken-image
+       placeholder in browsers). Falls back to the empty .logo
+       reserve so the brand-block alignment stays put. #}
+    {% if logo_data_uri %}
       <img class="logo" src="{{ logo_data_uri }}" alt="" />
     {% else %}
       <div class="logo"></div>
