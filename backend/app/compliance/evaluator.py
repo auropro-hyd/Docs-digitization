@@ -501,6 +501,32 @@ async def run_agent_evaluation(
                 # VLM unavailable — run text only; no merge needed
                 text_rules.append(rule)
             else:
+                # Unknown / empty strategy — fall through to text but
+                # flag the dangling value. This is the exact failure
+                # mode that hid GMP-rule-11's missing llm_arbitrated
+                # merge for weeks (rule declared the strategy, but no
+                # evaluator branch existed → silent text-only). With
+                # this warning the next dangling enum value surfaces
+                # on the first run.
+                if strategy and strategy not in ("text", "agentic_audit"):
+                    logger.warning(
+                        "compliance.unknown_evaluation_strategy — "
+                        "rule %s declared evaluation_strategy=%r which "
+                        "has no router branch; falling through to plain "
+                        "text evaluation. Likely a typo or a strategy "
+                        "added to YAML without an evaluator merge function.",
+                        rule.id, strategy,
+                    )
+                    try:
+                        from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                        record_event(
+                            "compliance.unknown_evaluation_strategy",
+                            level="warning",
+                            rule_id=rule.id,
+                            strategy=strategy,
+                        )
+                    except Exception:  # pragma: no cover — never break eval
+                        pass
                 text_rules.append(rule)
 
         all_vision_rules = vision_only_rules + text_and_vision_rules + text_primary_rules + llm_arbitrated_rules
@@ -871,8 +897,40 @@ async def _merge_llm_arbitrated(
             )
         except Exception as exc:
             logger.warning("LLM arbitration failed for rule %s: %s — falling back to higher severity", rule.id, exc)
+            try:
+                from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                record_event(
+                    "compliance.arbitration_fallback_used",
+                    level="warning",
+                    rule_id=rule.id,
+                    reason=f"arbitration_raised: {type(exc).__name__}: {exc}"[:200],
+                    text_status=text_ev.status,
+                    vision_status=vision_ev.status,
+                )
+            except Exception:  # pragma: no cover — never break eval
+                pass
 
-    # Fallback — higher severity wins
+    # Fallback — higher severity wins. Fires either when the
+    # arbitration LLM raised (already recorded above) OR when no
+    # LLM was provided — record the latter case so post-run
+    # analysis can distinguish "arbitrator broken" from "arbitrator
+    # not wired" in deployments where llm_arbitrated rules run
+    # without an LLM dependency. The first branch's exception path
+    # has already emitted a more specific event.
+    if llm is None:
+        try:
+            from app.observability.run_telemetry import record_event  # noqa: PLC0415
+            record_event(
+                "compliance.arbitration_fallback_used",
+                level="warning",
+                rule_id=rule.id,
+                reason="no_llm_provided",
+                text_status=text_ev.status,
+                vision_status=vision_ev.status,
+            )
+        except Exception:  # pragma: no cover — never break eval
+            pass
+
     text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
     vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
     winner = text_ev if text_sev >= vision_sev else vision_ev
