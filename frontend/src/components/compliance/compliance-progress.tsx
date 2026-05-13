@@ -261,8 +261,13 @@ function AgentCard({
       transition={{ duration: 0.2 }}
     >
       <Card
+        // ``@container/card`` lets the export buttons swap their
+        // labels (``Export HTML`` ↔ ``HTML``) based on the card's
+        // own width rather than the viewport — important at
+        // ``lg:grid-cols-4`` where cards narrow to ~260 px on
+        // common laptop screens.
         className={cn(
-          "transition-all duration-300",
+          "@container/card transition-all duration-300",
           isPrescreening && "ring-2 ring-cyan-500/30",
           progress.status === "running" && "ring-2 ring-primary/30",
           progress.status === "complete" && "ring-2 ring-success/30",
@@ -401,11 +406,17 @@ function AgentCard({
           )}
 
           {progress.status !== "skipped" && (
-            <div className="flex items-center gap-2 mt-2">
+            // Buttons share the row's width and shrink to fit so
+            // they never overflow a narrow column at lg:grid-cols-4
+            // (cards drop to ~260 px in width on common laptop
+            // screens). Below ``@xs`` (cards < 200 px) the label
+            // collapses to just "HTML" / "MD" via the responsive
+            // span so the icon + text still fit.
+            <div className="flex items-stretch gap-1.5 mt-2 w-full">
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-[11px]"
+                className="h-7 text-[11px] flex-1 min-w-0 px-2"
                 disabled={!canExportThisAgent || exporting !== null}
                 onClick={() => exportAgent("html")}
                 title={
@@ -414,13 +425,21 @@ function AgentCard({
                     : "Enabled once this agent is complete"
                 }
               >
-                <Download className="size-3 mr-1" />
-                {exporting === "html" ? "Exporting..." : "Export HTML"}
+                <Download className="size-3 mr-1 flex-shrink-0" />
+                <span className="truncate">
+                  {exporting === "html" ? (
+                    "Exporting..."
+                  ) : (
+                    <>
+                      <span className="hidden @[160px]/card:inline">Export </span>HTML
+                    </>
+                  )}
+                </span>
               </Button>
               <Button
                 size="sm"
                 variant="outline"
-                className="h-7 text-[11px]"
+                className="h-7 text-[11px] flex-1 min-w-0 px-2"
                 disabled={!canExportThisAgent || exporting !== null}
                 onClick={() => exportAgent("md")}
                 title={
@@ -429,8 +448,16 @@ function AgentCard({
                     : "Enabled once this agent is complete"
                 }
               >
-                <Download className="size-3 mr-1" />
-                {exporting === "md" ? "Exporting..." : "Export MD"}
+                <Download className="size-3 mr-1 flex-shrink-0" />
+                <span className="truncate">
+                  {exporting === "md" ? (
+                    "Exporting..."
+                  ) : (
+                    <>
+                      <span className="hidden @[160px]/card:inline">Export </span>MD
+                    </>
+                  )}
+                </span>
               </Button>
             </div>
           )}
