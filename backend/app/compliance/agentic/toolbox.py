@@ -61,11 +61,20 @@ class ContextToolbox:
             matching = [p for p in all_matching if p.get("page_num") in page_nums]
         else:
             matching = all_matching
+
+        # Track truncation so we can surface it to the LLM rather than
+        # silently dropping tail pages — a 35-page batch_record's
+        # manufacturing_operations section would otherwise lose its
+        # back third with no signal. Without this marker the LLM has
+        # no way to know its context window is incomplete.
+        total_pre_cap = len(matching)
+        truncated_count = max(0, total_pre_cap - self._page_cap)
         matching = matching[: self._page_cap]
 
         _dbg(
             f"get_context_pages({document_type!r}, {section_type!r}, page_nums={page_nums}) "
-            f"→ {len(matching)} pages: {[p.get('page_num') for p in matching]}"
+            f"→ {len(matching)} pages (cap={self._page_cap}, dropped={truncated_count}): "
+            f"{[p.get('page_num') for p in matching]}"
         )
 
         if not matching and page_nums is not None and available_page_nums:
@@ -84,6 +93,18 @@ class ContextToolbox:
             md = str(ext.get("markdown", "") or "")
             label = f"[{document_type}/{section_type or 'all'}/p{pn}]"
             parts.append(f"{label}\n{md}")
+
+        if truncated_count > 0:
+            dropped_pages = [
+                p.get("page_num") for p in all_matching[self._page_cap:]
+            ]
+            parts.append(
+                f"[truncated: {truncated_count} additional page(s) omitted "
+                f"to stay within the {self._page_cap}-page context cap; "
+                f"dropped page_num values: {dropped_pages}. If a verdict "
+                f"requires evidence from those pages, call "
+                f"get_context_pages again with explicit page_nums.]"
+            )
         return "\n\n".join(parts)
 
     def _get_matching_extractions(

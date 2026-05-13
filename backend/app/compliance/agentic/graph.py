@@ -319,11 +319,33 @@ async def section_worker(state: AgenticAuditState) -> dict:
                 section_type=chunk["section_type"],
             )]}
         elif action.action == "get_context_summary":
+            # Defensive branch: the prompt's "Available tools" block is
+            # commented out (010 chose to pre-load all raw pages instead
+            # of asking the LLM to fetch them), but ``WorkerAction``'s
+            # Literal still allows this action. If the LLM still picks
+            # it we serve the result AND fire telemetry so the prompt-
+            # vs-model mismatch is observable rather than silent.
             result = toolbox.get_context_summary(action.document_type, action.section_type)
             _trace(rule.id, {"event": "get_context_summary",
                              "doc_type": action.document_type, "sec_type": action.section_type,
                              "result_chars": len(result), "result_preview": result[:200],
                              "summary": f"get_context_summary({action.document_type!r}, {action.section_type!r}) → {len(result)} chars"})
+            try:
+                from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                record_event(
+                    "agentic.unexpected_tool_call",
+                    level="warning",
+                    rule_id=rule.id,
+                    action="get_context_summary",
+                    note=(
+                        "LLM chose a tool action that the current "
+                        "worker prompt does not advertise. Either the "
+                        "model is improvising or the prompt needs to "
+                        "re-document the tools."
+                    ),
+                )
+            except Exception:  # pragma: no cover — never break eval
+                pass
             conversation += (
                 f"\n\nTOOL: get_context_summary({action.document_type})\n"
                 f"RESULT:\n{result or '[No summary available]'}\n"
@@ -339,6 +361,22 @@ async def section_worker(state: AgenticAuditState) -> dict:
                              "page_nums": action.page_nums, "result_chars": len(result),
                              "result_preview": result[:200],
                              "summary": f"get_context_pages({action.document_type!r}, {action.section_type!r}) → {len(result)} chars"})
+            try:
+                from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                record_event(
+                    "agentic.unexpected_tool_call",
+                    level="warning",
+                    rule_id=rule.id,
+                    action="get_context_pages",
+                    note=(
+                        "LLM chose a tool action that the current "
+                        "worker prompt does not advertise. Either the "
+                        "model is improvising or the prompt needs to "
+                        "re-document the tools."
+                    ),
+                )
+            except Exception:  # pragma: no cover — never break eval
+                pass
             conversation += (
                 f"\n\nTOOL: get_context_pages({action.document_type})\n"
                 f"RESULT:\n{result or '[No pages found]'}\n"
