@@ -31,6 +31,7 @@ from app.compliance.report_renderer.mitigation import (
 from app.compliance.report_renderer.render_html import render_html
 from app.compliance.report_renderer.render_md import render_md
 from app.compliance.report_renderer.render_pdf import PdfRenderError, render_pdf
+from app.compliance.report_renderer.types import report_document_to_dict
 from app.config.container import get_container
 from app.config.settings import get_settings
 from app.core.task_manager import task_manager
@@ -808,6 +809,53 @@ async def export_compliance_report(
         media_type=_FORMAT_MEDIA[delivered_format],
         headers=headers,
     )
+
+
+# ── GET /report-rows ──────────────────────────────────────────
+
+
+@router.get("/{doc_id}/report-rows")
+async def get_report_rows(
+    doc_id: str,
+    agent: str | None = Query(None, description="Optional agent ID for scoped view."),
+    operator: str = Query("System", description="Operator name (cosmetic; surfaced in footer)."),
+):
+    """JSON view of the client-aligned report — feeds the frontend
+    rule table without re-deriving the shape in TypeScript.
+
+    Same transform as ``/export`` runs: scores are intentionally
+    NOT in the response (the on-screen scorecard reads from
+    ``/report`` separately). No file caching — the frontend keeps
+    its own React Query cache and the transform is cheap.
+    """
+
+    report_data = _load_report(doc_id)
+    if report_data is None:
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+    _recompute_review_adjusted_scores(report_data)
+
+    if agent and not any(
+        ar.get("agent") == agent for ar in report_data.get("agent_reports", [])
+    ):
+        raise HTTPException(status_code=404, detail=f"Agent report not found for '{agent}'.")
+
+    try:
+        report = ComplianceReport.model_validate(report_data)
+    except ValidationError as exc:
+        logger.exception("Stored compliance report failed validation for %s", doc_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Stored compliance report failed schema validation.",
+        ) from exc
+
+    settings = get_settings()
+    doc = build_report_document(
+        report,
+        operator=operator,
+        product_name=settings.compliance.report_product_name,
+        agent_filter=agent,
+    )
+    return report_document_to_dict(doc)
 
 
 # ── GET /preview ──────────────────────────────────────────────

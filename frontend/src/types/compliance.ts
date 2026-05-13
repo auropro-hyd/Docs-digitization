@@ -45,6 +45,64 @@ export interface VisualRegion {
   label: string;
 }
 
+// ── Spec 008 — client-aligned rule-table shape ─────────────
+
+/** The three-state compliance taxonomy from Spec 008.
+ *
+ * Maps from raw rule status: ``compliant`` → ``compliant``;
+ * ``non_compliant`` → ``action_required``;
+ * ``uncertain`` / ``error`` / ``needs_review`` → ``needs_attention``;
+ * ``not_applicable`` is excluded entirely (no row rendered). */
+export type ComplianceKind = "compliant" | "action_required" | "needs_attention";
+
+export interface ReportRow {
+  rule_id: string;
+  /** Pre-formatted agent display name from the backend builder
+   * (``Checklist``, ``GMP``, ``ALCOA+``, etc.). */
+  agent: string;
+  question: string;
+  compliance_label: string;
+  compliance_kind: ComplianceKind;
+  /** Pre-formatted page-range string, e.g. ``"PAGE:36 to 42"`` or
+   * ``"PAGE:6, 9, 31"``. Empty for compliant rows. */
+  evidence_pages: string;
+  /** Cross-page summary for compliant rows; concatenated finding
+   * reasoning for non-compliant / uncertain rows. */
+  detailed_evidence: string;
+  /** ``"Not Applicable"`` for compliant rows; rule-author
+   * recommendation or LLM-synthesised mitigation otherwise. */
+  mitigation: string;
+}
+
+export interface ReportHeader {
+  product_name: string;
+  title: string;
+  is_draft: boolean;
+  metadata_rows: [string, string][];
+  logo_path: string | null;
+}
+
+export interface ReportFooter {
+  operator_name: string;
+  generated_at: string;
+  disclaimer: string;
+}
+
+export interface ReportStats {
+  row_count: number;
+  compliant_count: number;
+  action_required_count: number;
+  needs_attention_count: number;
+  excluded_not_applicable_count: number;
+}
+
+export interface ReportDocument {
+  header: ReportHeader;
+  rows: ReportRow[];
+  footer: ReportFooter;
+  stats: ReportStats;
+}
+
 export interface ComplianceFinding {
   finding_id: string;
   rule_id: string;
