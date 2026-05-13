@@ -168,18 +168,25 @@ def configure(*, force: bool = False) -> None:
         _telemetry_capture_processor,
     ]
 
+    # In dev mode the ConsoleRenderer prints every field as
+    # ``key=value`` after the event name. We strip the verbose
+    # trace-id triple just before rendering — the telemetry sink
+    # already captured the values via ``_telemetry_capture_processor``
+    # which runs earlier. JSON mode KEEPS the trace IDs because
+    # log aggregators need them to correlate distributed traces.
+    #
+    # IMPORTANT: the compact processor must run in BOTH the structlog
+    # processor chain AND the foreign_pre_chain on the stdlib handler.
+    # If it lives only in foreign_pre_chain, structlog-originated logs
+    # (everything calling ``get_logger(...).info(...)``) skip it
+    # entirely because ``ProcessorFormatter`` doesn't run
+    # foreign_pre_chain for already-wrapped records.
     if mode == "json":
         renderer: Any = structlog.processors.JSONRenderer()
-        # Renderer-side chain matches shared_processors so foreign
-        # (stdlib) logs get the same treatment as structlog logs.
-        renderer_processors = list(shared_processors)
+        mode_processors = list(shared_processors)
     else:
         renderer = structlog.dev.ConsoleRenderer(colors=True)
-        # In dev mode the ConsoleRenderer prints every field as
-        # ``key=value`` after the event name. Strip the verbose
-        # trace-id triple just before rendering — the telemetry
-        # sink already captured them via _telemetry_capture_processor.
-        renderer_processors = list(shared_processors) + [_dev_compact_processor]
+        mode_processors = list(shared_processors) + [_dev_compact_processor]
 
     # Use ``ProcessorFormatter.wrap_for_formatter`` as the FINAL
     # structlog processor. Without this, a structlog logger that
@@ -191,7 +198,7 @@ def configure(*, force: bool = False) -> None:
     # the event_dict for the formatter, the formatter applies the
     # renderer once.
     structlog.configure(
-        processors=shared_processors + [
+        processors=mode_processors + [
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
@@ -209,7 +216,7 @@ def configure(*, force: bool = False) -> None:
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
             processor=renderer,
-            foreign_pre_chain=renderer_processors,
+            foreign_pre_chain=mode_processors,
         )
     )
     root = logging.getLogger()

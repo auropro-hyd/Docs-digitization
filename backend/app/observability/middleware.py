@@ -79,8 +79,19 @@ _QUIET_ROUTES: frozenset[tuple[str, str]] = frozenset({
 
 
 def _is_quiet_route(method: str, route: str) -> bool:
-    """True when this method+route is in the always-polling allowlist."""
-    return (method, route) in _QUIET_ROUTES
+    """True when this method+route is in the always-polling allowlist.
+
+    OPTIONS preflights to any quiet route ALSO count as quiet — the
+    browser fires one before every actual request, doubling the
+    polling-noise budget. Treating OPTIONS as "quiet if its target
+    GET would be quiet" closes that gap without an OPTIONS-specific
+    allowlist.
+    """
+    if (method, route) in _QUIET_ROUTES:
+        return True
+    if method == "OPTIONS" and ("GET", route) in _QUIET_ROUTES:
+        return True
+    return False
 
 
 class ObservabilityMiddleware(BaseHTTPMiddleware):

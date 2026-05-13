@@ -74,6 +74,27 @@ def test_quiet_route_classification() -> None:
     assert not _is_quiet_route("POST", "/api/documents/{doc_id}/progress")
 
 
+def test_cors_preflight_options_inherits_quiet_classification() -> None:
+    """Browsers fire OPTIONS preflights before every cross-origin
+    GET. Without inheritance an OPTIONS to a quiet route would still
+    log at INFO, doubling the polling-noise budget (the actual GET
+    is silent, but every preflight produces a pair of lines).
+    OPTIONS to a non-quiet target stays loud — it might be the
+    first hit of a state-changing POST."""
+
+    from app.observability.middleware import _is_quiet_route
+
+    # OPTIONS preflights inherit quietness from the underlying GET.
+    assert _is_quiet_route("OPTIONS", "/api/documents/{doc_id}/progress")
+    assert _is_quiet_route("OPTIONS", "/api/documents/{doc_id}")
+    assert _is_quiet_route("OPTIONS", "/health")
+    # OPTIONS to a non-quiet target stays loud (e.g. the preflight
+    # before POST /run shouldn't be demoted; it's a one-shot, and
+    # the corresponding POST will be loud anyway).
+    assert not _is_quiet_route("OPTIONS", "/api/documents/{doc_id}/run")
+    assert not _is_quiet_route("OPTIONS", "/api/documents/upload")
+
+
 def test_quiet_route_trace_events_demoted_to_debug(monkeypatch) -> None:
     """End-to-end: hitting a quiet route at log level INFO must
     produce NO ``trace.request.started/finished`` records. The
@@ -252,6 +273,59 @@ def test_dev_renderer_strips_trace_id_keys(monkeypatch) -> None:
     )
     assert "span_id=" not in blob
     assert "parent_span_id=" not in blob
+
+
+def test_dev_renderer_strips_trace_ids_from_middleware_style_event(monkeypatch) -> None:
+    """Production repro from 2026-05-13: the middleware emits a
+    structlog event ``trace.request.started`` with route/method/etc.
+    fields. Even at INFO level in dev mode, the live log showed
+    ``parent_span_id=... span_id=... trace_id=...`` suffixes on every
+    line. The original ``_dev_compact_processor`` was wired only into
+    ``foreign_pre_chain`` which doesn't run for structlog-originated
+    logs — the strip silently no-op'd. Now wired into BOTH paths."""
+
+    from app.observability import configure, get_logger
+    from app.observability.context import set_trace, reset_trace
+    from app.observability.tracing import mint_trace
+
+    monkeypatch.setenv("AT_OBS__LOG_MODE", "dev")
+    monkeypatch.setenv("AT_OBS__LOG_LEVEL", "INFO")
+    configure(force=True)
+
+    log = get_logger("app.observability.middleware")  # structlog logger
+    capture = _Capture()
+    root = logging.getLogger()
+    if root.handlers:
+        capture.setFormatter(root.handlers[0].formatter)
+    root.addHandler(capture)
+    try:
+        tok = set_trace(mint_trace())
+        try:
+            # Mimic the exact call shape from the middleware so the
+            # test covers the production path, not a contrived one.
+            log.info(
+                "trace.request.started",
+                source="inbound",
+                route="/api/documents/{doc_id}/run",
+                method="POST",
+            )
+        finally:
+            reset_trace(tok)
+    finally:
+        root.removeHandler(capture)
+
+    import re as _re
+    ansi = _re.compile(r"\x1b\[[0-9;]*m")
+    blob = ansi.sub("", "\n".join(capture.records))
+    assert "trace_id=" not in blob, (
+        f"middleware-style structlog event still leaks trace_id in "
+        f"dev mode. The compact processor is regressed.\n{blob}"
+    )
+    assert "span_id=" not in blob
+    assert "parent_span_id=" not in blob
+    # Sanity: the structured business fields ARE still there.
+    assert "route=" in blob
+    assert "method=" in blob
 
 
 def test_json_renderer_keeps_trace_id_keys(monkeypatch) -> None:
