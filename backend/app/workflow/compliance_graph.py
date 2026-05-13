@@ -239,12 +239,27 @@ async def _run_compliance_pipeline_inner(
             store_segmentation(doc_dir, segmentation)
 
         section_map = build_page_to_section(segmentation)
-
+        
         await _ws_progress(doc_id, {
             "phase": "segmentation",
             "status": "complete",
             "sections_count": len(segmentation.sections),
             "label": f"Identified {len(segmentation.sections)} document sections",
+        })
+
+        # Phase 1.5b: Page summarization (load-then-generate-then-store)
+        from app.compliance.summarizer import summarize_pages_in_batches  # noqa: PLC0415
+        await _ws_progress(doc_id, {
+            "phase": "summarization",
+            "status": "running",
+            "label": f"Generating page summaries ({len(extractions)} pages)...",
+        })
+        summ_llm = container.compliance_cross_page_llm
+        await summarize_pages_in_batches(extractions, section_map, doc_id, summ_llm)
+        await _ws_progress(doc_id, {
+            "phase": "summarization",
+            "status": "complete",
+            "label": "Page summaries ready",
         })
 
     # ── Phase 2: Per-page agent evaluation ────────────────────

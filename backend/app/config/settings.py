@@ -321,6 +321,10 @@ class ComplianceConfig(BaseModel):
     batch_by_category: bool = True
     llm_timeout: int = 120
 
+    agentic_page_cap: int = 50
+    agentic_worker_page_limit: int = 12
+    agentic_max_tool_calls: int = 5
+    
     applicability_mode: str = "static"  # "static" | "llm"
 
     enable_cross_page: bool = True

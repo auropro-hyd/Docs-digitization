@@ -105,6 +105,7 @@ class AuditRule:
     requires_external_data: list[str] = field(default_factory=list)
     keywords: list[str] = field(default_factory=list)
     notes: str = ""
+    context_sources: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -126,6 +127,7 @@ _YAML_STR_FIELDS = frozenset({
     "scope", "severity", "evaluation_mode", "evaluation_strategy",
     "cannot_evaluate_reason", "pass_criteria", "notes",
 })
+_YAML_DICT_LIST_FIELDS = frozenset({"context_sources"})
 
 
 def _rule_config_path(agent_id: str) -> Path:
@@ -159,6 +161,15 @@ def _resolve_rule_config(
 
     merged: dict[str, Any] = {}
     for key in _YAML_LIST_FIELDS | _YAML_STR_FIELDS:
+        val = rule_config.get(key)
+        if val is None:
+            val = cat_config.get(key)
+        if val is None:
+            val = defaults.get(key)
+        if val is not None:
+            merged[key] = val
+
+    for key in _YAML_DICT_LIST_FIELDS:
         val = rule_config.get(key)
         if val is None:
             val = cat_config.get(key)
@@ -275,6 +286,7 @@ def _finalise_rule(
         requires_external_data=_as_str_list(ov.get("requires_external_data", [])),
         keywords=_as_str_list(ov.get("keywords", [])),
         notes=str(ov.get("notes", "") or "").strip(),
+        context_sources=list(ov.get("context_sources") or []),
     )
 
 
@@ -407,7 +419,7 @@ class RuleRegistry:
         self, agent: str, batch_size: int = 7, by_category: bool = True,
         scope_filter: str | None = None,
     ) -> list[RuleBatch]:
-        rules = self.get_rules(agent)
+        rules = [r for r in self.get_rules(agent) if r.evaluation_strategy != "agentic_audit"]
         if scope_filter:
             rules = [r for r in rules if r.scope == scope_filter]
         if not rules:
