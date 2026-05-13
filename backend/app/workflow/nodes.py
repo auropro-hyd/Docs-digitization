@@ -154,22 +154,36 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
     def _on_ocr_progress(percent: int, label: str) -> None:
         """Thread-safe bridge: schedule the async WS broadcast from the executor thread.
 
-        Log policy (composes with the upstream heartbeat throttle —
-        Datalab adapter only fires the callback on state-change or
-        per ``heartbeat_quiet_interval_s``):
+        Log policy: emit on ANY change in the (percent, label) pair,
+        plus a guaranteed first-call and terminal-100% line. The
+        wrapper trusts the upstream adapter to throttle its emit
+        frequency — the Datalab adapter's heartbeat throttle (PR #55)
+        already limits emits to "state-change OR every 30 s during
+        unchanged state", so the wrapper logging every distinct
+        emit produces ~1 line per genuine state transition plus ~1
+        line per 30 s liveness ping during waiting.
 
-          * First emit ever (``last_logged_percent < 0``) — log so
-            the operator sees OCR has started.
-          * Significant jump (≥5%) — log the transition.
-          * Terminal 100% — log so the operator sees completion.
-          * Otherwise (e.g. a quiet-interval liveness ping at the
-            same 0% the heartbeat last emitted) — broadcast on the
-            WS but do NOT log.
+        Why ANY change rather than a percent-jump threshold:
 
-        The previous implementation matched ``percent in (0, 100)``
-        unconditionally, which made every 0% heartbeat tick log —
-        the per-second flood the user saw was the wrapper bypassing
-        its own percent-jump throttle.
+          * Datalab emits 2% ("Starting 5 chunks") then the
+            heartbeat emits 0% ("5/5 chunks analyzing"). A pure
+            ``>= last + 5`` check filtered the 0% transition because
+            ``0 - 2 = -2``, leaving the waiting phase silent — the
+            symptom the user reported.
+          * Datalab's heartbeat liveness pings at the same 0%
+            carry distinct labels (``oldest 31s • no change for
+            30s``) — these ARE meaningful periodic signals during
+            an indefinitely-long wait and should surface.
+          * A symmetric ``abs(percent - last) >= 5`` would have
+            caught Datalab's 2 → 0 only if the threshold were 2,
+            and would still drop the 30 s liveness pings at the
+            same 0%. The (percent, label) tuple captures both
+            transitions cleanly without a magic threshold.
+
+        Azure DI is unaffected: its progress callback emits with
+        monotonically-increasing percent at its own poll rate,
+        and each emit has a distinct (percent, label) — same logging
+        rate as before for that adapter.
         """
         nonlocal last_logged_percent, last_logged_label
 
@@ -178,9 +192,12 @@ async def run_azure_di_ocr(state: DocumentState) -> dict:
             return
 
         first_emit = last_logged_percent < 0
-        significant_jump = percent >= last_logged_percent + 5
+        emit_differs = (
+            percent != last_logged_percent
+            or label != last_logged_label
+        )
         terminal_complete = percent == 100 and last_logged_percent < 100
-        if first_emit or significant_jump or terminal_complete:
+        if first_emit or emit_differs or terminal_complete:
             last_logged_percent = percent
             last_logged_label = label
             logger.info("[%s] OCR progress %s%% - %s", doc_id, percent, label)
