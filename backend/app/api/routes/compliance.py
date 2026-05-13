@@ -24,9 +24,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.compliance.models import ComplianceReport
 from app.compliance.report_renderer.builder import build_report_document
+from app.compliance.report_renderer.mitigation import (
+    SynthesisResult,
+    synthesize_mitigations,
+)
 from app.compliance.report_renderer.render_html import render_html
 from app.compliance.report_renderer.render_md import render_md
 from app.compliance.report_renderer.render_pdf import PdfRenderError, render_pdf
+from app.config.container import get_container
 from app.config.settings import get_settings
 from app.core.task_manager import task_manager
 
@@ -803,6 +808,216 @@ async def export_compliance_report(
         media_type=_FORMAT_MEDIA[delivered_format],
         headers=headers,
     )
+
+
+# ── GET /preview ──────────────────────────────────────────────
+
+
+@router.get("/{doc_id}/preview")
+async def preview_compliance_report(
+    doc_id: str,
+    agent: str | None = Query(None, description="Optional agent ID for scoped preview."),
+    operator: str = Query("System", description="Operator name surfaced in the footer disclaimer."),
+):
+    """Render the compliance report inline (for iframe embedding).
+
+    Same renderer + cache as ``/export?format=pdf`` — the only
+    difference is ``Content-Disposition: inline`` so the browser
+    renders the PDF in-page rather than offering it as a download.
+    Falls back to HTML when WeasyPrint native deps are unavailable.
+    """
+
+    doc_dir = _doc_dir(doc_id)
+    result_path = doc_dir / _COMPLIANCE_RESULT
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    cache_dir = doc_dir / "exports"
+    cache_path = cache_dir / _cache_filename("pdf", agent)
+    if (
+        cache_path.exists()
+        and cache_path.stat().st_mtime >= result_path.stat().st_mtime
+    ):
+        return Response(
+            content=cache_path.read_bytes(),
+            media_type=_FORMAT_MEDIA["pdf"],
+            headers={"Content-Disposition": "inline", "X-Cache": "hit"},
+        )
+
+    report_data = _load_report(doc_id)
+    if report_data is None:
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+    _recompute_review_adjusted_scores(report_data)
+
+    if agent and not any(
+        ar.get("agent") == agent for ar in report_data.get("agent_reports", [])
+    ):
+        raise HTTPException(status_code=404, detail=f"Agent report not found for '{agent}'.")
+
+    try:
+        report = ComplianceReport.model_validate(report_data)
+    except ValidationError as exc:
+        logger.exception("Stored compliance report failed validation for %s", doc_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Stored compliance report failed schema validation.",
+        ) from exc
+
+    settings = get_settings()
+    logo_raw = settings.compliance.report_logo_path
+    logo_path = Path(logo_raw) if logo_raw else None
+    doc = build_report_document(
+        report,
+        operator=operator,
+        product_name=settings.compliance.report_product_name,
+        logo_path=logo_path,
+        agent_filter=agent,
+    )
+
+    try:
+        body = render_pdf(doc)
+        media_type = _FORMAT_MEDIA["pdf"]
+        cache_format = "pdf"
+        extra_headers: dict[str, str] = {}
+    except PdfRenderError as exc:
+        logger.warning("PDF preview unavailable for %s, falling back to HTML (%s)", doc_id, exc)
+        body = render_html(doc).encode("utf-8")
+        media_type = _FORMAT_MEDIA["html"]
+        cache_format = "html"
+        extra_headers = {
+            "X-Render-Fallback": "html",
+            "X-Render-Fallback-Reason": "weasyprint_unavailable",
+        }
+
+    _atomic_write(cache_dir / _cache_filename(cache_format, agent), body)
+
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": "inline", "X-Cache": "miss", **extra_headers},
+    )
+
+
+# ── POST /mitigation/synthesize ──────────────────────────────
+
+
+class MitigationSynthesizeRequest(BaseModel):
+    rule_ids: list[str] | None = Field(
+        default=None,
+        description="When set, only findings matching one of these "
+        "rule IDs are synthesised. Otherwise every needs-mitigation "
+        "finding is processed.",
+    )
+    force: bool = Field(
+        default=False,
+        description="Re-synthesise even when the finding already has "
+        "a rule-author recommendation or a cached mitigation_text. "
+        "Operators use this to refresh stale text after rule edits.",
+    )
+
+
+def _summarise_synthesis(results: list[SynthesisResult]) -> dict:
+    """Group per-finding results into a stable response shape."""
+    counts: dict[str, int] = {}
+    total_cost = 0.0
+    total_duration = 0.0
+    for r in results:
+        counts[r.status] = counts.get(r.status, 0) + 1
+        total_cost += r.cost_estimate_usd
+        total_duration += r.duration_ms
+    return {
+        "counts": counts,
+        "cost_estimate_usd": round(total_cost, 6),
+        "duration_ms": round(total_duration, 1),
+        "per_finding": [
+            {
+                "rule_id": r.rule_id,
+                "finding_id": r.finding_id,
+                "agent": r.agent,
+                "status": r.status,
+                "cost_estimate_usd": round(r.cost_estimate_usd, 6),
+                "duration_ms": r.duration_ms,
+                "error": r.error,
+            }
+            for r in results
+        ],
+    }
+
+
+@router.post("/{doc_id}/mitigation/synthesize")
+async def synthesize_mitigation(
+    doc_id: str,
+    body: MitigationSynthesizeRequest | None = None,
+):
+    """Warm the mitigation cache via the evaluator LLM.
+
+    Walks every non-compliant / uncertain finding lacking both a
+    rule-author ``recommendation`` and a cached ``mitigation_text``,
+    asking the LLM for one to three sentences of remediation
+    guidance. Persists the result back into
+    ``compliance_result.json`` via an atomic rename.
+
+    Cost-bounded by ``compliance.mitigation_synth_cost_ceiling_usd``:
+    once the next call's estimate would push cumulative spend over
+    the ceiling, the run stops and the response reports the count
+    of skipped findings.
+    """
+
+    body = body or MitigationSynthesizeRequest()
+    doc_dir = _doc_dir(doc_id)
+    result_path = doc_dir / _COMPLIANCE_RESULT
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="No compliance report found.")
+
+    report_data = json.loads(result_path.read_text(encoding="utf-8"))
+    settings = get_settings()
+    container = get_container()
+
+    results = await synthesize_mitigations(
+        report_data,
+        llm=container.compliance_evaluator_llm,
+        cost_ceiling_usd=settings.compliance.mitigation_synth_cost_ceiling_usd,
+        rule_ids=set(body.rule_ids) if body.rule_ids else None,
+        force=body.force,
+    )
+
+    summary = _summarise_synthesis(results)
+
+    # Atomic write so a crash mid-write can't leave a half-rendered
+    # report on disk. Also invalidates the export cache via mtime.
+    tmp = result_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
+    tmp.replace(result_path)
+
+    # Bust the export disk cache so the next /export call re-renders
+    # with the freshly-synthesised mitigation text. Removing the
+    # files is cheaper + simpler than touching mtimes.
+    cache_dir = doc_dir / "exports"
+    if cache_dir.exists():
+        for f in cache_dir.iterdir():
+            if f.name.startswith("report") and not f.name.endswith(".tmp"):
+                try:
+                    f.unlink()
+                except OSError:
+                    logger.warning("Could not invalidate cache entry %s", f)
+
+    logger.info(
+        "compliance.mitigation_synthesised",
+        extra={
+            "doc_id": doc_id,
+            "force": body.force,
+            "rule_ids": body.rule_ids,
+            **{f"count_{k}": v for k, v in summary["counts"].items()},
+            "cost_estimate_usd": summary["cost_estimate_usd"],
+            "duration_ms": summary["duration_ms"],
+        },
+    )
+
+    return {
+        "doc_id": doc_id,
+        "force": body.force,
+        **summary,
+    }
 
 
 # ── Segmentation endpoints ────────────────────────────────────

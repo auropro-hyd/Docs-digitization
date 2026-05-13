@@ -207,6 +207,57 @@ def test_nocache_bypasses_cache(client: TestClient) -> None:
     assert r.headers.get("X-Cache") == "miss"
 
 
+# ── /preview ───────────────────────────────────────────────────
+
+
+def test_preview_returns_inline_disposition(client: TestClient) -> None:
+    """The preview endpoint mirrors /export?format=pdf but with
+    ``Content-Disposition: inline`` so a browser iframe renders
+    the PDF in-page."""
+
+    resp = client.get(f"/api/compliance/{_DOC_ID}/preview")
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == "inline"
+
+    if resp.headers.get("X-Render-Fallback") == "html":
+        assert resp.headers["content-type"].startswith("text/html")
+        assert resp.headers.get("X-Render-Fallback-Reason") == "weasyprint_unavailable"
+    else:
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content[:4] == b"%PDF"
+
+
+def test_preview_caches_pdf(client: TestClient, tmp_path: Path) -> None:
+    """Second preview hit returns ``X-Cache: hit`` from the shared
+    export cache."""
+
+    r1 = client.get(f"/api/compliance/{_DOC_ID}/preview")
+    assert r1.headers.get("X-Cache") == "miss"
+
+    r2 = client.get(f"/api/compliance/{_DOC_ID}/preview")
+    assert r2.headers.get("X-Cache") == "hit"
+    assert r2.content == r1.content
+
+
+def test_preview_missing_report_returns_404(
+    client: TestClient, tmp_path: Path,
+) -> None:
+    (tmp_path / "no-preview-doc").mkdir()
+    resp = client.get("/api/compliance/no-preview-doc/preview")
+    assert resp.status_code == 404
+
+
+def test_preview_unknown_agent_returns_404(client: TestClient) -> None:
+    resp = client.get(
+        f"/api/compliance/{_DOC_ID}/preview",
+        params={"agent": "nonexistent"},
+    )
+    assert resp.status_code == 404
+
+
+# ── Misc cache invariants ──────────────────────────────────────
+
+
 def test_mtime_change_invalidates_cache(
     client: TestClient, tmp_path: Path,
 ) -> None:
