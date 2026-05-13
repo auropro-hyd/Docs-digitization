@@ -59,6 +59,13 @@ def test_single_traceparent_correlates_every_log_record(monkeypatch) -> None:
 
     capture = _JsonCapture()
     root = logging.getLogger()
+    # After the logging-hygiene fix, structlog uses
+    # ``ProcessorFormatter.wrap_for_formatter`` so structlog records
+    # arrive at handlers as a wrapped event_dict, not a pre-rendered
+    # string. The capture handler has to apply the same formatter
+    # as the production handler to recover the rendered JSON output.
+    if root.handlers:
+        capture.setFormatter(root.handlers[0].formatter)
     root.addHandler(capture)
     try:
         with TestClient(app) as c:
