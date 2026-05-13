@@ -184,8 +184,41 @@ categories:
           (4) AR No. must be non-blank.
           (5) Issued Date must be non-blank.
 
-          Additionally, the form must have at least one of: "Checked By" or
-          "Verified By" signature/name filled at the bottom.
+          ALLOCATION FORM VARIANT: If the page title contains "& ALLOCATED" or
+          "ALLOCATED" (and does not contain "ISSUE"), this is a WMS allocation
+          printout. For this form type:
+          - Checks (4) AR No. and (5) Issued Date do NOT apply — these fields
+            are absent by design; the form uses WMS fields (Pick ID, LPN No.,
+            Source Details) instead.
+          - Sign-off is satisfied by a "Requested By" or "Printed By" field
+            with an employee name and ID (digital authorization).
+          - Evaluate only: (1) Request Qty non-blank, (2) Allocated Qty sums
+            match Request Qty (with SPLIT ROW HANDLING below), (3) Batch/LPN
+            No. non-blank, and sign-off present.
+          - Return COMPLIANT if these pass; NON_COMPLIANT only if quantities
+            genuinely mismatch or "Requested By" is blank.
+
+          SIGN-OFF REQUIREMENT: The form must have at least one of:
+          (a) A handwritten or typed "Checked By" or "Verified By" name/signature
+              at the bottom of the form, OR
+          (b) A system-generated authorization field such as "Requested By",
+              "Printed By", or "Prepared By" containing an employee name with
+              an employee/user ID in parentheses (e.g., "Mr. FIRSTNAME LASTNAME
+              (21274)"), indicating the record was submitted through a WMS or ERP
+              system. Digital authorization of this form is sufficient — no
+              additional handwritten sign-off is required.
+
+          SPLIT ROW HANDLING: A single line item may span multiple rows in the
+          table (same or blank S.No., different Batch/Lot Nos. from separate
+          picks). When this occurs, SUM all allocated/issued quantity rows for
+          that item and compare the total to Request Quantity. Each individual
+          row need NOT equal the full requested amount — only the total must match.
+
+          Example (compliant split allocation):
+            Item: LLDPE Bags | Request Qty: 15.000
+            Row 1: Allocated Qty = 4.275  (Lot 381-26-1934341)
+            Row 2: Allocated Qty = 10.725 (continuation row, blank S.No.)
+            Total = 4.275 + 10.725 = 15.000 → equals Request Qty → PASS
 
           COMPLIANT if all filled line items satisfy (1)–(5) and a sign-off
           is present. Items with blank Allocated/Issued Quantity may be skipped
@@ -410,8 +443,8 @@ categories:
             representations of handwritten signatures and count as valid entries
           - An image element in the cell (visual block) with or without a date
           - A date alone in the cell (e.g. "01/10/2025")
-          - Dashes or dash sequences ("--", "---", "----") — step not required,
-            valid completion marker
+          - Dashes or dash sequences, including single hyphen or em-dash ("-", "—",
+            "--", "---", "----") — step not required, valid completion marker
           - "N.A.", "NA", "N/A" — step not applicable, valid annotation
           - Caret "^" — OCR artifact of a diagonal strike-through across the
             table; treat the table as cancelled and NOT evaluate it
@@ -463,8 +496,8 @@ categories:
         skip_conditions:
           - "Page has no Done by / Checked by columns -> not_applicable"
           - "An entire table is diagonally struck through (evidenced by OCR note about diagonal line or Done by/Checked by cells contain only '^' symbols) -> that table is not_applicable; evaluate remaining tables independently"
-          - "A step row where ALL operational fields across the ENTIRE ROW — Time From, Time To, Duration, Temperature, Remarks/Results, Done By, AND Checked By — are ALL '-', 'N.A.', or blank (no actual values anywhere in the row) -> the step was conditionally not executed; treat as not_applicable and do NOT flag as non-compliant, even if the step text is bold or matches critical keywords. This applies to steps skipped due to a preceding conditional instruction (e.g. step N says 'if condition met, proceed to step M', skipping all rows between N and M)"
-          - "A step row where ALL fields are '-' means the operator used dashes to explicitly mark the step as not performed — this is a valid GMP annotation and MUST NOT be treated as a blank or missing entry, even under vision evaluation"
+          - "A step row where ALL operational fields across the ENTIRE ROW — Time From, Time To, Duration, Temperature, Remarks/Results, Done By, AND Checked By — are ALL '-', '—', 'N.A.', or blank, OR where Remarks/Results contains only a measurement label followed by a dash or em-dash (e.g. 'pH: —', 'Volume: — L', 'Result: —') while all other operational fields (Time From, Time To, Duration, Temperature, Done By, Checked By) are '-', '—', 'N.A.', or blank (no operator-entered values anywhere in the row) -> the step was conditionally not executed; treat as not_applicable and do NOT flag as non-compliant, even if the step text is bold or matches critical keywords. This applies to steps skipped due to a preceding conditional instruction (e.g. step N says 'if condition met, proceed to step M', skipping all rows between N and M)"
+          - "A step row where ALL fields are '-' or '—' (em-dash) means the operator used dashes to explicitly mark the step as not performed — this is a valid GMP annotation and MUST NOT be treated as a blank or missing entry, even under vision evaluation"
         keywords: [done by, checked by, result, limit, inspect, charge, weigh, sample]
 
       10:
@@ -561,6 +594,7 @@ categories:
           - "Page has no critical manufacturing steps with explicit parameter limits -> not_applicable"
           - "Page has no Remarks/In-process Results column -> not_applicable"
           - "An entire table is diagonally struck through (evidenced by OCR note about diagonal line or Done by/Checked by cells contain only '^' symbols) -> that table is not_applicable; evaluate remaining tables independently"
+          - "A step row where BOTH Time From AND Time To are '-', '—', or 'N.A.' AND Remarks/In-process Results is blank, a dash/em-dash ('-', '—'), 'N.A.', or a measurement label followed by a dash or em-dash (e.g. 'pH: —', 'Vacuum: —', 'Result: —') — the step was not executed; no parameter value was recorded; treat as not_applicable and do NOT flag as non-compliant or uncertain"
 
       13:
         evaluation_strategy: text
@@ -619,10 +653,18 @@ categories:
         applicable_document_types: [batch_record]
         applicable_section_types: [deviation]
         pass_criteria: >
-          Check the deviation report. and share the findings. 
-          If cells are blank without any indication of filling in, then mark it as non-compliant.
-          HIGHILIGHT THIS IN EVIDENCE) However, the actual verification of whether a change control was properly initiated and linked to the batch requires access to the 
-          Agile application, which is beyond the scope of document review. Therefore, this rule cannot be fully evaluated based on the document alone and requires external data verification.
+          Check the deviation report table for this batch.
+
+          STEP 1 — Check if any deviation was actually observed:
+          If ALL rows in the deviation table contain only dashes ("-", "--", "—") or are otherwise
+          empty/blank in both the "Date" and "Description of deviation" columns, then NO deviation
+          was observed during batch processing. In this case, mark as COMPLIANT — there is nothing
+          to verify in Agile.
+
+          STEP 2 — Only if at least one deviation row has real content (non-dash date or description):
+          Check whether an Agile reference number is recorded for that deviation. If a deviation is
+          recorded but no reference number is present, mark as non-compliant.
+          Note: actual verification in Agile is beyond document scope and requires external data.
         requires_external_data: [agile_deviation_records]
         keywords: [deviation, reference number, agile]
         skip_conditions:
@@ -653,7 +695,45 @@ categories:
         keywords: [re-process, rework, OOS, OOT, market complaint]
         skip_conditions:
           - "Page has no cover page or batch release note or BPCR review checklist -> not_applicable"
-      
+
+      19:
+        evaluation_strategy: text_and_vision
+        applicable_document_types: []
+        applicable_section_types: []
+        visual_checks:
+          - VC-BLANK-FIELD
+        pass_criteria: >
+          This page may contain a "Remarks" or "Remark" field, label, or column
+          (e.g. "Remarks:", "Remarks :-", "Remark:", "Remarks/In-process Results").
+
+          STEP 1 — Detect if a Remarks field is present:
+          If this page has NO label, heading, or column named "Remarks" (or "Remark"),
+          treat as NOT_APPLICABLE — there is no remarks section to evaluate.
+
+          Data-printout pages (e.g. SCADA/DCS timestamp tables, VDE data exports with
+          only Date/Time/Temperature/Vacuum columns and no form fields) have no
+          Remarks field — treat them as NOT_APPLICABLE.
+
+          STEP 2 — Evaluate only if a Remarks field is found:
+          - COMPLIANT if the Remarks field/cell contains any of the following:
+            (a) Written text — any observation, note, or comment (e.g. "Type I cleaning",
+                "Within limit", "pH: 7.2", "No remarks")
+            (b) A dash or em-dash ("-", "—", "--", "---") — explicitly indicating
+                "no remarks"; this is a valid and complete documented response
+            (c) "N.A.", "NA", "N/A" — explicitly marking as not applicable
+            (d) Any handwritten mark or entry visible in the image
+          - NON_COMPLIANT only if the Remarks field is completely blank — the label
+            (e.g. "Remarks :-") is present but there is no text, no dash, no mark
+            whatsoever following it.
+
+          Vision: confirm whether any Remarks field present on this page has at least
+          a handwritten mark, dash, or written entry. A visually blank Remarks box
+          or cell (nothing written or printed after the label) is non-compliant.
+        skip_conditions:
+          - "Page has no Remarks label, heading, or column of any kind -> not_applicable"
+          - "Page is a data-printout (SCADA/DCS export, timestamp table) with no form Remarks field -> not_applicable"
+          - "Remarks field is present and contains any text, dash, or mark -> compliant"
+
   # ── Audit Trail Review (rules 20-21) ──────────────────────────
   audit_trail_review:
     severity: major
