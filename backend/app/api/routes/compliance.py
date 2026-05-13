@@ -684,11 +684,25 @@ _FORMAT_MEDIA: dict[str, str] = {
     "md": "text/markdown; charset=utf-8",
 }
 
+# Bump this whenever the renderer / template / logo-resolution
+# logic changes in a way that would make pre-existing cached
+# exports look wrong (e.g. PR #67's logo-anchor fix). New requests
+# write to a fresh filename, so the broken cached file becomes an
+# orphan and the user gets the corrected output without needing
+# to pass ``?nocache=1``.
+#
+# Disk impact is bounded: one orphan per (format, agent) per
+# bump. The synth-endpoint's cache-busting sweep also clears
+# anything starting with ``report`` so HITL flows reclaim space
+# eventually.
+_RENDERER_CACHE_VERSION: str = "v2"
+
 
 def _cache_filename(delivered_format: str, agent: str | None) -> str:
-    """Compose the cache filename for a rendered export."""
-    suffix = f"_{_slugify_filename_part(agent)}" if agent else ""
-    return f"report{suffix}.{_FORMAT_EXT[delivered_format]}"
+    """Compose the cache filename for a rendered export. The version
+    segment auto-invalidates stale outputs after a renderer fix."""
+    agent_suffix = f"_{_slugify_filename_part(agent)}" if agent else ""
+    return f"report_{_RENDERER_CACHE_VERSION}{agent_suffix}.{_FORMAT_EXT[delivered_format]}"
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

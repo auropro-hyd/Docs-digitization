@@ -321,7 +321,7 @@ def test_synth_busts_export_cache(client: TestClient, tmp_path: Path) -> None:
 
     # Prime the export cache by hitting /export first.
     client.get(f"/api/compliance/{_DOC_ID}/export", params={"format": "html"})
-    cache_path = tmp_path / _DOC_ID / "exports" / "report.html"
+    cache_path = tmp_path / _DOC_ID / "exports" / compliance_route._cache_filename("html", None)
     assert cache_path.exists()
 
     client.post(f"/api/compliance/{_DOC_ID}/mitigation/synthesize", json={})
