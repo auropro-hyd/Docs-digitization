@@ -620,7 +620,12 @@ def detect_bpcr_sections(
 
     started = time.perf_counter()
     total_pages = len(ocr.pages)
-    logger.info(
+    # ``debug`` rather than ``info`` — this fires once per BPCR-
+    # classified section during every compliance run. Operationally
+    # interesting for debugging detector outcomes (the exit line
+    # carries n_spans / duration_ms) but not load-bearing operator
+    # signal. AT_OBS__LOG_LEVEL=DEBUG brings it back.
+    logger.debug(
         "bpcr.section_detect.entry doc_id=%s pages=%d method=%s spec_version=%s",
         doc_id,
         total_pages,
@@ -713,7 +718,7 @@ def _log_exit(
     *, doc_id: str, mode: DetectionMode, result: BPCRSectionMap, started: float
 ) -> None:
     duration_ms = int((time.perf_counter() - started) * 1000)
-    logger.info(
+    logger.debug(
         "bpcr.section_detect.exit doc_id=%s pages=%d method=%s outcome=%s "
         "duration_ms=%d n_spans=%d",
         doc_id,

@@ -69,10 +69,25 @@ def _path_params(request: Request) -> dict[str, Any]:
 # ``AT_OBS__LOG_LEVEL=DEBUG`` — the events still fire, they just live
 # below INFO by default.
 _QUIET_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    # Document-processing pipeline polling
     ("GET", "/api/documents/{doc_id}/progress"),
     ("GET", "/api/documents/{doc_id}"),
     ("GET", "/api/runs/{run_id}/progress"),
     ("GET", "/api/runs/{run_id}"),
+    # Compliance-pipeline polling — the frontend hits these every
+    # 30 s while a compliance run is in progress, plus when the
+    # report view is open (segmentation / discovered-rules / report
+    # endpoints).
+    ("GET", "/api/compliance/{doc_id}/status"),
+    ("GET", "/api/compliance/{doc_id}/report"),
+    ("GET", "/api/compliance/{doc_id}/segmentation"),
+    ("GET", "/api/compliance/{doc_id}/discovered-rules"),
+    # Static-ish read endpoints the frontend re-fetches on every
+    # page render. The trace lines emit no business state — pure
+    # overhead at INFO level.
+    ("GET", "/api/documents/"),
+    ("GET", "/api/rules/agents"),
+    # Infra
     ("GET", "/health"),
     ("GET", "/metrics"),
 })
