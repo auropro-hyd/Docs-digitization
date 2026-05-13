@@ -186,7 +186,9 @@ def test_cache_hit_on_second_request(client: TestClient, tmp_path: Path) -> None
     assert r1.status_code == 200
     assert r1.headers.get("X-Cache") == "miss"
 
-    cache_path = tmp_path / _DOC_ID / "exports" / "report.html"
+    # Read the canonical cache filename off the route module so the
+    # test stays correct when the renderer-cache version bumps.
+    cache_path = tmp_path / _DOC_ID / "exports" / compliance_route._cache_filename("html", None)
     assert cache_path.exists(), "first request must populate the cache"
 
     r2 = client.get(f"/api/compliance/{_DOC_ID}/export", params={"format": "html"})
@@ -258,6 +260,22 @@ def test_preview_unknown_agent_returns_404(client: TestClient) -> None:
 # ── Misc cache invariants ──────────────────────────────────────
 
 
+def test_cache_filename_carries_renderer_version() -> None:
+    """When the renderer / template / asset-resolution logic changes
+    in a way that would make pre-existing cached output wrong, the
+    operator bumps ``_RENDERER_CACHE_VERSION`` and the cache filename
+    changes — so the next request misses the old cache and renders
+    fresh, without anyone needing to pass ``?nocache=1`` or wipe
+    the exports dir."""
+
+    assert compliance_route._RENDERER_CACHE_VERSION, (
+        "the renderer cache version must be a non-empty string — "
+        "this is what auto-busts stale exports after a renderer fix"
+    )
+    name = compliance_route._cache_filename("pdf", None)
+    assert compliance_route._RENDERER_CACHE_VERSION in name
+
+
 def test_mtime_change_invalidates_cache(
     client: TestClient, tmp_path: Path,
 ) -> None:
@@ -269,7 +287,7 @@ def test_mtime_change_invalidates_cache(
     import time
 
     client.get(f"/api/compliance/{_DOC_ID}/export", params={"format": "md"})
-    cache_path = tmp_path / _DOC_ID / "exports" / "report.md"
+    cache_path = tmp_path / _DOC_ID / "exports" / compliance_route._cache_filename("md", None)
     result_path = tmp_path / _DOC_ID / "compliance_result.json"
     assert cache_path.exists()
 
