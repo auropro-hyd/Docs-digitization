@@ -7,6 +7,7 @@ using ``generate_structured()`` with the ``RuleBatchResult`` schema.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
 
@@ -508,6 +509,8 @@ async def run_agent_evaluation(
         text_rules: list[AuditRule] = []
         vision_only_rules: list[AuditRule] = []
         text_and_vision_rules: list[AuditRule] = []
+        text_primary_rules: list[AuditRule] = []
+        llm_arbitrated_rules: list[AuditRule] = []
 
         for rule in applicable_rules:
             strategy = rule.evaluation_strategy
@@ -515,6 +518,12 @@ async def run_agent_evaluation(
                 vision_only_rules.append(rule)
             elif strategy == "text_and_vision" and vlm_available:
                 text_and_vision_rules.append(rule)
+                text_rules.append(rule)
+            elif strategy == "text_primary" and vlm_available:
+                text_primary_rules.append(rule)
+                text_rules.append(rule)
+            elif strategy == "llm_arbitrated" and vlm_available:
+                llm_arbitrated_rules.append(rule)
                 text_rules.append(rule)
             elif strategy == "vision" and not vlm_available:
                 if compliance_settings.vlm_fallback_to_text:
@@ -527,10 +536,39 @@ async def run_agent_evaluation(
                         reasoning="VLM unavailable — vision-only rule skipped",
                         applicability_trace=["vlm_unavailable"],
                     ))
+            elif strategy in ("text_primary", "llm_arbitrated") and not vlm_available:
+                # VLM unavailable — run text only; no merge needed
+                text_rules.append(rule)
             else:
+                # Unknown / empty strategy — fall through to text but
+                # flag the dangling value. This is the exact failure
+                # mode that hid GMP-rule-11's missing llm_arbitrated
+                # merge for weeks (rule declared the strategy, but no
+                # evaluator branch existed → silent text-only). With
+                # this warning the next dangling enum value surfaces
+                # on the first run.
+                if strategy and strategy not in ("text", "agentic_audit"):
+                    logger.warning(
+                        "compliance.unknown_evaluation_strategy — "
+                        "rule %s declared evaluation_strategy=%r which "
+                        "has no router branch; falling through to plain "
+                        "text evaluation. Likely a typo or a strategy "
+                        "added to YAML without an evaluator merge function.",
+                        rule.id, strategy,
+                    )
+                    try:
+                        from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                        record_event(
+                            "compliance.unknown_evaluation_strategy",
+                            level="warning",
+                            rule_id=rule.id,
+                            strategy=strategy,
+                        )
+                    except Exception:  # pragma: no cover — never break eval
+                        pass
                 text_rules.append(rule)
 
-        all_vision_rules = vision_only_rules + text_and_vision_rules
+        all_vision_rules = vision_only_rules + text_and_vision_rules + text_primary_rules + llm_arbitrated_rules
 
         enriched = build_enriched_context(ext, page_num, global_kv_pairs=global_kv_pairs)
 
@@ -622,7 +660,7 @@ async def run_agent_evaluation(
                     for ev in vlm_result.evaluations:
                         vision_eval_map[ev.rule_id] = ev
 
-            # Merge results: vision-only, text-only, and text_and_vision
+            # Merge results: vision-only, text-only, and dual-channel strategies
             merged_rule_ids: set[str] = set()
 
             for rule in vision_only_rules:
@@ -636,6 +674,20 @@ async def run_agent_evaluation(
                 text_ev = text_eval_map.get(rule.id)
                 vision_ev = vision_eval_map.get(rule.id)
                 all_evals.append(_merge_text_vision(rule, text_ev, vision_ev))
+
+            for rule in text_primary_rules:
+                merged_rule_ids.add(rule.id)
+                text_ev = text_eval_map.get(rule.id)
+                vision_ev = vision_eval_map.get(rule.id)
+                all_evals.append(_merge_text_primary(rule, text_ev, vision_ev))
+
+            for rule in llm_arbitrated_rules:
+                merged_rule_ids.add(rule.id)
+                text_ev = text_eval_map.get(rule.id)
+                vision_ev = vision_eval_map.get(rule.id)
+                ocr_text = ext.get("markdown", "")
+                arb_result = await _merge_llm_arbitrated(rule, text_ev, vision_ev, llm, ocr_text)
+                all_evals.append(arb_result)
 
             for rule_id, ev in text_eval_map.items():
                 if rule_id not in merged_rule_ids:
@@ -723,6 +775,215 @@ def _merge_text_vision(
         )
 
     return merged
+
+
+def _merge_text_primary(
+    rule: AuditRule,
+    text_ev: RuleEvaluation | None,
+    vision_ev: RuleEvaluation | None,
+) -> RuleEvaluation:
+    """Merge for text_primary strategy: text verdict wins unless vision escalates.
+
+    Vision can only raise the severity (make things worse), never lower it.
+    Use this for rules where OCR content is the authoritative source and vision
+    supplements only to catch what text missed.
+    """
+    if text_ev is None and vision_ev is None:
+        return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
+    if text_ev is None:
+        return vision_ev  # type: ignore[return-value]
+    if vision_ev is None:
+        return text_ev
+
+    text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
+    vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
+
+    if vision_sev > text_sev:
+        # Vision escalates — use vision verdict
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=vision_ev.status,
+            severity=vision_ev.severity or text_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Vision] {vision_ev.reasoning} [Text] {text_ev.reasoning}",
+            evidence=f"[Vision] {vision_ev.evidence} [Text] {text_ev.evidence}",
+            description=vision_ev.description or text_ev.description,
+            recommendation=vision_ev.recommendation or text_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+    else:
+        # Text wins (including ties)
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=text_ev.status,
+            severity=text_ev.severity or vision_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Text] {text_ev.reasoning} [Vision] {vision_ev.reasoning}",
+            evidence=f"[Text] {text_ev.evidence} [Vision] {vision_ev.evidence}",
+            description=text_ev.description or vision_ev.description,
+            recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+
+
+async def _call_arbitrator(
+    rule: AuditRule,
+    text_ev: RuleEvaluation,
+    vision_ev: RuleEvaluation,
+    llm: LLMProvider,
+    ocr_text: str,
+) -> RuleEvaluation:
+    """Ask the LLM to resolve a text-vs-vision conflict for a single rule.
+
+    Called only when text_ev.status != vision_ev.status. Returns a new
+    RuleEvaluation whose status and reasoning come from the LLM verdict.
+    Raises on LLM failure so the caller can apply its fallback.
+    """
+    truncated_ocr = ocr_text[:3000]
+    prompt = (
+        f"You are resolving a conflict between two compliance evaluators for Rule {rule.number}.\n\n"
+        f"RULE TEXT: {rule.text}\n"
+        f"PASS CRITERIA: {rule.pass_criteria or '(none specified)'}\n\n"
+        f"OCR CONTENT (may be truncated to 3000 chars):\n{truncated_ocr}\n\n"
+        f"TEXT EVALUATOR VERDICT: {text_ev.status}\n"
+        f"TEXT EVALUATOR REASONING: {text_ev.reasoning}\n\n"
+        f"VISION EVALUATOR VERDICT: {vision_ev.status}\n"
+        f"VISION EVALUATOR REASONING: {vision_ev.reasoning}\n\n"
+        f"GUIDANCE: OCR often garbles or misses handwritten entries. When the vision evaluator "
+        f"confirms that a handwritten entry is present, prefer the vision verdict over the text "
+        f"evaluator's complaint about missing or garbled content.\n\n"
+        f"Return ONLY a JSON object with these fields:\n"
+        f'  "status": one of "compliant", "non_compliant", "not_applicable", "uncertain", "error"\n'
+        f'  "confidence": float between 0.0 and 1.0\n'
+        f'  "reasoning": string explaining your decision\n'
+        f'  "evidence": string referencing specific content\n'
+    )
+
+    raw = await llm.generate(prompt)
+
+    # Parse JSON from the response (handle markdown code fences if present)
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    data = json.loads(text)
+    status = data.get("status", "uncertain")
+    if status not in _VALID_STATUSES:
+        status = "uncertain"
+
+    return RuleEvaluation(
+        rule_id=rule.id,
+        status=status,
+        confidence=float(data.get("confidence", 0.5)),
+        reasoning=str(data.get("reasoning", "")),
+        evidence=str(data.get("evidence", "")),
+    )
+
+
+async def _merge_llm_arbitrated(
+    rule: AuditRule,
+    text_ev: RuleEvaluation | None,
+    vision_ev: RuleEvaluation | None,
+    llm: LLMProvider | None,
+    ocr_text: str,
+) -> RuleEvaluation:
+    """Merge for llm_arbitrated strategy.
+
+    When text and vision agree (same status), return immediately — no LLM call.
+    When they conflict, call _call_arbitrator. Falls back to higher-severity
+    result if arbitration fails or llm is None.
+    """
+    if text_ev is None and vision_ev is None:
+        return RuleEvaluation(rule_id=rule.id, status="error", description="Both evaluations missing")
+    if text_ev is None:
+        return vision_ev  # type: ignore[return-value]
+    if vision_ev is None:
+        return text_ev
+
+    # Agreement — no LLM call needed
+    if text_ev.status == vision_ev.status:
+        return RuleEvaluation(
+            rule_id=rule.id,
+            status=text_ev.status,
+            severity=text_ev.severity or vision_ev.severity,
+            confidence=min(text_ev.confidence, vision_ev.confidence),
+            reasoning=f"[Agreed] {text_ev.reasoning}",
+            evidence=text_ev.evidence or vision_ev.evidence,
+            description=text_ev.description or vision_ev.description,
+            recommendation=text_ev.recommendation or vision_ev.recommendation,
+            applicability_trace=list(text_ev.applicability_trace),
+        )
+
+    # Conflict — attempt LLM arbitration
+    if llm is not None:
+        try:
+            arbitrated = await _call_arbitrator(rule, text_ev, vision_ev, llm, ocr_text)
+            return RuleEvaluation(
+                rule_id=rule.id,
+                status=arbitrated.status,
+                severity=arbitrated.severity or text_ev.severity or vision_ev.severity,
+                confidence=arbitrated.confidence,
+                reasoning=(
+                    f"[Arbitrated] {arbitrated.reasoning} "
+                    f"| Text: {text_ev.reasoning} "
+                    f"| Vision: {vision_ev.reasoning}"
+                ),
+                evidence=arbitrated.evidence or text_ev.evidence or vision_ev.evidence,
+                description=arbitrated.description or text_ev.description or vision_ev.description,
+                recommendation=arbitrated.recommendation or text_ev.recommendation or vision_ev.recommendation,
+                applicability_trace=list(text_ev.applicability_trace),
+            )
+        except Exception as exc:
+            logger.warning("LLM arbitration failed for rule %s: %s — falling back to higher severity", rule.id, exc)
+            try:
+                from app.observability.run_telemetry import record_event  # noqa: PLC0415
+                record_event(
+                    "compliance.arbitration_fallback_used",
+                    level="warning",
+                    rule_id=rule.id,
+                    reason=f"arbitration_raised: {type(exc).__name__}: {exc}"[:200],
+                    text_status=text_ev.status,
+                    vision_status=vision_ev.status,
+                )
+            except Exception:  # pragma: no cover — never break eval
+                pass
+
+    # Fallback — higher severity wins. Fires either when the
+    # arbitration LLM raised (already recorded above) OR when no
+    # LLM was provided — record the latter case so post-run
+    # analysis can distinguish "arbitrator broken" from "arbitrator
+    # not wired" in deployments where llm_arbitrated rules run
+    # without an LLM dependency. The first branch's exception path
+    # has already emitted a more specific event.
+    if llm is None:
+        try:
+            from app.observability.run_telemetry import record_event  # noqa: PLC0415
+            record_event(
+                "compliance.arbitration_fallback_used",
+                level="warning",
+                rule_id=rule.id,
+                reason="no_llm_provided",
+                text_status=text_ev.status,
+                vision_status=vision_ev.status,
+            )
+        except Exception:  # pragma: no cover — never break eval
+            pass
+
+    text_sev = _STATUS_SEVERITY.get(text_ev.status, 0)
+    vision_sev = _STATUS_SEVERITY.get(vision_ev.status, 0)
+    winner = text_ev if text_sev >= vision_sev else vision_ev
+    return RuleEvaluation(
+        rule_id=rule.id,
+        status=winner.status,
+        severity=winner.severity or (vision_ev if winner is text_ev else text_ev).severity,
+        confidence=min(text_ev.confidence, vision_ev.confidence),
+        reasoning=f"[Fallback-higher-sev] {winner.reasoning}",
+        evidence=winner.evidence,
+        description=winner.description,
+        recommendation=winner.recommendation,
+        applicability_trace=list(text_ev.applicability_trace),
+    )
 
 
 def _build_document_scope_prompt(

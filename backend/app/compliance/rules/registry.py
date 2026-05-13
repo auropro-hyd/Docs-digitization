@@ -99,7 +99,17 @@ class AuditRule:
     skip_conditions: list[str] = field(default_factory=list)
     pass_criteria: str = ""
     evaluation_mode: str = "llm"  # "llm" | "cannot_evaluate"
-    evaluation_strategy: str = "text"  # "text" | "vision" | "text_and_vision"
+    # "text" | "vision" | "text_and_vision" | "text_primary" |
+    # "llm_arbitrated" | "agentic_audit". The first three drive the
+    # per-page router in ``evaluator._run()``; ``text_primary`` and
+    # ``llm_arbitrated`` run text + vision in parallel and merge via
+    # ``_merge_text_primary`` / ``_merge_llm_arbitrated``;
+    # ``agentic_audit`` rules are filtered out of normal batches and
+    # handled by ``run_agentic_postpass``. Unknown values fall
+    # through to text with a ``compliance.unknown_evaluation_strategy``
+    # telemetry warning so dangling strategies don't silently
+    # degrade (the GMP rule 11 / 009-branch failure mode).
+    evaluation_strategy: str = "text"
     visual_checks: list[str] = field(default_factory=list)
     cannot_evaluate_reason: str = ""
     requires_external_data: list[str] = field(default_factory=list)
