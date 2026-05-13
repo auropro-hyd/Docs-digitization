@@ -220,7 +220,11 @@ export function SegmentationEditor({ docId }: SegmentationEditorProps) {
                 const subCount = section.sub_sections?.length ?? 0;
                 const isExpanded = expandedSubSections.has(idx);
                 return (
-                <Fragment key={section.section_id}>
+                // Section IDs can repeat when the same canonical
+                // section spans non-contiguous page ranges; suffix
+                // the index so React's reconciler doesn't fold the
+                // duplicates and drop edits across re-renders.
+                <Fragment key={`${section.section_id}-${idx}`}>
                 <tr
                   className={cn(
                     "border-t transition-colors",
