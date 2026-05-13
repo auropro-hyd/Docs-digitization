@@ -861,13 +861,25 @@ class DocumentSegmenter:
             try:
                 issues = validate_segmentation(stamped, total_pages=total_pages)
                 if issues:
+                    # Group by kind for a compact summary line that
+                    # fits on a single terminal row. Per-issue events
+                    # below carry the full detail to the on-disk
+                    # telemetry sink, so post-run analysis still
+                    # has everything. Previously this logged the
+                    # full list of issue dicts as a giant inline
+                    # JSON-ish blob that wrapped across the
+                    # terminal and was effectively unreadable.
+                    from collections import Counter
+                    by_kind = Counter(i.kind for i in issues)
+                    summary = ", ".join(
+                        f"{kind}={count}"
+                        for kind, count in sorted(by_kind.items())
+                    )
                     logger.warning(
-                        "segmentation quality issues (%d): %s",
-                        len(issues),
-                        [
-                            {"kind": i.kind, "msg": i.message}
-                            for i in issues[:20]
-                        ],
+                        "segmentation quality issues (%d total): %s — "
+                        "see segmentation.<kind> events in telemetry "
+                        "for per-issue detail",
+                        len(issues), summary,
                     )
                     # Emit one structured event per issue so the
                     # on-disk telemetry's ``by_event`` summary shows

@@ -235,6 +235,14 @@ def configure(*, force: bool = False) -> None:
         # demotion (it logs every request at INFO regardless). Demote
         # to WARNING so only abnormal (4xx/5xx) responses surface.
         "uvicorn.access",
+        # Google GenAI SDK emits ``AFC is enabled with max remote
+        # calls: 10.`` at INFO on every Client / Tool instantiation.
+        # A typical compliance run produces ~13 of these per doc —
+        # pure SDK config noise, no operator signal. (Both module
+        # paths covered because the SDK uses different names across
+        # versions.)
+        "google_genai",
+        "google.genai",
     ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 

@@ -258,9 +258,18 @@ class RuleBatchEvaluator:
                 return batch.batch_id, page_num, result
             except Exception as exc:
                 last_error = exc
+                # Some exception types (notably tenacity ``RetryError``
+                # and ``json.JSONDecodeError`` with empty payloads)
+                # render to an empty ``str(exc)`` which previously
+                # produced ``Batch X page N attempt 1 failed: `` with
+                # nothing after the colon. Surface ``type(exc).__name__``
+                # + ``str(exc) or repr(exc)`` so the operator always
+                # sees what failed.
+                exc_class = type(exc).__name__
+                exc_msg = str(exc) or repr(exc)
                 logger.warning(
-                    "Batch %s page %d attempt %d failed: %s",
-                    batch.batch_id, page_num, attempt + 1, exc,
+                    "Batch %s page %d attempt %d failed: %s: %s",
+                    batch.batch_id, page_num, attempt + 1, exc_class, exc_msg,
                 )
 
         logger.error("Batch %s page %d exhausted retries", batch.batch_id, page_num)
