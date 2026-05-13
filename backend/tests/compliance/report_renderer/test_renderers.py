@@ -183,6 +183,71 @@ def test_html_carries_product_name_and_disclaimer(fixture_report) -> None:
     assert "TITLE OF DOCUMENT" in html
 
 
+# ── Logo path resolution ───────────────────────────────────────
+
+
+def test_logo_resolves_when_path_is_repo_root_relative(fixture_report) -> None:
+    """The default settings value is repo-root-relative
+    (``backend/app/.../logo.svg``). The backend usually runs with
+    CWD inside ``backend/``, so a bare ``Path()`` resolve fails.
+    The renderer MUST probe alternate anchors so the logo embeds
+    as a data URI rather than rendering ``<img src="">``."""
+
+    from pathlib import Path
+    from app.compliance.report_renderer.builder import build_report_document
+
+    repo_relative = Path("backend/app/compliance/report_renderer/assets/logo.svg")
+    doc = build_report_document(fixture_report, now=_NOW, logo_path=repo_relative)
+    html = render_html(doc)
+
+    assert 'src=""' not in html, (
+        "a failed logo lookup must not emit <img src=''> — that "
+        "renders as the broken-image placeholder in browsers"
+    )
+    assert "data:image/svg+xml;base64," in html, (
+        "the logo must inline as a base64 data URI so the rendered "
+        "HTML stays self-contained for both standalone view and "
+        "WeasyPrint PDF"
+    )
+
+
+def test_logo_resolves_when_path_is_backend_relative(fixture_report) -> None:
+    """Same fix from the operator side — if the setting was
+    overridden to a backend-CWD-relative path (``app/.../logo.svg``)
+    we still resolve."""
+
+    from pathlib import Path
+    from app.compliance.report_renderer.builder import build_report_document
+
+    backend_relative = Path("app/compliance/report_renderer/assets/logo.svg")
+    doc = build_report_document(fixture_report, now=_NOW, logo_path=backend_relative)
+    html = render_html(doc)
+
+    assert "data:image/svg+xml;base64," in html
+
+
+def test_missing_logo_falls_back_to_text_only_header(fixture_report) -> None:
+    """When the configured path resolves to nothing the template
+    must NOT emit an ``<img src="">`` tag — fall back to the
+    placeholder div so the brand-block alignment stays consistent
+    and no broken-image icon shows."""
+
+    from pathlib import Path
+    from app.compliance.report_renderer.builder import build_report_document
+
+    doc = build_report_document(
+        fixture_report, now=_NOW, logo_path=Path("does/not/exist.svg"),
+    )
+    html = render_html(doc)
+
+    assert 'src=""' not in html
+    assert "data:image/svg+xml;base64," not in html
+    # Brand-block + product name still render — only the logo
+    # reserves a placeholder.
+    assert "BMR Compliance Intelligence Suite" in html
+    assert "TITLE OF DOCUMENT" in html
+
+
 # ── Markdown renderer ──────────────────────────────────────────
 
 
