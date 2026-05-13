@@ -143,7 +143,11 @@ dev-fresh: ## Clean frontend .next cache and start dev (use if Turbopack/SST err
 	$(MAKE) dev
 
 backend: ## Start FastAPI backend (dev mode with auto-reload)
-	cd $(BACKEND_DIR) && $(VENV_BIN_REL)/uvicorn app.main:app --reload --reload-exclude '.venv' --host 0.0.0.0 --port 8100
+	# DYLD_FALLBACK_LIBRARY_PATH: required on macOS so WeasyPrint
+	# (used by the Spec 008 compliance report renderer) can find the
+	# Homebrew-installed pango / cairo / gobject native libs. Harmless
+	# on Linux where the libs live in the standard linker path.
+	cd $(BACKEND_DIR) && DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib:$$DYLD_FALLBACK_LIBRARY_PATH" $(VENV_BIN_REL)/uvicorn app.main:app --reload --reload-exclude '.venv' --host 0.0.0.0 --port 8100
 
 frontend: ## Start Next.js frontend (dev mode)
 	cd $(FRONTEND_DIR) && npm run dev -- --port 3100

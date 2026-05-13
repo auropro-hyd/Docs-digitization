@@ -1,0 +1,84 @@
+{# Spec 008 — client-aligned compliance report HTML.
+   Renderer routes this through Jinja2 for both HTML and PDF outputs.
+   The PDF path runs the rendered HTML through WeasyPrint.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{{ header.title }} — {{ header.product_name }}</title>
+  <style>{{ stylesheet }}</style>
+</head>
+<body>
+
+  {# Footer is positioned via @page running element; declared once
+     so weasyprint places it on every page. #}
+  <div class="report-footer">{{ footer.disclaimer }}</div>
+
+  <header class="report-header">
+    {% if header.logo_path %}
+      <img class="logo" src="{{ logo_data_uri }}" alt="" />
+    {% else %}
+      <div class="logo"></div>
+    {% endif %}
+
+    <div class="brand-block">
+      <div class="product-name">{{ header.product_name }}</div>
+      <div class="title">{{ header.title }}</div>
+      <div class="title-label">TITLE OF DOCUMENT</div>
+    </div>
+
+    {% if header.is_draft %}
+      <div class="draft-flag">Document is Draft</div>
+    {% endif %}
+  </header>
+
+  <h1 class="section-heading">{{ header.title }}</h1>
+
+  <table class="metadata">
+    <tbody>
+      {% for label, value in header.metadata_rows %}
+      <tr>
+        <td class="label">{{ label }}</td>
+        <td class="value">{{ value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if rows %}
+  <table class="rule-table">
+    <thead>
+      <tr>
+        <th class="col-question">Question</th>
+        <th class="col-compliance center">Compliance</th>
+        <th class="col-evidence-page">Evidence From Document</th>
+        <th class="col-detailed">Detailed Evidence</th>
+        <th class="col-mitigation">Mitigation</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="col-question">
+          {{ row.question }}
+          {% if multi_agent %}<span class="agent-chip">{{ row.agent }}</span>{% endif %}
+        </td>
+        <td class="col-compliance">
+          <span class="badge {{ row.compliance_kind }}">{{ row.compliance_label }}</span>
+        </td>
+        <td class="col-evidence-page">{{ row.evidence_pages }}</td>
+        <td class="col-detailed">{{ row.detailed_evidence }}</td>
+        <td class="col-mitigation">{{ row.mitigation }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    No applicable rules evaluated for this document.
+  </div>
+  {% endif %}
+
+</body>
+</html>

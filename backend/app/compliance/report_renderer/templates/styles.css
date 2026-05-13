@@ -1,0 +1,225 @@
+/* Spec 008 compliance report — print styles.
+ *
+ * Targets WeasyPrint (HTML→PDF). Matches the client reference PDF
+ * layout: header band with logo + product name; metadata table;
+ * 5-column rule table; per-page footer with disclaimer.
+ */
+
+@page {
+  size: A4 portrait;
+  margin: 18mm 14mm 22mm 14mm;
+  @bottom-center {
+    content: element(footer);
+    font-size: 7.5pt;
+    color: #666;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-size: 9pt;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+/* ── Header band ───────────────────────────────────────────── */
+.report-header {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #e1e1e1;
+  padding-bottom: 6mm;
+  margin-bottom: 6mm;
+}
+
+.report-header .logo {
+  width: 28mm;
+  height: 14mm;
+  object-fit: contain;
+}
+
+.report-header .brand-block {
+  flex: 1;
+  text-align: center;
+  padding: 0 6mm;
+}
+
+.report-header .product-name {
+  font-size: 13pt;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  margin: 0;
+}
+
+.report-header .title {
+  font-size: 10pt;
+  color: #555;
+  margin: 2mm 0 0 0;
+}
+
+.report-header .title-label {
+  font-size: 7.5pt;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  color: #888;
+  text-transform: uppercase;
+  margin: 4mm 0 0 0;
+}
+
+.report-header .draft-flag {
+  position: absolute;
+  top: 18mm;
+  right: 14mm;
+  font-size: 8pt;
+  font-weight: 600;
+  color: #999;
+}
+
+/* ── Report title (just below header) ────────────────────── */
+.section-heading {
+  font-size: 14pt;
+  font-weight: 700;
+  margin: 0 0 4mm 0;
+}
+
+/* ── Metadata table ──────────────────────────────────────── */
+.metadata {
+  width: 100%;
+  border: 1px solid #e1e1e1;
+  border-radius: 4px;
+  border-collapse: collapse;
+  margin-bottom: 6mm;
+}
+
+.metadata td {
+  padding: 2mm 4mm;
+  font-size: 9pt;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.metadata tr:last-child td {
+  border-bottom: none;
+}
+
+.metadata .label {
+  width: 38mm;
+  color: #555;
+  font-weight: 500;
+}
+
+.metadata .value {
+  color: #1a1a1a;
+}
+
+/* ── Rule table ──────────────────────────────────────────── */
+.rule-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+}
+
+.rule-table thead {
+  background-color: #f5f5f5;
+}
+
+.rule-table thead th {
+  padding: 3mm 3mm;
+  text-align: left;
+  font-weight: 600;
+  font-size: 8.5pt;
+  color: #444;
+  border-bottom: 1px solid #d8d8d8;
+  vertical-align: top;
+}
+
+.rule-table thead th.center { text-align: center; }
+
+.rule-table tbody td {
+  padding: 4mm 3mm;
+  vertical-align: top;
+  border-bottom: 1px solid #f0f0f0;
+  line-height: 1.45;
+}
+
+.rule-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Column widths — matched to the reference proportions. */
+.col-question      { width: 17%; }
+.col-compliance    { width: 12%; text-align: center; }
+.col-evidence-page { width: 11%; }
+.col-detailed      { width: 42%; }
+.col-mitigation    { width: 18%; }
+
+/* ── Compliance badge ─────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 1mm 3mm;
+  border-radius: 12pt;
+  font-size: 8pt;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge::before {
+  margin-right: 2mm;
+  font-weight: 700;
+}
+
+.badge.compliant {
+  background-color: #e6f4ea;
+  color: #137333;
+}
+.badge.compliant::before {
+  content: "✓";
+}
+
+.badge.action_required {
+  background-color: #fce8e6;
+  color: #c5221f;
+}
+.badge.action_required::before {
+  content: "⚠";
+}
+
+.badge.needs_attention {
+  background-color: #fef7e0;
+  color: #b06000;
+}
+.badge.needs_attention::before {
+  content: "!";
+}
+
+/* ── Agent chip (multi-agent rule disambiguation) ─────────── */
+.agent-chip {
+  display: inline-block;
+  font-size: 7pt;
+  color: #666;
+  background-color: #f0f0f0;
+  padding: 0.5mm 2mm;
+  border-radius: 2px;
+  margin-left: 2mm;
+  font-weight: 500;
+}
+
+/* ── Footer (page bottom band) ────────────────────────────── */
+.report-footer {
+  position: running(footer);
+  text-align: center;
+  font-size: 7.5pt;
+  color: #888;
+  padding-top: 4mm;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* ── Empty-state ──────────────────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 12mm;
+  color: #666;
+  font-style: italic;
+}

@@ -286,6 +286,14 @@ class ComplianceFinding(BaseModel):
     evidence: str = ""
     description: str = ""
     recommendation: str = ""
+    # Spec 008 addition: LLM-synthesised mitigation guidance.
+    # Populated lazily on first export when ``recommendation`` is
+    # empty and the renderer falls through to the synthesis path.
+    # Persisted so subsequent exports reuse the cached text and
+    # don't re-incur the LLM cost. Empty string when
+    # ``recommendation`` is populated (the renderer prefers the
+    # author-written rec directly).
+    mitigation_text: str = ""
     applicability_trace: list[str] = Field(default_factory=list)
     resolved: bool = False
     hitl_status: str = "auto_approved"
