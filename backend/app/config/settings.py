@@ -372,6 +372,14 @@ class ComplianceConfig(BaseModel):
     vlm_timeout: int = 180
     vlm_fallback_to_text: bool = True
 
+    # Evidence synthesis — cross-page narrative evidence
+    # Synthesises a 2–4 sentence narrative (with PAGE:N citations) for rules
+    # that fire on more than ``evidence_synthesis_threshold`` distinct pages.
+    # Disabled at zero cost by setting evidence_synthesis_enabled=false.
+    evidence_synthesis_enabled: bool = True
+    evidence_synthesis_threshold: int = 3   # pages — rules with ≤ this skip synthesis
+    evidence_synthesis_batch_size: int = 7  # rules per LLM synthesis call
+
 
 class AppSettings(BaseSettings):
     """Application settings with layered configuration.
