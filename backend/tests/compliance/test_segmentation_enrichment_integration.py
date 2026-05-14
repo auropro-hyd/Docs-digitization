@@ -183,6 +183,135 @@ async def test_llm_emitted_duplicate_ids_get_disambiguated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_bpcr_id_fallback_when_type_is_unknown() -> None:
+    """The LLM occasionally emits BPCR sections with non-canonical
+    types (``main_record``, ``production_record``, …) that
+    ``normalize_section_types_to_canonical`` collapses to
+    ``unknown``. Enrichment must STILL fire on those sections —
+    via the ``section_id`` fallback in ``_is_bpcr_parent`` — so
+    the BPCR body gets drilled rather than left as one opaque
+    ``unknown`` block.
+    """
+
+    # LLM emits a section named bpcr_main_record but types it
+    # vaguely. Pre-fix this got normalized to ``unknown`` BEFORE
+    # enrichment ran, and enrichment refused to touch it.
+    raw = DocumentSegmentation(
+        sections=[
+            _sec(
+                "bpcr_main_record",
+                1, 10,
+                section_type="main_record",  # non-canonical
+                document_type="batch_record",
+            ),
+        ],
+        document_type="batch_record",
+        confidence=0.9,
+    )
+    seg_llm = _StubLLM(raw)
+    segmenter = DocumentSegmenter(seg_llm)
+    # Synthesise markdown for the BPCR pages with the headings the
+    # heuristic detector recognises. Page 1 has cover_page-like
+    # title; page 2 has revision header; page 3 has the raw-
+    # material heading.
+    extractions = [
+        {"page_num": 1, "markdown": "Batch Production and Control Record\n\nCover."},
+        {"page_num": 2, "markdown": "**REVISION SUMMARY**\n"},
+        {"page_num": 3, "markdown": "## **LIST OF RAW MATERIALS AND WEIGHING DETAILS**"},
+        {"page_num": 4, "markdown": "(continued)"},
+        {"page_num": 5, "markdown": "## **LIST OF MAJOR EQUIPMENTS & SOP DETAILS**"},
+        {"page_num": 6, "markdown": "# MANUFACTURING INSTRUCTIONS"},
+        {"page_num": 7, "markdown": "(continued)"},
+        {"page_num": 8, "markdown": "(continued)"},
+        {"page_num": 9, "markdown": "(continued)"},
+        {"page_num": 10, "markdown": "(continued)"},
+    ]
+
+    result = await segmenter.segment(
+        extractions=extractions,
+        total_pages=10,
+        filename="bpcr-id-fallback.pdf",
+    )
+
+    types = {s.section_type for s in result.sections}
+    # The detector should at least find SOME canonical
+    # sub-section types — proves enrichment fired despite the
+    # vague LLM section_type.
+    canonical_bpcr_subsections = {
+        "cover_page", "revision_summary", "material_dispensing",
+        "equipment_list", "manufacturing_operations",
+    }
+    assert types & canonical_bpcr_subsections, (
+        f"enrichment didn't fire despite section_id signalling BPCR; "
+        f"output section types: {types}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_enrichment_translates_relative_page_numbers_to_absolute() -> None:
+    """The BPCR heuristic detector returns spans with page numbers
+    1-indexed within its input, NOT absolute against the source
+    document. Enrichment must translate those back to absolute so
+    the detected spans land on the right pages.
+
+    Akhilesh's 2026-05-14 doc surfaced this: ``bpcr_main_record``
+    spanning pages 11-19 produced a flatten span at page 1-9 (the
+    detector's relative numbering) which collided with the cover
+    page section. After translation, spans land on pages 11-19.
+    """
+
+    raw = DocumentSegmentation(
+        sections=[
+            _sec(
+                "bpcr",
+                11, 15,
+                section_type="batch_record",
+                document_type="batch_record",
+            ),
+        ],
+        document_type="batch_record",
+        confidence=0.9,
+    )
+    seg_llm = _StubLLM(raw)
+    segmenter = DocumentSegmenter(seg_llm)
+    # Insert markdown with a detectable heading on page 12 (i.e.
+    # relative page 2 within the BPCR's input).
+    extractions = [
+        {"page_num": p, "markdown": "filler"} for p in range(1, 11)
+    ] + [
+        {"page_num": 11, "markdown": "Batch cover"},
+        {"page_num": 12, "markdown": "## **LIST OF RAW MATERIALS AND WEIGHING DETAILS**"},
+        {"page_num": 13, "markdown": "(continued)"},
+        {"page_num": 14, "markdown": "# MANUFACTURING INSTRUCTIONS"},
+        {"page_num": 15, "markdown": "(continued)"},
+    ]
+
+    result = await segmenter.segment(
+        extractions=extractions,
+        total_pages=15,
+        filename="page-offset.pdf",
+    )
+
+    # Find any enriched sub-section and assert it lands on
+    # ABSOLUTE pages within the BPCR's 11-15 range, NOT on
+    # relative 1-N.
+    bpcr_subsections = [
+        s for s in result.sections
+        if s.section_id.startswith("bpcr__")
+    ]
+    assert bpcr_subsections, "enrichment didn't produce flatten spans"
+    for s in bpcr_subsections:
+        assert 11 <= s.start_page <= 15, (
+            f"enriched span {s.section_id} at p{s.start_page}-{s.end_page} "
+            f"escaped the parent range (11-15) — page-offset translation broken"
+        )
+        assert 11 <= s.end_page <= 15, (
+            f"enriched span {s.section_id} at p{s.start_page}-{s.end_page} "
+            f"escaped the parent range (11-15)"
+        )
+
+
+@pytest.mark.asyncio
 async def test_segment_validates_post_enrichment_state() -> None:
     """validation_issues must reflect the FINAL persisted state —
     not the pre-enrichment intermediate. Pre-fix, validators saw
