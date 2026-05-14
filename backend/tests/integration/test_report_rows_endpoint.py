@@ -145,7 +145,9 @@ def test_returns_full_report_document_shape(client: TestClient) -> None:
     assert "compliant" in first_kinds[-2:]
 
     footer = body["footer"]
-    assert "Pharmix AI" in footer["disclaimer"]
+    # Engine brand in the disclaimer was renamed from 'Pharmix AI'
+    # to 'BMR Compliance Intelligence' in commit 03fcf71.
+    assert "BMR Compliance Intelligence" in footer["disclaimer"]
 
     stats = body["stats"]
     assert stats["row_count"] == 4
