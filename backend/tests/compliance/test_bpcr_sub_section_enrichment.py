@@ -139,8 +139,16 @@ def test_enrichment_flattens_bpcr_into_top_level_section_per_span() -> None:
     assert rm_entries[0].sub_sections == []
 
     assert bpcr_entries, "BPCR enrichment produced no top-level entries"
-    # All BPCR sub-section entries share the parent section_id.
-    assert all(s.section_id == "bpcr_unit_ii" for s in bpcr_entries)
+    # Spec 011 / 2026-05-14: each enriched span gets a unique
+    # ``section_id`` derived from the parent + section_type so the
+    # US4 overrides sidecar can target them individually. They all
+    # start with the parent's id, which downstream filters can use
+    # for grouping.
+    assert all(s.section_id.startswith("bpcr_unit_ii__") for s in bpcr_entries)
+    assert len({s.section_id for s in bpcr_entries}) == len(bpcr_entries), (
+        "enriched section_ids must be unique so the HITL overrides "
+        "sidecar can address each span without collision"
+    )
     # Each carries the right document_type for cross-doc filters.
     assert all(s.document_type == "batch_record" for s in bpcr_entries)
 
@@ -281,9 +289,19 @@ def test_enrichment_flattens_llm_populated_sub_sections_when_detector_misses() -
     assert by_type["cover_page"] == (1, 1)
     assert by_type["revision_summary"] == (2, 2)
     # Each carries the right document_type for cross-doc filters.
+    # Spec 011 / 2026-05-14: section_ids are now unique per span
+    # (composed as ``{parent_id}__{section_type}``), but the
+    # parent prefix is preserved so frontend grouping still works.
+    seen_ids: set[str] = set()
     for s in enriched.sections:
         assert s.document_type == "batch_record"
-        assert s.section_id == "bpcr"  # parent section_id preserved
+        assert s.section_id.startswith("bpcr__"), (
+            f"expected enriched section_id to start with parent prefix, got {s.section_id!r}"
+        )
+        assert s.section_id not in seen_ids, (
+            f"duplicate section_id {s.section_id!r} — uniqueness contract violated"
+        )
+        seen_ids.add(s.section_id)
 
 
 def test_enrichment_merges_detector_spans_with_llm_sub_sections() -> None:
