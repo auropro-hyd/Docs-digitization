@@ -995,6 +995,136 @@ async def _merge_llm_arbitrated(
     )
 
 
+async def synthesize_rule_evidence(
+    results: list[tuple[str, int | None, RuleBatchResult]],
+    llm: LLMProvider,
+    threshold: int = 3,
+    batch_size: int = 7,
+) -> list[tuple[str, int | None, RuleBatchResult]]:
+    """Synthesise cross-page evidence for rules that fire on more than *threshold* pages.
+
+    Mutates ``ev.evidence`` in-place on all qualifying ``RuleEvaluation`` objects
+    so that ``assemble_agent_report`` sees the synthesised narrative regardless of
+    which page's evaluation wins the severity-wins merge.
+
+    Rules with ``page_num=None`` (document-scope evaluations) are ignored.
+    Rules with ≤ threshold distinct applicable pages are left unchanged.
+    LLM failures are caught and logged — original evidence is preserved on error.
+    """
+    _SNIPPET_LIMIT = 400
+
+    # Build evidence_map: rule_id → [(page_num, snippet, status)]
+    evidence_map: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for _batch_id, page_num, result in results:
+        if page_num is None:
+            continue
+        for ev in result.evaluations:
+            if ev.status != "not_applicable" and ev.evidence:
+                evidence_map[ev.rule_id].append(
+                    (page_num, ev.evidence[:_SNIPPET_LIMIT], ev.status)
+                )
+
+    # Filter: only rules with more than threshold distinct pages
+    qualifying: dict[str, list[tuple[int, str, str]]] = {
+        rule_id: entries
+        for rule_id, entries in evidence_map.items()
+        if len({pn for pn, _, _ in entries}) > threshold
+    }
+
+    if not qualifying:
+        return results
+
+    # Chunk and gather concurrently
+    rule_ids = list(qualifying.keys())
+    chunks = [
+        {rid: qualifying[rid] for rid in rule_ids[i: i + batch_size]}
+        for i in range(0, len(rule_ids), batch_size)
+    ]
+
+    synthesised: dict[str, str] = {}
+    chunk_outcomes = await asyncio.gather(
+        *[_synthesize_batch(chunk, llm) for chunk in chunks],
+        return_exceptions=True,
+    )
+    for outcome in chunk_outcomes:
+        if isinstance(outcome, Exception):
+            logger.warning(
+                "Evidence synthesis batch failed — leaving original evidence intact: %s",
+                outcome,
+            )
+        else:
+            synthesised.update(outcome)
+
+    if not synthesised:
+        return results
+
+    # Patch every matching RuleEvaluation in the results list
+    for _batch_id, page_num, result in results:
+        for ev in result.evaluations:
+            if ev.rule_id in synthesised:
+                ev.evidence = synthesised[ev.rule_id]
+
+    logger.info(
+        "Evidence synthesis complete: %d rules synthesised across %d chunks",
+        len(synthesised), len(chunks),
+    )
+    return results
+
+
+async def _synthesize_batch(
+    chunk: dict[str, list[tuple[int, str, str]]],
+    llm: LLMProvider,
+) -> dict[str, str]:
+    """Call the LLM once to synthesise cross-page evidence narratives.
+
+    Args:
+        chunk: mapping of rule_id → [(page_num, evidence_snippet, status), ...]
+        llm: LLM provider (uses generate(), not generate_structured())
+
+    Returns:
+        Mapping of rule_id → synthesised narrative string.
+        Keys present in the response but absent from chunk are dropped.
+
+    Raises:
+        json.JSONDecodeError: if the LLM returns non-JSON (caller handles).
+    """
+    rules_text_parts: list[str] = []
+    for rule_id, page_entries in chunk.items():
+        worst_status = max(
+            page_entries,
+            key=lambda x: _STATUS_SEVERITY.get(x[2], 0),
+        )[2]
+        page_lines = "\n".join(
+            f'  PAGE:{pn}: "{ev}"'
+            for pn, ev, _ in sorted(page_entries, key=lambda x: x[0])
+        )
+        rules_text_parts.append(
+            f"Rule {rule_id}\n"
+            f"Status across document: {worst_status}\n"
+            f"Per-page evidence:\n{page_lines}"
+        )
+
+    prompt = (
+        "You are synthesising cross-page evidence for pharmaceutical compliance rules.\n\n"
+        "For each rule below, write a 2–4 sentence evidence narrative that:\n"
+        "- Cites specific page numbers inline, e.g. PAGE:3 or PAGE:36\n"
+        "- Names specific data points (field names, quantities, dates, lot numbers)\n"
+        "- Tells a traceable story across pages — what each page contributes\n"
+        "- Does NOT introduce information not present in the per-page snippets\n\n"
+        'Return ONLY a valid JSON object: {"rule_id": "narrative...", ...}\n\n'
+        "---\n\n" + "\n\n---\n\n".join(rules_text_parts)
+    )
+
+    raw = await llm.generate(prompt)
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+
+    data = json.loads(text)
+    return {k: str(v) for k, v in data.items() if k in chunk}
+
+
 def _build_document_scope_prompt(
     rules: list[AuditRule],
     summary_content: str,
