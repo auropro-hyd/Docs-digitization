@@ -103,6 +103,7 @@ def _find_gap_neighbours(
 def validate_segmentation(
     seg: DocumentSegmentation,
     total_pages: int | None = None,
+    key_value_pairs: list[dict] | None = None,
 ) -> list[SegmentationIssue]:
     """Surface segmentation quality issues as a list of warnings.
 
@@ -236,6 +237,13 @@ def validate_segmentation(
                         run_start = p if p is not None else prev
                 if p is not None:
                     prev = p
+
+    # ── Structural minimums (Spec 011 / FR-009) ───────────
+    issues.extend(validate_structural_minimums(seg))
+
+    # ── Cross-evidence (Spec 011 / FR-010, FR-011) ─────────
+    issues.extend(validate_kv_coverage(seg, key_value_pairs))
+    issues.extend(validate_type_consistency(seg))
 
     # ── Type drift ────────────────────────────────────────
     for sec in seg.sections:
@@ -476,6 +484,397 @@ def _emit_seg_event(event: str, **fields) -> None:
         record_event(event, level="warning", **fields)
     except Exception:  # pragma: no cover
         pass
+
+
+# Spec 011 / FR-006. ``fill_gaps_with_unknown`` plugs some pages
+# legitimately (image-only pages, blank cover letters). 0.97 (3%
+# shortfall) is the empirical threshold below which we suspect the
+# LLM hit its output token cap; above 0.97 we trust the gap-fill.
+# Tunable as the constant rather than a magic number in code.
+_TRUNCATION_COVERAGE_THRESHOLD: float = 0.97
+_TRUNCATION_MAX_RETRIES: int = 2
+
+
+def detect_truncation(
+    seg: DocumentSegmentation,
+    total_pages: int,
+    *,
+    finish_reason: str | None = None,
+) -> int | None:
+    """Return the page from which a retry should start, or ``None``
+    when coverage is acceptable.
+
+    Two signals — coverage shortfall is primary, finish_reason is
+    a tie-breaker:
+
+    * If the LLM output covers ≥97% of ``total_pages``, no retry.
+    * Otherwise, return the first uncovered page so the caller
+      can re-prompt with the tail. ``finish_reason='length'`` is
+      informational only — useful for telemetry when available
+      but the detector doesn't require it (the spec's adapter
+      port doesn't surface it).
+
+    Note: ``seg`` here is the LLM raw output AFTER
+    :func:`clamp_page_ranges` and :func:`resolve_overlaps` — gap-
+    fill MUST NOT have run yet, otherwise the tail is already
+    'covered' by synthetic unknown sections and we never retry.
+    """
+
+    if total_pages <= 0:
+        return None
+    covered: set[int] = set()
+    for sec in seg.sections:
+        for p in range(sec.start_page, sec.end_page + 1):
+            if 1 <= p <= total_pages:
+                covered.add(p)
+    ratio = len(covered) / total_pages
+    if ratio >= _TRUNCATION_COVERAGE_THRESHOLD:
+        return None
+
+    # First uncovered page is the retry anchor.
+    for p in range(1, total_pages + 1):
+        if p not in covered:
+            _emit_seg_event(
+                "segmentation.output_truncated",
+                total_pages=total_pages,
+                covered_pages=len(covered),
+                coverage_ratio=round(ratio, 3),
+                retry_from=p,
+                finish_reason=finish_reason,
+            )
+            return p
+    return None
+
+
+def validate_kv_coverage(
+    seg: DocumentSegmentation,
+    key_value_pairs: list[dict] | None,
+) -> list[SegmentationIssue]:
+    """Emit ``no_kv_evidence`` for multi-page sections that carry
+    zero OCR key-value pairs in their range.
+
+    KV pairs are per-page metadata (batch numbers, product
+    names, equipment IDs). A section claiming several pages
+    with zero KV pairs is almost certainly mis-classified
+    (probably image-only or a hallucinated span).
+
+    Only sections spanning ≥3 pages are checked: legitimately
+    small spans (one- or two-page checklists, single-page cover
+    pages) often have zero KV evidence and shouldn't trigger
+    false positives.
+
+    Returns warnings, not errors — segmentation output is not
+    mutated. HITL reviewers decide whether to re-run.
+    """
+
+    if not key_value_pairs:
+        return []
+
+    # Bucket KV pages once for an O(N+M) instead of O(N*M) scan.
+    kv_pages: set[int] = set()
+    for kv in key_value_pairs:
+        page = kv.get("page_num")
+        if isinstance(page, int) and page >= 1:
+            kv_pages.add(page)
+
+    issues: list[SegmentationIssue] = []
+    for sec in seg.sections:
+        span = sec.end_page - sec.start_page + 1
+        if span < 3:
+            continue
+        # Skip ``unknown`` sections — they're intentionally
+        # placeholders from ``fill_gaps_with_unknown``; HITL is
+        # already aware.
+        if sec.section_type == "unknown":
+            continue
+        kv_count = sum(
+            1 for p in range(sec.start_page, sec.end_page + 1)
+            if p in kv_pages
+        )
+        if kv_count == 0:
+            issues.append(SegmentationIssue(
+                kind="no_kv_evidence",
+                message=(
+                    f"Section '{sec.section_id}' "
+                    f"(pages {sec.start_page}-{sec.end_page}, "
+                    f"section_type='{sec.section_type}') has no OCR "
+                    f"key-value pairs in range. Likely image-only or "
+                    f"mis-classified — HITL should review."
+                ),
+                section_ids=(sec.section_id,),
+                page_range=(sec.start_page, sec.end_page),
+            ))
+    return issues
+
+
+def validate_type_consistency(
+    seg: DocumentSegmentation,
+) -> list[SegmentationIssue]:
+    """Emit ``type_mismatch`` when ``section_type`` is canonical
+    but doesn't belong to the section's ``document_type`` profile.
+
+    Catches the LLM-emitted artefact where the doc_type and
+    section_type each make sense in isolation but are
+    contradictory together (e.g. ``manufacturing_operations``
+    section_type with ``ipc_report`` document_type).
+
+    Skips: empty section_type / document_type values, ``unknown``
+    section_type (intentional placeholder), and section_types not
+    found in any profile (already covered by the existing
+    ``unknown_section_type`` drift check)."""
+
+    from app.compliance.rules.profiles import load_profiles
+    profiles = load_profiles()
+
+    issues: list[SegmentationIssue] = []
+    for sec in seg.sections:
+        section_type = (sec.section_type or "").strip()
+        document_type = (sec.document_type or "").strip()
+        if not section_type or not document_type:
+            continue
+        if section_type == "unknown":
+            continue
+        profile = profiles.document_profiles.get(document_type)
+        if profile is None:
+            # Unknown doc_type is handled elsewhere.
+            continue
+        # Membership: the section_type matches the profile's
+        # canonical types OR any alias.
+        valid = {sec_def.section_type for sec_def in profile.expected_sections}
+        for sec_def in profile.expected_sections:
+            valid.update(sec_def.aliases)
+        # Also accept the doc_type's slug as a valid "whole-doc-as-
+        # section" pattern (already preserved by the canonical
+        # normaliser).
+        valid.add(document_type)
+        valid.update(profile.aliases)
+        if section_type not in valid:
+            issues.append(SegmentationIssue(
+                kind="type_mismatch",
+                message=(
+                    f"Section '{sec.section_id}' has section_type"
+                    f"='{section_type}' which is not a valid sub-section of "
+                    f"document_type='{document_type}'. The compliance "
+                    f"pipeline's cross-section filter will not resolve "
+                    f"this section."
+                ),
+                section_ids=(sec.section_id,),
+                page_range=(sec.start_page, sec.end_page),
+            ))
+    return issues
+
+
+def validate_structural_minimums(
+    seg: DocumentSegmentation,
+) -> list[SegmentationIssue]:
+    """Surface required-section omissions per document_type.
+
+    Walks every distinct ``document_type`` emitted by the
+    segmentation; loads its profile from
+    ``document_profiles.yaml``; emits one
+    ``missing_required_section`` issue per ``required: true``
+    section_type absent from the emitted set.
+
+    Pure: no I/O beyond the cached profile load.
+    """
+
+    from app.compliance.rules.profiles import load_profiles
+    profiles = load_profiles()
+
+    # Bucket emitted section_types per document_type.
+    emitted_by_doc: dict[str, set[str]] = {}
+    for sec in seg.sections:
+        doc_type = (sec.document_type or "").strip()
+        if not doc_type:
+            continue
+        emitted_by_doc.setdefault(doc_type, set()).add(
+            (sec.section_type or "").strip(),
+        )
+
+    issues: list[SegmentationIssue] = []
+    for doc_type, emitted_types in emitted_by_doc.items():
+        profile = profiles.document_profiles.get(doc_type)
+        if profile is None:
+            # Unknown doc_type is already surfaced by
+            # ``validate_segmentation``; don't double-report it.
+            continue
+        required = {
+            sec.section_type for sec in profile.expected_sections
+            if sec.required and sec.section_type
+        }
+        missing = required - emitted_types
+        for section_type in sorted(missing):
+            issues.append(SegmentationIssue(
+                kind="missing_required_section",
+                message=(
+                    f"document_type='{doc_type}' profile requires section_type"
+                    f"='{section_type}' (required: true in document_profiles.yaml)"
+                    f" but no segmentation section emitted it. The compliance"
+                    f" pipeline will skip rules keyed to that section."
+                ),
+                section_ids=(),
+                page_range=None,
+            ))
+    return issues
+
+
+def merge_split_by_boundary(
+    seg: DocumentSegmentation,
+    units: list,
+) -> DocumentSegmentation:
+    """Reconcile LLM segmentation against page-header boundary units.
+
+    Two reconciliations performed per LLM section ``S``:
+
+    1. **Merge**: if ``S`` falls entirely inside one
+       :class:`~app.compliance.segmentation_headers.BoundaryUnit`
+       (its page range is a subset of the unit's), AND another
+       LLM section ``T`` also falls inside the same unit, ``S``
+       and ``T`` merge into one section whose page range equals
+       the unit's. The winning ``section_type`` / ``document_type``
+       come from the constituent that covers the most pages within
+       the unit (tie-break: lowest start_page). Emits
+       ``segmentation.header_boundary_merged``.
+
+    2. **Split**: if ``S`` spans a boundary-unit transition
+       (its page range crosses from unit ``U1`` into ``U2`` or
+       beyond), ``S`` is split at the page where the unit changes.
+       Each split piece keeps ``S``'s ``section_type`` /
+       ``document_type``. Emits ``segmentation.header_boundary_split``.
+
+    Sections that don't intersect any unit pass through unchanged
+    (no header attestation, LLM's word stands).
+
+    Idempotent: running twice on the same input produces the same
+    output (after the first pass, every surviving section is
+    either entirely inside one unit or entirely outside all units).
+    """
+
+    if not units:
+        return seg
+
+    # Defer the heavy lifting to a helper module to keep this file
+    # readable. Avoids a circular import by lazy-importing the
+    # headers module's data class only when we need it.
+    sorted_sections = sorted(seg.sections, key=lambda s: (s.start_page, s.end_page))
+    sorted_units = sorted(units, key=lambda u: u.start_page)
+
+    # Index every page covered by a unit → that unit. Pages outside
+    # any unit map to None.
+    unit_by_page: dict[int, "_BoundaryRef"] = {}
+    for idx, u in enumerate(sorted_units):
+        for p in range(u.start_page, u.end_page + 1):
+            unit_by_page[p] = _BoundaryRef(index=idx, unit=u)
+
+    # Phase A — split sections that span a unit transition.
+    after_split: list[DocumentSection] = []
+    split_events: list[tuple[str, list[int], list[list[int]]]] = []
+    for sec in sorted_sections:
+        pieces = _split_by_unit_transitions(sec, unit_by_page)
+        if len(pieces) > 1:
+            split_events.append((
+                sec.section_id,
+                [sec.start_page, sec.end_page],
+                [[p.start_page, p.end_page] for p in pieces],
+            ))
+        after_split.extend(pieces)
+
+    for section_id, original_range, split_ranges in split_events:
+        _emit_seg_event(
+            "segmentation.header_boundary_split",
+            section_id=section_id,
+            from_range=original_range,
+            to_ranges=split_ranges,
+        )
+
+    # Phase B — group sections by their owning unit (if any), then
+    # merge inside each unit.
+    grouped: dict[int | None, list[DocumentSection]] = {}
+    for sec in after_split:
+        # A piece is owned by a unit iff every page in its range
+        # belongs to that unit (after Phase A this is guaranteed
+        # to be either all-one-unit or all-no-unit).
+        ref = unit_by_page.get(sec.start_page)
+        key = ref.index if ref else None
+        grouped.setdefault(key, []).append(sec)
+
+    merged: list[DocumentSection] = []
+    for key, sections in grouped.items():
+        if key is None or len(sections) == 1:
+            merged.extend(sections)
+            continue
+        unit = sorted_units[key]
+        winner = _choose_winner(sections)
+        merged_section = winner.model_copy(update={
+            "start_page": unit.start_page,
+            "end_page": unit.end_page,
+        })
+        _emit_seg_event(
+            "segmentation.header_boundary_merged",
+            from_sections=[s.section_id for s in sections],
+            from_ranges=[[s.start_page, s.end_page] for s in sections],
+            to_range=[unit.start_page, unit.end_page],
+            chosen_section_id=winner.section_id,
+        )
+        merged.append(merged_section)
+
+    merged.sort(key=lambda s: (s.start_page, s.end_page))
+    return seg.model_copy(update={"sections": merged})
+
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass(frozen=True)
+class _BoundaryRef:
+    """Internal pointer from a page to the unit it belongs to."""
+    index: int
+    unit: object  # BoundaryUnit, but late-bound to avoid a circular import
+
+
+def _split_by_unit_transitions(
+    sec: DocumentSection,
+    unit_by_page: dict,
+) -> list[DocumentSection]:
+    """Split ``sec`` at every page where the boundary-unit
+    membership changes."""
+
+    pieces: list[DocumentSection] = []
+    current_start = sec.start_page
+    current_ref = unit_by_page.get(current_start)
+    for page in range(sec.start_page + 1, sec.end_page + 1):
+        page_ref = unit_by_page.get(page)
+        same = (current_ref is None and page_ref is None) or (
+            current_ref is not None
+            and page_ref is not None
+            and current_ref.index == page_ref.index
+        )
+        if not same:
+            pieces.append(sec.model_copy(update={
+                "start_page": current_start,
+                "end_page": page - 1,
+            }))
+            current_start = page
+            current_ref = page_ref
+    pieces.append(sec.model_copy(update={
+        "start_page": current_start,
+        "end_page": sec.end_page,
+    }))
+    return pieces
+
+
+def _choose_winner(sections: list) -> DocumentSection:
+    """Pick the section that wins the type/doc_type merge.
+
+    Rule: the section with the largest page coverage wins. Tie-
+    break: lowest ``start_page``. The tie-break is deterministic
+    so the same LLM output produces the same merge result every
+    run."""
+
+    return max(
+        sections,
+        key=lambda s: (s.end_page - s.start_page + 1, -s.start_page),
+    )
 
 
 def normalize_section_types_to_canonical(
@@ -1048,12 +1447,52 @@ class DocumentSegmenter:
     def __init__(self, llm: LLMProvider) -> None:
         self._llm = llm
 
+    async def _segment_range(
+        self,
+        extractions: list[dict],
+        retry_from: int,
+        total_pages: int,
+        key_value_pairs: list[dict] | None = None,
+        filename: str = "",
+    ) -> DocumentSegmentation:
+        """Re-prompt the LLM on a sub-range of extractions.
+
+        Used by the truncation-retry path: when the first call's
+        coverage stopped well short of ``total_pages`` we issue a
+        focused call on the uncovered tail. The page numbers in
+        ``extractions`` are absolute (1-indexed against the
+        original packet), so the LLM's emitted page ranges land
+        in the original frame — no re-mapping required."""
+
+        scoped = [
+            ext for ext in extractions
+            if isinstance(ext.get("page_num"), int)
+            and retry_from <= ext["page_num"] <= total_pages
+        ]
+        prompt = _build_segmentation_prompt(scoped, key_value_pairs, filename)
+        prompt += (
+            f"\n\nIMPORTANT — RETRY CONTEXT: this is a follow-up call. "
+            f"You are being asked to classify pages {retry_from} through "
+            f"{total_pages} only. The earlier call truncated at the "
+            f"output limit. Use the SAME page numbering as above (page "
+            f"numbers in 'Page X: ...' refer to absolute pages in the "
+            f"original document) and emit sections only inside the "
+            f"[{retry_from}, {total_pages}] range."
+        )
+        result = await self._llm.generate_structured(
+            prompt, DocumentSegmentation, system=_SYSTEM,
+        )
+        if not isinstance(result, DocumentSegmentation):
+            result = DocumentSegmentation.model_validate(result)
+        return result
+
     async def segment(
         self,
         extractions: list[dict],
         key_value_pairs: list[dict] | None = None,
         filename: str = "",
         total_pages: int = 0,
+        doc_dir: Path | None = None,
     ) -> DocumentSegmentation:
         prompt = _build_segmentation_prompt(extractions, key_value_pairs, filename)
         try:
@@ -1066,20 +1505,101 @@ class DocumentSegmenter:
             # sections BEFORE stamping doc_types so the rest of the
             # pipeline sees full page coverage. Each filled gap fires
             # a ``segmentation.gap_filled_with_unknown`` event.
-            # Post-process order matters: geometric cleanup
-            # (clamp out-of-range pages, resolve overlaps) FIRST so
-            # the gap-fill step sees a coherent page topology and
-            # doesn't have to work around hallucinated overlap
-            # ranges. Then fill gaps with unknown sections. Then
-            # normalise section_types to the canonical vocabulary
-            # so any drift the LLM emitted collapses to known
-            # values or ``unknown``. Then stamp doc_types using the
-            # now-canonical section_types.
+            # Post-process order — load-bearing, see Spec 011
+            # data-model.md.
+            #
+            #   1. Geometric cleanup (PR #69): clamp out-of-range
+            #      pages, resolve overlaps.
+            #   2. Fill gaps with explicit ``unknown`` sections.
+            #   3. Spec 011 / US1: reconcile against page-header
+            #      boundary units (merge LLM-split forms, split
+            #      LLM-glued forms). Runs AFTER gap-fill so the
+            #      LLM-left gaps are already explicit ``unknown``
+            #      sections — the merger then either absorbs them
+            #      into a boundary-attested unit (if they fall
+            #      inside one) or leaves them alone.
+            #   4. Normalise section_types onto the canonical
+            #      vocabulary.
+            #   5. Stamp document_types.
+            from app.compliance.segmentation_headers import (
+                group_boundary_units,
+                parse_page_headers,
+            )
+
+            headers = parse_page_headers(extractions)
+            boundary_units = group_boundary_units(headers)
+
             clamped = clamp_page_ranges(result, total_pages=total_pages)
             disjoint = resolve_overlaps(clamped)
+
+            # Spec 011 / FR-006-008: truncation retry. Check
+            # coverage BEFORE fill_gaps_with_unknown — otherwise
+            # synthetic ``unknown`` sections mask the real
+            # shortfall and we never retry.
+            retry_from = detect_truncation(disjoint, total_pages=total_pages)
+            attempt = 0
+            while retry_from is not None and attempt < _TRUNCATION_MAX_RETRIES:
+                attempt += 1
+                try:
+                    tail = await self._segment_range(
+                        extractions=extractions,
+                        retry_from=retry_from,
+                        total_pages=total_pages,
+                        key_value_pairs=key_value_pairs,
+                        filename=filename,
+                    )
+                except Exception:  # pragma: no cover — best-effort
+                    logger.exception(
+                        "segmentation truncation retry %d failed; "
+                        "continuing with partial output",
+                        attempt,
+                    )
+                    break
+                merged_sections = list(disjoint.sections) + list(tail.sections)
+                disjoint = resolve_overlaps(
+                    clamp_page_ranges(
+                        disjoint.model_copy(update={"sections": merged_sections}),
+                        total_pages=total_pages,
+                    )
+                )
+                retry_from = detect_truncation(disjoint, total_pages=total_pages)
+
+            if retry_from is not None:
+                _emit_seg_event(
+                    "segmentation.retry_exhausted",
+                    attempts=attempt,
+                    uncovered_from=retry_from,
+                    total_pages=total_pages,
+                )
+
             filled = fill_gaps_with_unknown(disjoint, total_pages=total_pages)
-            canonical = normalize_section_types_to_canonical(filled)
+            boundary_reconciled = merge_split_by_boundary(filled, boundary_units)
+            canonical = normalize_section_types_to_canonical(boundary_reconciled)
             stamped = stamp_document_types(canonical)
+
+            # Spec 011 / US4: apply HITL overrides LAST so the
+            # operator's word is final — no post-process can
+            # silently clobber their edits. Validators run AFTER
+            # this on the final shape; any operator-introduced
+            # geometric anomaly surfaces as a warning but the
+            # operator's value stands.
+            override_orphans: list[dict] = []
+            if doc_dir is not None:
+                from app.compliance.segmentation_overrides import (
+                    apply_overrides,
+                    load_overrides,
+                )
+                overrides = load_overrides(doc_dir)
+                if overrides:
+                    stamped, override_orphans = apply_overrides(stamped, overrides)
+                    for orphan in override_orphans:
+                        _emit_seg_event(
+                            "segmentation.override_orphaned",
+                            section_id=orphan["section_id"],
+                            field=orphan["field"],
+                            value=str(orphan["value"]),
+                            actor=orphan.get("actor"),
+                        )
             # Coverage-summary telemetry — single event per run carrying
             # the pages-covered / total-pages ratio + section count so
             # operators see whether the segmentation actually covered
@@ -1111,7 +1631,42 @@ class DocumentSegmenter:
             # structured issue list, not just a log line. Pure
             # observation — never mutates segmentation output.
             try:
-                issues = validate_segmentation(stamped, total_pages=total_pages)
+                issues = validate_segmentation(
+                    stamped,
+                    total_pages=total_pages,
+                    key_value_pairs=key_value_pairs,
+                )
+                # Spec 011 / US4: surface orphaned overrides as
+                # validation issues alongside the rest.
+                for orphan in override_orphans:
+                    issues.append(SegmentationIssue(
+                        kind="override_orphaned",
+                        message=(
+                            f"Operator override on section_id"
+                            f"='{orphan['section_id']}' field='{orphan['field']}'"
+                            f" was dropped — the section is no longer in the"
+                            f" LLM output. The operator must re-apply via the"
+                            f" segmentation editor."
+                        ),
+                        section_ids=(orphan["section_id"],),
+                        page_range=None,
+                    ))
+                # Spec 011 / FR-014: attach issues to the returned
+                # DocumentSegmentation so the HITL endpoint can
+                # surface them to the editor without a second
+                # call. Serialised via simple dicts (the model's
+                # field is typed ``list[dict]``).
+                stamped = stamped.model_copy(update={
+                    "validation_issues": [
+                        {
+                            "kind": i.kind,
+                            "message": i.message,
+                            "section_ids": list(i.section_ids),
+                            "page_range": list(i.page_range) if i.page_range else None,
+                        }
+                        for i in issues
+                    ],
+                })
                 if issues:
                     # Group by kind for a compact summary line that
                     # fits on a single terminal row. Per-issue events

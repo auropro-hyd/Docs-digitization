@@ -18,7 +18,7 @@ import re
 from datetime import UTC
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError
 
@@ -1173,12 +1173,55 @@ async def get_segmentation(doc_id: str):
 
 
 @router.put("/{doc_id}/segmentation")
-async def update_segmentation(doc_id: str, body: dict):
-    """Update segmentation (user edits section boundaries/types)."""
+async def update_segmentation(
+    doc_id: str,
+    body: dict,
+    request: Request,
+):
+    """Update segmentation (user edits section boundaries/types).
+
+    Spec 011 / FR-012: persist per-field operator edits to a
+    sidecar ``segmentation.overrides.json`` so they survive any
+    subsequent re-segmentation. The sidecar is append-only; on
+    apply, the last record per ``(section_id, field)`` wins.
+
+    Body is the full ``DocumentSegmentation`` JSON; we diff it
+    against the current ``segmentation.json`` to derive the
+    per-field overrides.
+    """
+
+    from app.compliance.models import DocumentSegmentation
+    from app.compliance.segmentation_overrides import (
+        diff_for_overrides,
+        save_override,
+    )
+
     d = _doc_dir(doc_id)
     seg_path = d / "segmentation.json"
+
+    incoming: DocumentSegmentation | None
+    try:
+        incoming = DocumentSegmentation.model_validate(body)
+    except Exception:  # pragma: no cover — defensive; PUT is operator-driven
+        incoming = None
+
+    overrides_recorded = 0
+    if incoming is not None and seg_path.exists():
+        try:
+            current = DocumentSegmentation.model_validate(
+                json.loads(seg_path.read_text(encoding="utf-8")),
+            )
+        except Exception:
+            current = None
+        if current is not None:
+            actor = request.headers.get("X-Actor-Id") or "unknown"
+            overrides = diff_for_overrides(current, incoming, actor=actor)
+            for ov in overrides:
+                save_override(d, ov)
+                overrides_recorded += 1
+
     seg_path.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
-    return {"status": "updated"}
+    return {"status": "updated", "overrides_recorded": overrides_recorded}
 
 
 @router.post("/{doc_id}/segment")
@@ -1217,6 +1260,7 @@ async def _run_segmentation(doc_id: str, doc_dir: Path) -> None:
             data.get("key_value_pairs", []),
             data.get("filename", ""),
             data.get("total_pages", len(extractions)),
+            doc_dir=doc_dir,
         )
         store_segmentation(doc_dir, seg)
 

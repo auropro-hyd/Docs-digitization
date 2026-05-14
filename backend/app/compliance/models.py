@@ -210,6 +210,13 @@ class DocumentSegmentation(BaseModel):
     sections: list[DocumentSection] = Field(default_factory=list)
     document_type: str = ""
     confidence: float = 0.0
+    # Spec 011 / FR-014: surfaces post-process validator output to the
+    # HITL segmentation editor without requiring a second endpoint
+    # call. Empty when the segmentation is clean. Each entry has the
+    # shape ``{kind, message, section_ids, page_range}`` mirroring
+    # ``SegmentationIssue`` (one per detected anomaly: overlap, gap,
+    # type drift, missing required section, etc.).
+    validation_issues: list[dict] = Field(default_factory=list)
 
 
 class SectionResolution(BaseModel):
