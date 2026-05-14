@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 
-from app.compliance.evaluator import assemble_agent_report, run_agent_evaluation
+from app.compliance.evaluator import assemble_agent_report, run_agent_evaluation, synthesize_rule_evidence
 from app.compliance.models import AgentReport
 from app.compliance.rules.registry import RuleRegistry
 from app.config.settings import ComplianceConfig
@@ -64,4 +64,11 @@ class SOPAgent:
             doc_id=doc_id,
         )
 
+        if self._config.evidence_synthesis_enabled:
+            results = await synthesize_rule_evidence(
+                results,
+                self._llm,
+                threshold=self._config.evidence_synthesis_threshold,
+                batch_size=self._config.evidence_synthesis_batch_size,
+            )
         return assemble_agent_report(AGENT_NAME, all_rules, results, pages)

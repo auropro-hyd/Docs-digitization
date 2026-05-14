@@ -27,7 +27,7 @@ from app.compliance.cross_page.evaluator import (
 )
 from app.compliance.cross_page.interface import resolve_requirement
 from app.compliance.cross_page.resolver import SectionResolver
-from app.compliance.evaluator import assemble_agent_report
+from app.compliance.evaluator import assemble_agent_report, synthesize_rule_evidence
 from app.compliance.models import (
     AgentReport,
     DocumentSegmentation,
@@ -165,6 +165,13 @@ class ReconciliationAgent:
 
         # Step 5: Assemble report
         pages = sorted({ext.get("page_num", 0) for ext in extractions})
+        if self._config.evidence_synthesis_enabled:
+            batch_results = await synthesize_rule_evidence(
+                batch_results,
+                self._llm,
+                threshold=self._config.evidence_synthesis_threshold,
+                batch_size=self._config.evidence_synthesis_batch_size,
+            )
         report = assemble_agent_report(AGENT_NAME, all_rules, batch_results, pages)
 
         # Step 6: Post-process findings with section_refs

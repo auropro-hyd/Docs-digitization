@@ -12,6 +12,7 @@ from app.compliance.evaluator import (
     assemble_agent_report,
     run_agent_evaluation,
     run_document_scope_evaluation,
+    synthesize_rule_evidence,
 )
 from app.compliance.models import AgentReport
 from app.compliance.rules.registry import RuleRegistry
@@ -79,5 +80,12 @@ class ALCOAAgent:
             AGENT_NAME, doc_batches, extractions, self._llm,
         ) if doc_batches else []
 
+        if self._config.evidence_synthesis_enabled:
+            page_results = await synthesize_rule_evidence(
+                page_results,
+                self._llm,
+                threshold=self._config.evidence_synthesis_threshold,
+                batch_size=self._config.evidence_synthesis_batch_size,
+            )
         all_results = page_results + doc_results
         return assemble_agent_report(AGENT_NAME, all_rules, all_results, pages)
