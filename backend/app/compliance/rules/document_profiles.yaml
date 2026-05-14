@@ -198,6 +198,18 @@ document_profiles:
       required: false
       aliases:
       - coa
+    - section_type: finished_product_weighing_details
+      display_name: Finished Product Weighing Details
+      required: false
+      aliases:
+      - finished product weighing log
+      - finished product weight details
+    - section_type: transfer_note
+      display_name: Transfer Note
+      required: false
+      aliases:
+      - transfer note for finished product
+      - finished/intermediate product transfer note
 
   operation_checklist:
     aliases:
