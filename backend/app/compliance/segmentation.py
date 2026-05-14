@@ -354,6 +354,221 @@ def fill_gaps_with_unknown(
     return seg.model_copy(update={"sections": filled})
 
 
+def clamp_page_ranges(
+    seg: DocumentSegmentation,
+    total_pages: int,
+) -> DocumentSegmentation:
+    """Clip out-of-range page numbers so every section fits the doc.
+
+    The segmentation LLM sometimes hallucinates a page range outside
+    ``[1, total_pages]`` — most commonly a tail section that should
+    have been at the END of the packet but ends up with
+    ``start_page=1, end_page=2`` because the LLM lost track of the
+    page counter. Such a section overlaps the real cover page and
+    confuses every downstream consumer.
+
+    Two deterministic clips:
+
+    * ``end_page > total_pages``: clip ``end_page`` to ``total_pages``.
+    * ``start_page > total_pages`` or ``start_page > end_page``
+      after clipping: drop the section entirely (we have no evidence
+      where it actually belongs; better to surface a gap that
+      ``fill_gaps_with_unknown`` will catch than to invent a position).
+    * ``start_page < 1``: clip to ``1``.
+
+    Each clip / drop emits a telemetry event so HITL reviewers see
+    that the LLM produced an invalid range. Idempotent."""
+
+    if total_pages <= 0:
+        return seg
+
+    kept: list[DocumentSection] = []
+    for sec in seg.sections:
+        start = sec.start_page
+        end = sec.end_page
+
+        if start < 1:
+            start = 1
+        if end > total_pages:
+            _emit_seg_event(
+                "segmentation.range_clipped",
+                section_id=sec.section_id,
+                section_type=sec.section_type,
+                from_range=[sec.start_page, sec.end_page],
+                to_range=[start, total_pages],
+                reason="end_page_beyond_total_pages",
+            )
+            end = total_pages
+        if start > total_pages or start > end:
+            _emit_seg_event(
+                "segmentation.range_dropped",
+                section_id=sec.section_id,
+                section_type=sec.section_type,
+                from_range=[sec.start_page, sec.end_page],
+                reason="start_page_beyond_total_pages",
+            )
+            continue
+        if (start, end) != (sec.start_page, sec.end_page):
+            kept.append(sec.model_copy(update={"start_page": start, "end_page": end}))
+        else:
+            kept.append(sec)
+
+    return seg.model_copy(update={"sections": kept})
+
+
+def resolve_overlaps(seg: DocumentSegmentation) -> DocumentSegmentation:
+    """Make overlapping section ranges disjoint deterministically.
+
+    Walks sections in ``(start_page, end_page)`` order and, when
+    section ``B`` overlaps section ``A`` (``B.start_page <=
+    A.end_page``), clamps ``B.start_page = A.end_page + 1``. If that
+    makes ``B`` empty (``start_page > end_page``), drop ``B`` —
+    the LLM duplicated a section it had already covered. Each clamp
+    / drop fires a telemetry event so HITL reviewers see the
+    overlap.
+
+    The Spec 008 export pipeline downstream of this is sensitive to
+    overlaps (page counts get double-billed, and the on-screen
+    rule table can render the same content twice); making the
+    output strictly disjoint is the cheapest way to prevent that
+    misrender."""
+
+    sorted_secs = sorted(seg.sections, key=lambda s: (s.start_page, s.end_page))
+    kept: list[DocumentSection] = []
+    for sec in sorted_secs:
+        if not kept:
+            kept.append(sec)
+            continue
+        prev = kept[-1]
+        if sec.start_page > prev.end_page:
+            kept.append(sec)
+            continue
+
+        # Overlap: clamp B's start to A.end_page + 1.
+        new_start = prev.end_page + 1
+        if new_start > sec.end_page:
+            _emit_seg_event(
+                "segmentation.overlap_dropped",
+                section_id=sec.section_id,
+                section_type=sec.section_type,
+                overlaps_with=prev.section_id,
+                from_range=[sec.start_page, sec.end_page],
+                covered_by=[prev.start_page, prev.end_page],
+            )
+            continue
+        _emit_seg_event(
+            "segmentation.overlap_clamped",
+            section_id=sec.section_id,
+            section_type=sec.section_type,
+            overlaps_with=prev.section_id,
+            from_range=[sec.start_page, sec.end_page],
+            to_range=[new_start, sec.end_page],
+        )
+        kept.append(sec.model_copy(update={"start_page": new_start}))
+
+    return seg.model_copy(update={"sections": kept})
+
+
+def _emit_seg_event(event: str, **fields) -> None:
+    """Best-effort telemetry; never break the segmentation path."""
+    try:
+        from app.observability.run_telemetry import record_event
+        record_event(event, level="warning", **fields)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def normalize_section_types_to_canonical(
+    seg: DocumentSegmentation,
+) -> DocumentSegmentation:
+    """Map LLM-emitted section_type drift onto canonical types.
+
+    Four cases per section:
+
+    1. **Alias hit** — ``normalize_section_type`` folds the value
+       into a known section_type (e.g. ``data_monitoring_parameters``
+       → ``instrument_data_log``). Replace and emit a
+       ``section_type_normalised`` event.
+    2. **Already canonical** — value is in any profile's
+       ``expected_sections`` or top-level ``section_aliases``. Keep.
+    3. **Whole-doc-as-section pattern** — value isn't a section_type
+       but matches a known ``document_type`` slug (e.g.
+       ``ipc_report``, ``raw_material_request``). This is the LLM
+       treating the whole doc as one section because it couldn't
+       discriminate sub-types. Keep the value so cross-document
+       filters still resolve, but emit a
+       ``section_type_matches_doc_type`` event so HITL reviewers can
+       drill in. Akhilesh's 2026-05-13 voice notes specifically
+       flagged this for raw_material_request.
+    4. **Drift** — anything else, including the special-case
+       strings ``unsectioned`` and empty. Collapse to ``"unknown"``
+       and emit ``section_type_collapsed_to_unknown``. Downstream
+       rules degrade to "no rules apply" rather than fabricating
+       verdicts.
+
+    Idempotent."""
+
+    from app.compliance.rules.profiles import load_profiles
+    profiles = load_profiles()
+    known_sections = profiles.known_section_types()
+    known_docs = profiles.known_document_types()
+
+    updated: list[DocumentSection] = []
+    _COLLAPSE_TO_UNKNOWN = {"unsectioned", ""}
+    for section in seg.sections:
+        raw = section.section_type or ""
+        canonical = normalize_section_type(raw) if raw else ""
+
+        # 1 + 2: alias hit or already canonical.
+        if canonical and canonical in known_sections:
+            if canonical != raw:
+                _emit_seg_event(
+                    "segmentation.section_type_normalised",
+                    section_id=section.section_id,
+                    from_type=raw,
+                    to_type=canonical,
+                )
+                updated.append(section.model_copy(update={"section_type": canonical}))
+            else:
+                updated.append(section)
+            continue
+
+        # 3: section_type names a whole-document-as-section.
+        if canonical and canonical in known_docs:
+            _emit_seg_event(
+                "segmentation.section_type_matches_doc_type",
+                section_id=section.section_id,
+                section_type=canonical,
+                document_type=section.document_type,
+            )
+            # Preserve the original casing if the LLM didn't slug it
+            # (normalize_section_type already lower-cases/snakes).
+            updated.append(section.model_copy(update={"section_type": canonical}))
+            continue
+
+        # Already-explicit ``unknown`` from fill_gaps_with_unknown
+        # passes through untouched.
+        if raw == "unknown":
+            updated.append(section)
+            continue
+
+        # 4: drift.
+        reason = (
+            "invalid_value"
+            if raw.lower() in _COLLAPSE_TO_UNKNOWN or canonical.lower() in _COLLAPSE_TO_UNKNOWN
+            else "not_in_profiles"
+        )
+        _emit_seg_event(
+            "segmentation.section_type_collapsed_to_unknown",
+            section_id=section.section_id,
+            from_type=raw,
+            reason=reason,
+        )
+        updated.append(section.model_copy(update={"section_type": "unknown"}))
+
+    return seg.model_copy(update={"sections": updated})
+
+
 def stamp_document_types(seg: DocumentSegmentation) -> DocumentSegmentation:
     """Fill empty ``DocumentSection.document_type`` fields deterministically.
 
@@ -755,7 +970,23 @@ def _build_segmentation_prompt(
         f"     vacuum_tray_dryer_checklist, sifter_checklist,\n"
         f"     pin_mill_checklist, etc.). document_type stays\n"
         f"     ``operation_checklist`` across all of them.\n"
-        f"6. SCADA REPORT CLUSTERS:\n"
+        f"6. RAW MATERIAL DOCUMENT SUB-TYPES (load-bearing — do not\n"
+        f"   echo the document_type as the section_type):\n"
+        f"   A raw_material_request packet usually contains several\n"
+        f"   distinct one- or few-page forms. Classify each by its\n"
+        f"   form header, not by the parent document_type:\n"
+        f"   * 'Raw Material Request & Issue' / 'Raw Material Request\n"
+        f"     Cum Issue Record' → ``material_request``\n"
+        f"   * 'Material Issue and Allotment' / 'Allotted' /\n"
+        f"     'Store Issue' → ``material_issue``\n"
+        f"   * 'Packing Material Request & Allocated' →\n"
+        f"     ``packing_material_request``\n"
+        f"   * 'Distilled / Recovered / Spent Solvent Transfer Note'\n"
+        f"     → ``solvent_transfer_note``\n"
+        f"   document_type stays ``raw_material_request`` across all\n"
+        f"   of them. NEVER emit section_type=``raw_material_request`` —\n"
+        f"   that's the doc_type. Pick the specific sub-type instead.\n"
+        f"7. SCADA REPORT CLUSTERS:\n"
         f"   VDE0** instruments emit TWO companion artifacts per\n"
         f"   batch: (a) a multi-page DATA MONITORING REPORT (temp /\n"
         f"   pressure / vacuum tables, continuous timestamps) and\n"
@@ -785,7 +1016,16 @@ def _build_segmentation_prompt(
         f"  section's end_page + 1. If you find a gap, either\n"
         f"  extend an adjacent section over the gap (when the\n"
         f"  pages clearly continue that section's content) or\n"
-        f"  emit a section_type='unknown' for the gap.\n\n"
+        f"  emit a section_type='unknown' for the gap.\n"
+        f"* PAGE-RANGE SANITY: start_page and end_page MUST be\n"
+        f"  between 1 and the last page (inclusive). NEVER restart\n"
+        f"  numbering from 1 partway through the output — a section\n"
+        f"  whose content sits at the end of the packet must use\n"
+        f"  the LARGE absolute page numbers, not page 1-2 just because\n"
+        f"  the section happens to be called a 'cover' or 'review'.\n"
+        f"  Specifically: the 'BPCR Review Check List' always sits at\n"
+        f"  the END of a batch_closure / qc_analytical_package; if you\n"
+        f"  emit it with start_page=1 you have misnumbered.\n\n"
         f"FILENAME: {filename}\n\n"
         f"KEY-VALUE PAIRS:\n{kv_text}\n\n"
         f"PAGE SUMMARIES:\n" + "\n\n".join(page_summaries) + "\n\n"
@@ -826,8 +1066,20 @@ class DocumentSegmenter:
             # sections BEFORE stamping doc_types so the rest of the
             # pipeline sees full page coverage. Each filled gap fires
             # a ``segmentation.gap_filled_with_unknown`` event.
-            filled = fill_gaps_with_unknown(result, total_pages=total_pages)
-            stamped = stamp_document_types(filled)
+            # Post-process order matters: geometric cleanup
+            # (clamp out-of-range pages, resolve overlaps) FIRST so
+            # the gap-fill step sees a coherent page topology and
+            # doesn't have to work around hallucinated overlap
+            # ranges. Then fill gaps with unknown sections. Then
+            # normalise section_types to the canonical vocabulary
+            # so any drift the LLM emitted collapses to known
+            # values or ``unknown``. Then stamp doc_types using the
+            # now-canonical section_types.
+            clamped = clamp_page_ranges(result, total_pages=total_pages)
+            disjoint = resolve_overlaps(clamped)
+            filled = fill_gaps_with_unknown(disjoint, total_pages=total_pages)
+            canonical = normalize_section_types_to_canonical(filled)
+            stamped = stamp_document_types(canonical)
             # Coverage-summary telemetry — single event per run carrying
             # the pages-covered / total-pages ratio + section count so
             # operators see whether the segmentation actually covered

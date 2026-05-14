@@ -103,6 +103,15 @@ document_profiles:
       - requisition
       - indent
       - material indent
+      # NOTE: ``raw material request`` (the bare form) is deliberately
+      # NOT aliased here — its slug collides with the parent
+      # document_type ``raw_material_request`` and would force every
+      # whole-doc-as-section emission onto ``material_request``,
+      # losing discrimination from ``material_issue`` /
+      # ``packing_material_request`` / ``solvent_transfer_note``.
+      # The longer header variants below stay specific enough.
+      - raw material request and issue
+      - raw material request cum issue record
     - section_type: material_issue
       display_name: Material Issue and Allotment
       required: false
@@ -111,6 +120,21 @@ document_profiles:
       - allotted
       - store issue
       - material allotment
+    - section_type: packing_material_request
+      display_name: Packing Material Request and Allocation
+      required: false
+      aliases:
+      - packing material request and allocated
+      - packing material request
+      - packing material allocation
+    - section_type: solvent_transfer_note
+      display_name: Solvent / Recovered Material Transfer Note
+      required: false
+      aliases:
+      - distilled recovered spent solvent transfer note
+      - solvent transfer note
+      - recovered solvent transfer
+      - spent solvent transfer
 
   scada_report:
     aliases:
@@ -342,11 +366,27 @@ document_profiles:
 section_aliases:
   # ── Existing canonical aliases ─────────────────────────────────────────────
   batch_production_and_control_record: batch_record
+  # LLM sometimes emits these literal strings when it can't classify
+  # a span; collapse them onto the canonical ``unknown`` so the
+  # vocabulary stays closed (rather than leaking ``unsectioned`` /
+  # ``misc`` through the renderer + cross-section filter).
+  unsectioned: unknown
+  unclassified: unknown
+  misc: unknown
   # Akhilesh's UIIBEHSII28 segmentation surfaced these aliases on
   # 2026-05-05; they map to the instrument-monitoring profile.
   instrument_alarm_log: instrument_alarm_log
   vde009_alarm_log: instrument_alarm_log
   vde009_data_monitoring_parameters: instrument_data_log
+  # 2026-05-13 voice notes — segmentation emits these non-canonical
+  # names for the SCADA companion-artifact pair. The profile's
+  # expected_sections already alias them under their canonical
+  # types, but covering them here too means the normaliser hits
+  # them on the cheap section_aliases lookup before walking
+  # expected_sections (and matches when called via per-rule
+  # applicability checks that only consult section_aliases).
+  data_monitoring_parameters: instrument_data_log
+  alarm_log: instrument_alarm_log
   manufacturing_operation: manufacturing_operations
   manufacturing_operation_log: manufacturing_operations
   manufacturing_log: manufacturing_operations
