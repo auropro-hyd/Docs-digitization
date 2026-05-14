@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
-import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock
 
-from app.compliance.evaluator import _synthesize_batch
+import pytest
+
+from app.compliance.evaluator import _synthesize_batch, synthesize_rule_evidence
 from app.compliance.models import RuleBatchResult, RuleEvaluation
 
 
@@ -13,6 +15,19 @@ def _make_llm(response: str) -> AsyncMock:
     llm = AsyncMock()
     llm.generate = AsyncMock(return_value=response)
     return llm
+
+
+def _make_results(
+    rule_id: str,
+    page_evidences: list[tuple[int, str, str]],
+) -> list[tuple[str, int, RuleBatchResult]]:
+    """Build a minimal results list with one RuleEvaluation per page."""
+    results = []
+    for page_num, evidence, status in page_evidences:
+        ev = RuleEvaluation(rule_id=rule_id, status=status, evidence=evidence)
+        batch = RuleBatchResult(evaluations=[ev])
+        results.append((f"batch-{page_num}", page_num, batch))
+    return results
 
 
 class TestSynthesizeBatch:
@@ -63,22 +78,6 @@ class TestSynthesizeBatch:
 
         with pytest.raises(Exception):
             await _synthesize_batch(chunk, llm)
-
-
-from app.compliance.evaluator import synthesize_rule_evidence
-
-
-def _make_results(
-    rule_id: str,
-    page_evidences: list[tuple[int, str, str]],
-) -> list[tuple[str, int, RuleBatchResult]]:
-    """Build a minimal results list with one RuleEvaluation per page."""
-    results = []
-    for page_num, evidence, status in page_evidences:
-        ev = RuleEvaluation(rule_id=rule_id, status=status, evidence=evidence)
-        batch = RuleBatchResult(evaluations=[ev])
-        results.append((f"batch-{page_num}", page_num, batch))
-    return results
 
 
 class TestSynthesizeRuleEvidence:
@@ -162,3 +161,20 @@ class TestSynthesizeRuleEvidence:
         await synthesize_rule_evidence(results, llm, threshold=3)
 
         llm.generate.assert_not_called()
+
+
+class TestEvidenceFieldShape:
+    """Schema regression: evidence field must remain a plain string."""
+
+    def test_evidence_is_string_in_fixture(self):
+        fixture = Path("data/documents/b2921434-25f4-4b7c-8509-233a72a3dd0c/compliance_result.json")
+        if not fixture.exists():
+            pytest.skip("Fixture file not present")
+        data = json.loads(fixture.read_text())
+        for finding in data.get("findings", []):
+            assert isinstance(finding.get("evidence", ""), str), (
+                f"evidence field for {finding['rule_id']} is not a string"
+            )
+        for ar in data.get("agent_reports", []):
+            for ev in ar.get("all_evaluations", []):
+                assert isinstance(ev.get("evidence", ""), str)
