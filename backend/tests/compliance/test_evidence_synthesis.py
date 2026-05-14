@@ -63,3 +63,102 @@ class TestSynthesizeBatch:
 
         with pytest.raises(Exception):
             await _synthesize_batch(chunk, llm)
+
+
+from app.compliance.evaluator import synthesize_rule_evidence
+
+
+def _make_results(
+    rule_id: str,
+    page_evidences: list[tuple[int, str, str]],
+) -> list[tuple[str, int, RuleBatchResult]]:
+    """Build a minimal results list with one RuleEvaluation per page."""
+    results = []
+    for page_num, evidence, status in page_evidences:
+        ev = RuleEvaluation(rule_id=rule_id, status=status, evidence=evidence)
+        batch = RuleBatchResult(evaluations=[ev])
+        results.append((f"batch-{page_num}", page_num, batch))
+    return results
+
+
+class TestSynthesizeRuleEvidence:
+    @pytest.mark.asyncio
+    async def test_skips_rules_with_threshold_or_fewer_pages(self):
+        """A rule with exactly 3 pages must NOT be synthesised."""
+        results = _make_results(
+            "CHE-A",
+            [(1, "ev1", "compliant"), (2, "ev2", "compliant"), (3, "ev3", "compliant")],
+        )
+        llm = AsyncMock()
+        llm.generate = AsyncMock()
+
+        await synthesize_rule_evidence(results, llm, threshold=3)
+
+        llm.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_patches_evidence_for_qualifying_rules(self):
+        """A rule with 4 pages must have all its evidence fields overwritten."""
+        page_entries = [
+            (1, "ev1", "compliant"), (2, "ev2", "compliant"),
+            (3, "ev3", "compliant"), (4, "ev4", "compliant"),
+        ]
+        results = _make_results("CHE-B", page_entries)
+        narrative = "Synthesised narrative citing PAGE:1 and PAGE:4."
+        llm = _make_llm(json.dumps({"CHE-B": narrative}))
+
+        await synthesize_rule_evidence(results, llm, threshold=3)
+
+        for _, _, batch in results:
+            for ev in batch.evaluations:
+                if ev.rule_id == "CHE-B":
+                    assert ev.evidence == narrative
+
+    @pytest.mark.asyncio
+    async def test_skips_not_applicable_pages_for_threshold(self):
+        """Pages with status=not_applicable must not count toward the threshold."""
+        page_entries = [
+            (1, "ev1", "compliant"), (2, "ev2", "compliant"),
+            (3, "", "not_applicable"), (4, "ev4", "compliant"),
+        ]
+        results = _make_results("CHE-C", page_entries)
+        llm = AsyncMock()
+        llm.generate = AsyncMock()
+
+        # 3 applicable pages (pages 1, 2, 4) — at threshold, so skip
+        await synthesize_rule_evidence(results, llm, threshold=3)
+
+        llm.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_leaves_evidence_intact(self):
+        """If the LLM raises, original evidence must be preserved."""
+        page_entries = [
+            (1, "original1", "compliant"), (2, "original2", "compliant"),
+            (3, "original3", "compliant"), (4, "original4", "compliant"),
+        ]
+        results = _make_results("CHE-D", page_entries)
+        llm = AsyncMock()
+        llm.generate = AsyncMock(side_effect=RuntimeError("LLM down"))
+
+        await synthesize_rule_evidence(results, llm, threshold=3)
+
+        evidences = [
+            ev.evidence
+            for _, _, batch in results
+            for ev in batch.evaluations
+        ]
+        assert all(e.startswith("original") for e in evidences)
+
+    @pytest.mark.asyncio
+    async def test_skips_none_page_num(self):
+        """Document-scope results (page_num=None) must not be counted."""
+        ev = RuleEvaluation(rule_id="CHE-E", status="compliant", evidence="doc-ev")
+        batch = RuleBatchResult(evaluations=[ev])
+        results = [("doc-batch", None, batch)]
+        llm = AsyncMock()
+        llm.generate = AsyncMock()
+
+        await synthesize_rule_evidence(results, llm, threshold=3)
+
+        llm.generate.assert_not_called()
