@@ -51,6 +51,18 @@
     </tbody>
   </table>
 
+  {# ── Priority Actions ──────────────────────────────────────── #}
+  {% if priority_actions %}
+  <section class="priority-actions">
+    <h2 class="priority-actions__heading">Priority Actions</h2>
+    <ul class="priority-actions__list">
+      {% for action in priority_actions %}
+      <li>{{ action }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
   {% if rows %}
   <table class="rule-table">
     <thead>
@@ -82,6 +94,33 @@
   {% else %}
   <div class="empty-state">
     No applicable rules evaluated for this document.
+  </div>
+  {% endif %}
+
+
+  {# ── Key Risks & Strengths ──────────────────────────────────── #}
+  {% if key_risks or strengths %}
+  <div class="summary-panels">
+    {% if key_risks %}
+    <section class="summary-panel summary-panel--risk">
+      <h2 class="summary-panel__heading">Key Risks</h2>
+      <ul class="summary-panel__list">
+        {% for item in key_risks %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if strengths %}
+    <section class="summary-panel summary-panel--strength">
+      <h2 class="summary-panel__heading">Strengths</h2>
+      <ul class="summary-panel__list">
+        {% for item in strengths %}
+        <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
   </div>
   {% endif %}
 

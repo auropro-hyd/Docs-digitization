@@ -103,4 +103,7 @@ def render_html(doc: ReportDocument) -> str:
         stylesheet=_load_stylesheet(),
         logo_data_uri=logo_uri,
         multi_agent=multi_agent,
+        priority_actions=doc.priority_actions,
+        key_risks=doc.key_risks,
+        strengths=doc.strengths,
     )

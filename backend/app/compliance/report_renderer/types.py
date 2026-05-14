@@ -75,6 +75,9 @@ class ReportDocument:
     rows: list[ReportRow]
     footer: ReportFooter
     stats: ReportStats
+    priority_actions: list[str] = field(default_factory=list)
+    key_risks: list[str] = field(default_factory=list)
+    strengths: list[str] = field(default_factory=list)
 
 
 def report_document_to_dict(doc: "ReportDocument") -> dict:
