@@ -362,6 +362,54 @@ def fill_gaps_with_unknown(
     return seg.model_copy(update={"sections": filled})
 
 
+def deduplicate_section_ids(seg: DocumentSegmentation) -> DocumentSegmentation:
+    """Suffix duplicate ``section_id`` values with ``_2`` / ``_3`` ...
+
+    Two sources can emit the same ``section_id`` for distinct
+    sections in one segmentation: the LLM (e.g. two raw-material
+    forms named "raw_material_request_allocated") and
+    ``enrich_with_bpcr_sub_sections`` (which historically used the
+    parent's id for every flatten span). Both collide with the
+    HITL overrides sidecar (US4 keys overrides on
+    ``(section_id, field)`` — a duplicate means an override on
+    one section silently applies to all).
+
+    Walks sections in their existing order; the FIRST occurrence
+    of each id keeps its original value, subsequent occurrences
+    get a numeric suffix (``id_2``, ``id_3``, …). Order matters:
+    operators editing via the segmentation editor see the FIRST
+    occurrence retain its id, which matches the stable-ordering
+    contract the editor depends on.
+
+    Idempotent: running twice produces the same output because
+    the second run sees no duplicates.
+    """
+
+    seen_ids: set[str] = set()
+    updated: list[DocumentSection] = []
+    for sec in seg.sections:
+        original = sec.section_id
+        if original not in seen_ids:
+            seen_ids.add(original)
+            updated.append(sec)
+            continue
+        # Find the next available suffix.
+        suffix_idx = 2
+        candidate = f"{original}_{suffix_idx}"
+        while candidate in seen_ids:
+            suffix_idx += 1
+            candidate = f"{original}_{suffix_idx}"
+        seen_ids.add(candidate)
+        _emit_seg_event(
+            "segmentation.section_id_disambiguated",
+            from_id=original,
+            to_id=candidate,
+            page_range=[sec.start_page, sec.end_page],
+        )
+        updated.append(sec.model_copy(update={"section_id": candidate}))
+    return seg.model_copy(update={"sections": updated})
+
+
 def clamp_page_ranges(
     seg: DocumentSegmentation,
     total_pages: int,
@@ -1126,9 +1174,15 @@ def enrich_with_bpcr_sub_sections(
         # the previous nested-per-page form was an artifact of
         # mirroring the BMR pipeline's display rows.
         #
-        # The shared ``section_id`` is preserved across all spans
-        # of the same BPCR so the frontend can still group them
-        # visually if it wants.
+        # Each enriched span gets a UNIQUE ``section_id`` composed
+        # as ``{parent_id}__{section_type}`` (Spec 011 follow-up,
+        # 2026-05-14). The original design shared the parent id
+        # across all spans for visual grouping, but collisions
+        # broke the HITL overrides sidecar (US4 keys overrides on
+        # ``(section_id, field)``; multiple spans with the same id
+        # meant an override on one applied to all) and confused
+        # the frontend's scroll-to-section anchor. Frontend
+        # grouping can still derive the parent from the prefix.
         #
         # Flatten input is the UNION of two sources:
         #   * heuristic detector spans (preferred — proper start/end
@@ -1189,8 +1243,18 @@ def enrich_with_bpcr_sub_sections(
             continue
 
         for stype, dname, sp, ep in flatten_plan:
+            # Unique-id composition: ``{parent}__{section_type}``.
+            # Falls back to ``{parent}__{section_type}__{idx}`` when
+            # two flatten entries share a section_type (rare but
+            # possible if normalisation collapsed them post-hoc).
+            candidate_id = f"{section.section_id}__{stype}"
+            suffix_idx = 1
+            existing_ids = {s.section_id for s in enriched_sections}
+            while candidate_id in existing_ids:
+                suffix_idx += 1
+                candidate_id = f"{section.section_id}__{stype}__{suffix_idx}"
             enriched_sections.append(DocumentSection(
-                section_id=section.section_id,
+                section_id=candidate_id,
                 name=dname,
                 section_type=stype,
                 document_type="batch_record",
@@ -1529,7 +1593,15 @@ class DocumentSegmenter:
             headers = parse_page_headers(extractions)
             boundary_units = group_boundary_units(headers)
 
-            clamped = clamp_page_ranges(result, total_pages=total_pages)
+            # Spec 011 / 2026-05-14: deduplicate section_ids
+            # FIRST so the rest of the pipeline (overrides apply,
+            # validators, frontend scroll targets) sees unique
+            # IDs. The LLM regularly emits duplicate IDs for
+            # distinct sections (raw material packets are the
+            # repeat offenders) and the US4 overrides sidecar
+            # depends on stable, unique IDs.
+            dedup = deduplicate_section_ids(result)
+            clamped = clamp_page_ranges(dedup, total_pages=total_pages)
             disjoint = resolve_overlaps(clamped)
 
             # Spec 011 / FR-006-008: truncation retry. Check
@@ -1576,6 +1648,41 @@ class DocumentSegmenter:
             boundary_reconciled = merge_split_by_boundary(filled, boundary_units)
             canonical = normalize_section_types_to_canonical(boundary_reconciled)
             stamped = stamp_document_types(canonical)
+
+            # Spec 007 / 2026-05-14 architectural fix: enrichment
+            # used to run in compliance_graph.py AFTER segment()
+            # returned, which meant the geometric invariants
+            # (no overlaps, full coverage) Spec 011's post-processes
+            # established got CLOBBERED by enrichment's output.
+            # Persisted segmentations on Akhilesh's 2026-05-14 doc
+            # showed three overlapping BPCR sections (1-3 / 1-10 /
+            # 1-19) and a 13-page uncovered gap because of this.
+            #
+            # Folding enrichment INSIDE segment() means the entire
+            # contract is enforced in one place; the post-enrichment
+            # re-sanitization keeps the output geometrically clean
+            # even when the BPCR detector / LLM produces overlapping
+            # flatten spans.
+            #
+            # Idempotent: enrichment short-circuits when no BPCR
+            # sections exist; segments without batch_record content
+            # cost essentially nothing.
+            enriched = enrich_with_bpcr_sub_sections(stamped, extractions)
+            if enriched is not stamped:  # something was actually enriched
+                # Geometric sanitization: clamp out-of-range,
+                # resolve overlaps, fill gaps. Same three steps the
+                # pre-enrichment pipeline already ran — applying
+                # them again to the enriched output catches every
+                # enrichment artefact deterministically.
+                enriched = clamp_page_ranges(enriched, total_pages=total_pages)
+                enriched = resolve_overlaps(enriched)
+                enriched = fill_gaps_with_unknown(enriched, total_pages=total_pages)
+                # Re-dedupe in case enrichment's parent-id-derived
+                # composition collided with an existing id (very
+                # rare but possible when re-segmenting a previously
+                # enriched doc).
+                enriched = deduplicate_section_ids(enriched)
+            stamped = enriched
 
             # Spec 011 / US4: apply HITL overrides LAST so the
             # operator's word is final — no post-process can
