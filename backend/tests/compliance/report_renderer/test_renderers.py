@@ -178,7 +178,12 @@ def test_html_carries_product_name_and_disclaimer(fixture_report) -> None:
 
     assert "BMR Compliance Intelligence Suite" in html
     assert "Manoj Sankad" in html
-    assert "Pharmix AI" in html  # engine brand in disclaimer
+    # Engine brand in the disclaimer was unified onto
+    # 'BMR Compliance Intelligence' in commit 03fcf71 (previously
+    # 'Pharmix AI'). The masthead 'BMR Compliance Intelligence Suite'
+    # check above is the longer form; this assertion guards the
+    # disclaimer footer specifically.
+    assert "BMR Compliance Intelligence" in html
     assert "Document is Draft" in html
     assert "TITLE OF DOCUMENT" in html
 

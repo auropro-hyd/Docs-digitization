@@ -325,10 +325,11 @@ def test_footer_disclaimer_carries_operator_and_timestamp() -> None:
 
     assert "Manoj Sankad" in doc.footer.disclaimer
     assert "05/14/2026" in doc.footer.disclaimer
-    assert "Pharmix AI" in doc.footer.disclaimer, (
-        "engine brand 'Pharmix AI' stays in the disclaimer per the "
-        "two-brand-layer model (masthead = product name; "
-        "footer = engine)"
+    assert "BMR Compliance Intelligence" in doc.footer.disclaimer, (
+        "engine brand 'BMR Compliance Intelligence' appears in the "
+        "disclaimer (renamed from 'Pharmix AI' in commit 03fcf71 — "
+        "Akhilesh's 2026-05-14 unification of the masthead and "
+        "engine onto a single brand name)"
     )
 
 
