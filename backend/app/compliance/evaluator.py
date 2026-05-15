@@ -156,17 +156,18 @@ def _build_batch_prompt(
         f"Evaluate ONLY the following {len(rules)} rules against this page.\n\n"
         f"You are given BOTH the OCR markdown AND structured metadata extracted by "
         f"document intelligence. USE BOTH to make your assessment:\n"
-        f"- The STRUCTURED METADATA section contains machine-detected signatures, "
-        f"handwriting indicators, form field key-value pairs, and checkbox states.\n"
-        f"- If metadata says 'Signatures detected: 0', do NOT flag missing signatures "
-        f"unless the page content clearly requires them (e.g., a sign-off section).\n"
-        f"- If metadata says 'Handwritten regions: 0', the page is likely printed/typed.\n"
+        # f"- The STRUCTURED METADATA section contains machine-detected signatures, "
+        # f"handwriting indicators, form field key-value pairs, and checkbox states.\n"
+        # f"- If metadata says 'Signatures detected: 0', do NOT flag missing signatures "
+        # f"unless the page content clearly requires them (e.g., a sign-off section).\n"
+        # f"- If metadata says 'Handwritten regions: 0', the page is likely printed/typed.\n"
         f"- Use key-value pairs to verify form fields (e.g., 'Done By', 'Date', 'Checked By').\n"
         f"- Empty key-value fields (value is [empty/blank]) indicate missing entries.\n"
         f"- Fields containing dashes (-), (----), or (—) are NOT empty — they mean "
         f"'not applicable' or 'not performed' and are valid annotations.\n"
-        f"- Garbled text in 'Done by'/'Checked by' columns (e.g., 'Noga', 'staten', "
-        f"'N088') is OCR's reading of handwritten signatures — treat as VALID.\n\n"
+        # f"- Garbled text in 'Done by'/'Checked by' columns (e.g., 'Noga', 'staten', "
+        # f"'N088') is OCR's reading of handwritten signatures — treat as VALID.\n\n"
+        f"\n"
         f"IMPORTANT RULE GUIDANCE:\n"
         f"- Each rule below may include PASS CRITERIA and SKIP IF conditions.\n"
         f"- PASS CRITERIA tells you exactly what constitutes compliance — follow it strictly.\n"
@@ -1213,13 +1214,13 @@ async def run_document_scope_evaluation(
             f"--- Last page (page {last.get('page_num', total_pages)}) ---\n{last.get('markdown', '')[:2000]}\n"
         )
 
-    hw_total = sum(e.get("handwritten_count", 0) for e in extractions)
-    sig_total = sum(len(e.get("signatures", [])) for e in extractions)
+    # hw_total = sum(e.get("handwritten_count", 0) for e in extractions)
+    # sig_total = sum(len(e.get("signatures", [])) for e in extractions)
     summary_parts.append(
         f"--- Document-level stats ---\n"
         f"Total pages: {total_pages}\n"
-        f"Total handwritten words across document: {hw_total}\n"
-        f"Total signature fields across document: {sig_total}\n"
+        # f"Total handwritten words across document: {hw_total}\n"
+        # f"Total signature fields across document: {sig_total}\n"
     )
 
     summary_content = "\n".join(summary_parts)
