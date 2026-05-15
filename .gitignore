@@ -113,3 +113,4 @@ backend/tests/fixtures/custom_model_dataset/reports/
 CLIENT-REPLY-*.md
 CLIENT-NOTES-*.md
 2538105061.pdf
+.worktrees/
