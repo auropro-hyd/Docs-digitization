@@ -1,0 +1,100 @@
+name: Sync wiki
+
+# Mirrors the `wiki/` folder in this repo into the separate GitHub Wiki
+# repository (`<repo>.wiki.git`) so the Wiki tab on github.com renders
+# the same content. Single direction (main → wiki); any manual edits
+# made directly through the Wiki UI will be overwritten on the next
+# run.
+#
+# One-time bootstrap: the wiki repo only exists after someone creates
+# the first page via the GitHub Wiki UI. Visit
+# `https://github.com/<owner>/<repo>/wiki`, click "Create the first
+# page", save any placeholder content — this initializes
+# `<repo>.wiki.git`, after which this workflow can push to it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'wiki/**'
+      - '.github/workflows/sync-wiki.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Don't race ourselves — wiki pushes are serial.
+concurrency:
+  group: sync-wiki
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Push wiki/ → GitHub Wiki
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Sync to wiki
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_FULL: ${{ github.repository }}
+          REPO_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          WIKI_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_FULL}.wiki.git"
+
+          if ! git clone --depth 1 "${WIKI_URL}" wiki-repo 2>clone.err; then
+            cat clone.err
+            echo "::error::Failed to clone ${REPO_FULL}.wiki.git. The Wiki tab must be initialised once via the GitHub UI (create any first page) before this workflow can sync. See the sync-wiki.yml header for details."
+            exit 1
+          fi
+
+          # Mirror wiki/ into wiki-repo/, deleting anything no longer
+          # present. --exclude .git so we keep the wiki's git metadata.
+          rsync -av --delete --exclude='.git' wiki/ wiki-repo/
+
+          # GitHub Wiki home is conventionally `Home.md` (capital H),
+          # not README.md. Rename so the wiki landing page renders our
+          # index.
+          if [[ -f wiki-repo/README.md ]]; then
+            mv wiki-repo/README.md wiki-repo/Home.md
+          fi
+
+          # Generate a _Footer.md so every wiki page links back to the
+          # canonical source in the main repo (the wiki/ folder is
+          # PR-reviewed; the wiki UI is mirror-only).
+          cat > wiki-repo/_Footer.md <<EOF
+          ---
+          *Auto-synced from [\`wiki/\`](https://github.com/${REPO_FULL}/tree/main/wiki) on the main repo. Edit there, not here — direct wiki edits will be overwritten.*
+          EOF
+
+          # Rewrite relative links to code or repo-root files into
+          # absolute GitHub URLs so they still resolve from the wiki
+          # context (which doesn't have access to the main repo tree).
+          #
+          # Targets the `../../<top-level-dir-or-file>` pattern that
+          # our wiki pages use to point at backend/, frontend/, specs/,
+          # .github/, infra/, context/, Makefile, README.md, LICENSE,
+          # SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md.
+          find wiki-repo -name '*.md' -print0 | xargs -0 sed -i -E \
+            "s#\]\(\.\./\.\./(backend|frontend|specs|\.github|infra|context|Makefile|README\.md|LICENSE|SECURITY\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md)([^)]*)\)#](https://github.com/${REPO_FULL}/blob/main/\1\2)#g"
+
+          # Commit + push if anything changed.
+          cd wiki-repo
+          git add -A
+          if git diff --staged --quiet; then
+            echo "Wiki already up to date — no changes to push."
+          else
+            git commit -m "sync wiki from main@${REPO_SHA:0:8}"
+            git push
+            echo "✓ Wiki updated."
+          fi

@@ -2,6 +2,8 @@
 
 > Back to [Project README](../README.md)
 
+> **Note**: This folder is the canonical source. It is auto-synced to the [GitHub Wiki tab](https://github.com/auropro-hyd/Docs-digitization/wiki) by [`.github/workflows/sync-wiki.yml`](../.github/workflows/sync-wiki.yml) on every push to `main`. Edit pages here (via a PR), not in the Wiki UI — direct wiki edits will be overwritten on the next sync.
+
 ## Contents
 
 ### Architecture
