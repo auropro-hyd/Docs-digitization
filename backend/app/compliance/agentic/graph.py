@@ -83,7 +83,14 @@ class AgenticAuditState(TypedDict):
 class WorkerVerdict(BaseModel):
     status: Literal["compliant", "non_compliant", "uncertain", "not_applicable"]
     confidence: float
-    reasoning: str
+    reasoning: str = Field(
+        description=(
+            "1-3 sentences explaining the verdict. "
+            "MUST be consistent with status: non_compliant reasoning names what is missing "
+            "or wrong (citing PAGE:N); compliant reasoning states what was found satisfying "
+            "the criterion. Never write reasoning that concludes the opposite of your status."
+        )
+    )
     evidence: str = Field(
         description=(
             "Factual prose (2-4 sentences, max 300 chars) citing what was found and where. "
@@ -106,7 +113,14 @@ class WorkerAction(BaseModel):
 class SynthesisOutput(BaseModel):
     status: Literal["compliant", "non_compliant", "uncertain", "not_applicable"]
     confidence: float
-    reasoning: str
+    reasoning: str = Field(
+        description=(
+            "1-3 sentences synthesising the overall package verdict. "
+            "MUST be consistent with status: if non_compliant, name the specific section or gap "
+            "that drives the failure (cite PAGE:N); if compliant, confirm what was verified "
+            "across sections. Never contradict your chosen status in the reasoning text."
+        )
+    )
     evidence: str = Field(
         description=(
             "Factual prose (3-5 sentences, max 600 chars) summarising what was verified across all sections. "
@@ -439,6 +453,10 @@ async def synthesize(state: AgenticAuditState) -> dict:
         "Synthesize into a single package-level verdict. "
         "Reason only from the provided verdicts — do not introduce new analysis. "
         "If any section is non_compliant with high confidence, the package is non_compliant.\n\n"
+        "CRITICAL: Your reasoning and status MUST be consistent. "
+        "If status=non_compliant, reasoning must state what is non_compliant — "
+        "do NOT write a conclusion saying the package is compliant. "
+        "If status=compliant, reasoning must confirm what was verified across sections.\n\n"
         "For the evidence field: write factual prose (max 600 chars) summarising the concrete "
         "findings from the section evidence above — document names, PAGE:N references, specific "
         "values, and any matches or gaps. Do not restate the verdict, confidence, or section labels."
