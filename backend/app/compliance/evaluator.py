@@ -1081,15 +1081,16 @@ async def synthesize_rule_evidence(
 async def _synthesize_batch(
     chunk: dict[str, list[tuple[int, str, str]]],
     llm: LLMProvider,
-) -> dict[str, str]:
-    """Call the LLM once to synthesise cross-page evidence narratives.
+) -> dict[str, dict[str, str]]:
+    """Call the LLM once to synthesise cross-page evidence AND reasoning narratives.
 
     Args:
         chunk: mapping of rule_id → [(page_num, evidence_snippet, status), ...]
         llm: LLM provider (uses generate(), not generate_structured())
 
     Returns:
-        Mapping of rule_id → synthesised narrative string.
+        Mapping of rule_id → {"evidence": "...", "reasoning": "..."}.
+        Plain-string responses (backward compat) are treated as evidence with empty reasoning.
         Keys present in the response but absent from chunk are dropped.
 
     Raises:
@@ -1112,13 +1113,20 @@ async def _synthesize_batch(
         )
 
     prompt = (
-        "You are synthesising cross-page evidence for pharmaceutical compliance rules.\n\n"
-        "For each rule below, write a 2–4 sentence evidence narrative that:\n"
-        "- Cites specific page numbers inline, e.g. PAGE:3 or PAGE:36\n"
-        "- Names specific data points (field names, quantities, dates, lot numbers)\n"
-        "- Tells a traceable story across pages — what each page contributes\n"
-        "- Does NOT introduce information not present in the per-page snippets\n\n"
-        'Return ONLY a valid JSON object: {"rule_id": "narrative...", ...}\n\n'
+        "You are synthesising cross-page evidence and reasoning for pharmaceutical compliance rules.\n\n"
+        "For each rule below return a JSON object with TWO fields:\n\n"
+        "  evidence: 2-4 sentence cross-page narrative that:\n"
+        "    - Cites specific page numbers inline, e.g. PAGE:3 or PAGE:36\n"
+        "    - Names specific data points (field names, quantities, dates, lot numbers)\n"
+        "    - Tells a traceable story across pages — what each page contributes\n"
+        "    - Does NOT introduce information not present in the per-page snippets\n\n"
+        "  reasoning: 1-3 sentence verdict explanation that:\n"
+        "    - States WHY this rule has its overall status across the document\n"
+        "    - Names the specific gap, failure, or confirmed evidence that drives the verdict\n"
+        "    - MUST be consistent with the status: non_compliant reasoning explains the failure;\n"
+        "      compliant reasoning confirms what was verified; NEVER conclude compliance\n"
+        "      when the status is non_compliant\n\n"
+        'Return ONLY a valid JSON object: {"rule_id": {"evidence": "...", "reasoning": "..."}, ...}\n\n'
         "---\n\n" + "\n\n---\n\n".join(rules_text_parts)
     )
 
@@ -1129,7 +1137,18 @@ async def _synthesize_batch(
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     data = json.loads(text)
-    return {k: str(v) for k, v in data.items() if k in chunk}
+    result: dict[str, dict[str, str]] = {}
+    for k, v in data.items():
+        if k not in chunk:
+            continue
+        if isinstance(v, dict):
+            result[k] = {
+                "evidence": str(v.get("evidence", "")),
+                "reasoning": str(v.get("reasoning", "")),
+            }
+        elif isinstance(v, str):
+            result[k] = {"evidence": v, "reasoning": ""}
+    return result
 
 
 def _build_document_scope_prompt(
