@@ -2,6 +2,8 @@
 
 > Back to [Project README](../README.md)
 
+> **Note**: This folder is the canonical source. It is auto-synced to the [GitHub Wiki tab](https://github.com/auropro-hyd/Docs-digitization/wiki) by [`.github/workflows/sync-wiki.yml`](../.github/workflows/sync-wiki.yml) on every push to `main`. Edit pages here (via a PR), not in the Wiki UI — direct wiki edits will be overwritten on the next sync.
+
 ## Contents
 
 ### Architecture
@@ -29,8 +31,11 @@
 | Document | Description |
 |----------|-------------|
 | [Document Processing](backend/workflow/document-processing.md) | LangGraph state-graph, mode-based conditional routing |
+| [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md) | Spec 011 pipeline: LLM segmentation + deterministic post-pipeline + BPCR sub-section detection + HITL overrides |
 | [Compliance Review](backend/workflow/compliance-review.md) | ALCOA++, GMP, SOP verification agents |
 | [HITL Flow](backend/workflow/hitl-flow.md) | Interrupt/resume, review queue, audit trail |
+| [VLM Provider](backend/vlm-provider.md) | Vision-Language Model port + Gemini / vLLM adapters; visual checks; grayscale gate; absence-first prompts |
+| [Report Renderer](backend/report-renderer.md) | Spec 008 PDF / HTML / Markdown export — five-column rule table, three-state taxonomy, WeasyPrint, versioned cache |
 | [Rule Authoring Playbook](rule_authoring_playbook.md) | Operator guide for config-first rule updates and QA checks |
 
 ### Backend — Confidence & Config
@@ -50,6 +55,7 @@
 | [Upload Flow](frontend/upload-flow.md) | Drag-and-drop, progress tracking, validation |
 | [Review Interface](frontend/review-interface.md) | Split-pane HITL, inline editing, VLM findings, keyboard shortcuts |
 | [Compliance Dashboard](frontend/compliance-dashboard.md) | ALCOA++ visualizations, severity breakdown, visual evidence viewer |
+| [BMR Runs UI](frontend/bmr-runs.md) | `/bmr/runs` runs list + `/bmr/runs/{id}` detail with live stage progress, BPCR sections panel, findings summary |
 | [Corrections Manager](frontend/corrections-manager.md) | OCR correction rules, confusion chart, rule management |
 | [WebSocket Streaming](frontend/websocket-streaming.md) | Real-time updates from LangGraph to browser |
 
@@ -58,7 +64,7 @@
 | Document | Description |
 |----------|-------------|
 | [Local Setup](devops/local-setup.md) | Prerequisites, first-run walkthrough |
-| [Azure DevOps Pipeline](devops/azure-devops-pipeline.md) | CI/CD stages, deployment strategy |
+| [GitHub Actions CI](devops/github-actions-ci.md) | CI workflow, PR-quality gate, weekly maintenance, branch-protection rules, dependabot |
 | [Quick Commands](quick_commands.md) | Copy-paste reference for all dev commands |
 
 ---
@@ -71,7 +77,13 @@
 4. [Data Flow](architecture/data-flow.md)
 5. [OCR Engine Strategy](backend/ocr-engines/overview.md)
 6. [Document Processing](backend/workflow/document-processing.md)
-7. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
-8. [HITL Flow](backend/workflow/hitl-flow.md)
-9. [Settings](backend/configuration/settings.md)
-10. [Local Setup](devops/local-setup.md)
+7. [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md)
+8. [Compliance Review](backend/workflow/compliance-review.md)
+9. [VLM Provider](backend/vlm-provider.md)
+10. [Report Renderer](backend/report-renderer.md)
+11. [BMR Runs UI](frontend/bmr-runs.md)
+12. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
+13. [HITL Flow](backend/workflow/hitl-flow.md)
+14. [Settings](backend/configuration/settings.md)
+15. [Local Setup](devops/local-setup.md)
+16. [GitHub Actions CI](devops/github-actions-ci.md)

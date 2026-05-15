@@ -1,0 +1,85 @@
+version: 2
+
+# Weekly dep updates — pip + npm + github-actions ecosystems.
+# Minor + patch versions are grouped into one PR per ecosystem
+# so we don't drown in 30 tiny PRs every Monday. Majors stay
+# separate (breaking changes need individual review).
+
+updates:
+  # ── Backend (pyproject.toml)
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+    groups:
+      backend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # ── Frontend (package.json)
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+    groups:
+      frontend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Next.js majors land breaking changes regularly; keep them
+      # individually reviewable rather than batching in.
+      - dependency-name: next
+        update-types: [version-update:semver-major]
+      # TypeScript 6 makes CSS side-effect imports an error
+      # (TS2882). We'd need a global `declare module '*.css'` shim
+      # across the codebase. Revisit when Next.js ships official
+      # TS 6 support.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # ESLint 10 isn't yet supported by eslint-config-next (peer
+      # dep pins to ^9). Lift this ignore once eslint-config-next
+      # ships a 10-compatible release.
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      # eslint-config-next 16 drops the `next lint` command and
+      # requires migrating to eslint CLI via the codemod
+      # `npx @next/codemod@canary next-lint-to-eslint-cli .`. That
+      # plus CI updates is a deliberate migration; lift this ignore
+      # when we do that migration (likely paired with Next.js 16).
+      - dependency-name: eslint-config-next
+        update-types: [version-update:semver-major]
+      # shadcn and lucide-react ship breaking renames across major
+      # versions; we'll review each major manually rather than
+      # taking them as drive-by bumps. (Leave un-ignored once the
+      # current open PRs are merged — these are routine majors,
+      # just want to see the diff one at a time.)
+
+  # ── GitHub Actions versions (e.g. actions/checkout@v4)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    groups:
+      gha-all:
+        patterns: ["*"]

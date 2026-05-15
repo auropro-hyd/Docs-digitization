@@ -4,16 +4,17 @@
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| [Next.js](https://nextjs.org/) | 16 (App Router) | React framework with server-side rendering and file-based routing |
-| [React](https://react.dev/) | 19 | UI component library |
-| [TypeScript](https://www.typescriptlang.org/) | 5.x | Static type checking |
+| [Next.js](https://nextjs.org/) | 15.5 (App Router) | React framework with server-side rendering and file-based routing |
+| [React](https://react.dev/) | 19.2 | UI component library |
+| [TypeScript](https://www.typescriptlang.org/) | 5 (`^5`) | Static type checking |
 | [Tailwind CSS](https://tailwindcss.com/) | 4 | Utility-first CSS framework |
 | [Zustand](https://github.com/pmndrs/zustand) | 5 | Lightweight client-side state management |
-| [Lucide React](https://lucide.dev/) | 0.575+ | Icon library |
+| [Lucide React](https://lucide.dev/) | 1.x | Icon library |
+| [shadcn/ui](https://ui.shadcn.com/) | 4.x | Accessible component primitives |
 
 ## Application Pages
 
-The frontend uses Next.js App Router with four primary routes:
+The frontend uses Next.js App Router with the following routes:
 
 | Route | Page | Description |
 |-------|------|-------------|
@@ -22,22 +23,29 @@ The frontend uses Next.js App Router with four primary routes:
 | `/review` | HITL Review | Split-pane human-in-the-loop review interface for extracted data |
 | `/compliance` | Compliance Dashboard | Compliance scoring, severity breakdown, and findings per document |
 | `/corrections` | Corrections Manager | OCR correction rules, confusion chart, and rule management |
+| `/bmr/runs` | BMR Runs List | List of compliance runs for BMR (Batch Manufacturing Record) workflows |
+| `/bmr/runs/[runId]` | BMR Run Detail | Per-run progress, agent cards, rule applicability, exports |
 
 Each route maps to a page component in `frontend/src/app/`:
 
 ```
 frontend/src/app/
-├── page.tsx              # / — Upload page
-├── layout.tsx            # Root layout (global nav, providers)
-├── globals.css           # Tailwind base styles
+├── page.tsx                       # / — Upload page
+├── layout.tsx                     # Root layout (global nav, providers)
+├── globals.css                    # Tailwind base styles
 ├── documents/
-│   └── page.tsx          # /documents — List view
+│   └── page.tsx                   # /documents — List view
 ├── review/
-│   └── page.tsx          # /review — HITL review
+│   └── page.tsx                   # /review — HITL review
 ├── compliance/
-│   └── page.tsx          # /compliance — Dashboard
-└── corrections/
-    └── page.tsx          # /corrections — Corrections Manager
+│   └── page.tsx                   # /compliance — Dashboard
+├── corrections/
+│   └── page.tsx                   # /corrections — Corrections Manager
+└── bmr/
+    └── runs/
+        ├── page.tsx               # /bmr/runs — Runs list
+        └── [runId]/
+            └── page.tsx           # /bmr/runs/{runId} — Run detail
 ```
 
 ## Component Structure

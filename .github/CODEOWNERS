@@ -1,0 +1,26 @@
+# Code Owners — auto-requests reviews on PR open.
+#
+# Even though branch protection requires 0 approvers, CODEOWNERS
+# routes PRs to the right humans automatically so they at least
+# get a notification when something in their domain changes.
+#
+# Pattern syntax: https://docs.github.com/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Default — anything not matched by a more specific rule
+*                                       @anmolg1997
+
+# ── Backend
+/backend/                               @anmolg1997
+
+# ── Frontend
+/frontend/                              @anmolg1997
+
+# ── CI / infra / repo-level config
+/.github/                               @anmolg1997
+/Makefile                               @anmolg1997
+/.claude/                               @anmolg1997
+
+# ── Documentation
+/README.md                              @anmolg1997
+/CONTRIBUTING.md                        @anmolg1997
+/SECURITY.md                            @anmolg1997

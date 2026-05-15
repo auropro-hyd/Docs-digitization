@@ -38,7 +38,6 @@ from app.compliance.rules.registry import get_registry
 from app.compliance.segmentation import (
     DocumentSegmenter,
     build_page_to_section,
-    enrich_with_bpcr_sub_sections,
     load_segmentation,
     store_segmentation,
 )
@@ -204,39 +203,32 @@ async def _run_compliance_pipeline_inner(
         if segmentation is None:
             cross_llm = container.compliance_cross_page_llm
             segmenter = DocumentSegmenter(cross_llm)
+            # Spec 011 (2026-05-14 architectural fix): enrichment
+            # used to run HERE, AFTER segment() returned, which
+            # meant the geometric / vocabulary post-processes
+            # established by Spec 011 got CLOBBERED by enrichment's
+            # output (overlapping ranges from the BPCR detector,
+            # coverage gaps from replaced parent sections). The
+            # enrichment now runs INSIDE segment() between
+            # stamp_document_types and apply_overrides, with a
+            # second round of clamp / resolve_overlaps / fill_gaps
+            # after it — so the persisted segmentation is
+            # guaranteed geometrically clean regardless of what the
+            # detector emits.
+            #
+            # Spec 007 / 2026-04-28 ("still not returning the
+            # sections within batch_record"): enrichment was added
+            # in compliance_graph for the same reason it now sits
+            # inside segment() — to drill BPCR-classified sections
+            # into their canonical sub-sections (cover_page,
+            # material_dispensing, yield_calculation, …). Moving
+            # it into segment() preserves that capability AND
+            # closes the geometric-invariant escape hatch.
             segmentation = await segmenter.segment(
                 extractions, key_value_pairs, filename, total_pages,
             )
             llm_call_count += 1
-
-            # Spec 007 — drill BPCR-classified sections into their 13
-            # canonical sub-sections (cover_page, material_dispensing,
-            # yield_calculation, …). Pure post-processing; no extra LLM
-            # call. Idempotent: re-running on an already-enriched seg
-            # regenerates the same rows from the same input, so it's
-            # safe to apply on every load. Without this, a doc whose
-            # segmentation.json was cached before this feature shipped
-            # would silently keep its empty ``sub_sections`` arrays
-            # forever — exactly the symptom Akhilesh hit on his re-run.
-            needs_enrichment = any(
-                not section.sub_sections
-                for section in segmentation.sections
-                if section.section_type
-                and any(
-                    hint in section.section_type.lower()
-                    for hint in ("batch_record", "bpcr", "batch_production")
-                )
-            )
-            if needs_enrichment:
-                segmentation = enrich_with_bpcr_sub_sections(segmentation, extractions)
-                # Re-persist so subsequent loads see the enriched form
-                # even if the rest of the pipeline doesn't trigger a write.
-                store_segmentation(doc_dir, segmentation)
-            elif not cache_was_used:
-                # Fresh segmentation that already had no BPCR sections to
-                # enrich — still persist so the run produces a stable
-                # cache file.
-                store_segmentation(doc_dir, segmentation)
+            store_segmentation(doc_dir, segmentation)
 
         section_map = build_page_to_section(segmentation)
 
