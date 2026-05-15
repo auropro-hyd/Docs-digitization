@@ -44,6 +44,22 @@ updates:
       # individually reviewable rather than batching in.
       - dependency-name: next
         update-types: [version-update:semver-major]
+      # TypeScript 6 makes CSS side-effect imports an error
+      # (TS2882). We'd need a global `declare module '*.css'` shim
+      # across the codebase. Revisit when Next.js ships official
+      # TS 6 support.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+      # ESLint 10 isn't yet supported by eslint-config-next (peer
+      # dep pins to ^9). Lift this ignore once eslint-config-next
+      # ships a 10-compatible release.
+      - dependency-name: eslint
+        update-types: [version-update:semver-major]
+      # shadcn and lucide-react ship breaking renames across major
+      # versions; we'll review each major manually rather than
+      # taking them as drive-by bumps. (Leave un-ignored once the
+      # current open PRs are merged — these are routine majors,
+      # just want to see the diff one at a time.)
 
   # ── GitHub Actions versions (e.g. actions/checkout@v4)
   - package-ecosystem: github-actions
