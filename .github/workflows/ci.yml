@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-progress runs on the same PR when a new push lands so
+# we don't pile up redundant green-but-stale jobs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native deps for WeasyPrint
+        # WeasyPrint (Spec 008 PDF renderer) needs pango / cairo /
+        # gobject; without these the renderer-tests skip and the
+        # report-export integration tests fall back to HTML. We
+        # install on the runner so the full backend suite stays
+        # green here.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 \
+            libpangoft2-1.0-0 \
+            libcairo2 \
+            libgdk-pixbuf-2.0-0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Python deps
+        # The repo uses pyproject.toml with optional [dev] deps for
+        # the test stack (pytest, pyright, ruff). Install in
+        # editable mode so import paths resolve as in dev.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        env:
+          AT_ENV: test
+        run: pytest -q --tb=short
+
+  frontend:
+    name: Frontend (tsc + lint + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx next lint
+
+      - name: Build
+        # Catches issues that tsc + lint miss (e.g. missing env
+        # vars at static-route generation time, broken dynamic
+        # imports). Kept in CI even though it duplicates some
+        # type-check work because it's the gate that previously
+        # would have caught the empty-img.src placeholder bug.
+        run: npx next build
