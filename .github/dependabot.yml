@@ -1,0 +1,62 @@
+version: 2
+
+# Weekly dep updates — pip + npm + github-actions ecosystems.
+# Minor + patch versions are grouped into one PR per ecosystem
+# so we don't drown in 30 tiny PRs every Monday. Majors stay
+# separate (breaking changes need individual review).
+
+updates:
+  # ── Backend (pyproject.toml)
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - backend
+    groups:
+      backend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # ── Frontend (package.json)
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - frontend
+    groups:
+      frontend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Next.js majors land breaking changes regularly; keep them
+      # individually reviewable rather than batching in.
+      - dependency-name: next
+        update-types: [version-update:semver-major]
+
+  # ── GitHub Actions versions (e.g. actions/checkout@v4)
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    groups:
+      gha-all:
+        patterns: ["*"]
