@@ -1,0 +1,71 @@
+name: 🐛 Bug report
+description: Report a concrete, reproducible defect.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Before opening, please search existing issues
+        — bugs in segmentation / compliance frequently repeat across docs.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Crisp 1-2 sentences. What did you observe?
+      placeholder: "Re-segmenting 2538105062.pdf produced 3 overlapping BPCR sections at p1."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      placeholder: "Sections should be disjoint; full page coverage."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Steps a teammate can follow on a clean clone to see the same thing.
+      value: |
+        1. Boot backend with `make backend`
+        2. Trigger `POST /api/compliance/{doc_id}/segment`
+        3. Inspect `data/documents/{doc_id}/segmentation.json`
+    validations:
+      required: true
+
+  - type: input
+    id: doc-id
+    attributes:
+      label: Document ID (if applicable)
+      description: From `data/documents/<id>/`. Helps the maintainer load the exact OCR state you saw.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / telemetry events
+      description: Particularly `segmentation.*` events from `telemetry.json` for compliance issues.
+      render: text
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - "blocker — pipeline produces wrong output for compliance reports"
+        - "major — feature broken but workaround exists"
+        - "minor — cosmetic / log-spam / dev-only"
+      default: 1
+
+  - type: checkboxes
+    id: pre-checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I've searched existing issues + recent PRs for the same symptom.
+          required: true
+        - label: I've checked `validation_issues` on the segmentation editor (Spec 011 / FR-014) — if any apply, I've included them above.
+          required: false
