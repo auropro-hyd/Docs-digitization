@@ -45,7 +45,7 @@ class TestSynthesizeBatch:
         result = await _synthesize_batch(chunk, llm)
 
         assert "CHE-AUD1" in result
-        assert "PAGE:3" in result["CHE-AUD1"]
+        assert "PAGE:3" in result["CHE-AUD1"]["evidence"]
 
     @pytest.mark.asyncio
     async def test_strips_markdown_fences(self):
@@ -56,7 +56,7 @@ class TestSynthesizeBatch:
 
         result = await _synthesize_batch(chunk, llm)
 
-        assert result["CHE-X1"] == "Narrative PAGE:1."
+        assert result["CHE-X1"]["evidence"] == "Narrative PAGE:1."
 
     @pytest.mark.asyncio
     async def test_ignores_keys_not_in_chunk(self):

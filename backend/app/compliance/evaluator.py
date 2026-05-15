@@ -1048,7 +1048,7 @@ async def synthesize_rule_evidence(
         for i in range(0, len(rule_ids), batch_size)
     ]
 
-    synthesised: dict[str, str] = {}
+    synthesised: dict[str, dict[str, str]] = {}
     chunk_outcomes = await asyncio.gather(
         *[_synthesize_batch(chunk, llm) for chunk in chunks],
         return_exceptions=True,
@@ -1069,7 +1069,10 @@ async def synthesize_rule_evidence(
     for _batch_id, page_num, result in results:
         for ev in result.evaluations:
             if ev.rule_id in synthesised:
-                ev.evidence = synthesised[ev.rule_id]
+                synth = synthesised[ev.rule_id]
+                ev.evidence = synth.get("evidence", ev.evidence)
+                if synth.get("reasoning"):
+                    ev.reasoning = synth["reasoning"]
 
     logger.info(
         "Evidence synthesis complete: %d rules synthesised across %d chunks",
