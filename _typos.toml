@@ -1,32 +1,72 @@
 # typos config — see https://github.com/crate-ci/typos
 #
-# We allow common pharma / compliance acronyms and product names that
-# would otherwise get flagged as misspellings. New domain words go
-# under [default.extend-identifiers] or [default.extend-words].
+# Scope: we spell-check OUR source code (Python, TS/TSX) and the
+# repo-root docs (README, CONTRIBUTING, etc). We do NOT check:
+#   - Spec content (OCR-derived sample text)
+#   - Compliance rule docs (full of OCR patterns we want to match)
+#   - Test fixtures and runtime OCR artifacts
+#   - POC / context dumps
+#
+# This is intentional: the codebase ingests pharmaceutical OCR text
+# which is full of legitimate-looking misspellings ("vaccume",
+# "ceritifcate", "Pege") that are deliberate patterns the compliance
+# engine catches. Spell-checking those would generate constant noise
+# and provide no signal.
 
 [files]
 extend-exclude = [
-  "specs/**/research.md",
-  "specs/**/quickstart.md",
+  # Spec content — research notes, plans, OCR-derived examples
+  "specs/**",
+
+  # Compliance rule definitions — by design contain OCR patterns
+  "backend/app/compliance/rules/**",
+
+  # Runtime artifacts: OCR output, persisted segmentations, results
+  "backend/data/**",
+
+  # All test fixtures and sample documents
   "backend/tests/data/**",
   "backend/tests/fixtures/**",
+  "backend/tests/bmr/fixtures/**",
+  "backend/tests/**/snapshots/**",
+
+  # POC / context dumps
+  "context/**",
+
+  # Generated / lock / binary
   "*.lock",
   "package-lock.json",
   "uv.lock",
   "*.svg",
   "*.pdf",
+  "*.png",
+  "*.jpg",
+  "*.jpeg",
+  "*.ico",
+  "*.woff",
+  "*.woff2",
+
+  # Build output (defense in depth — gitignored, but typos walks blind)
+  "**/node_modules/**",
+  "**/.venv/**",
+  "**/.next/**",
+  "**/dist/**",
+  "**/build/**",
+  "**/__pycache__/**",
 ]
 
 [default]
-# Words we want spell-checked as-is (not lowercased / stemmed).
+# Domain identifiers to ignore by regex. Auropro brand variants,
+# all-caps Auro* product names, and the BMR engine name.
 extend-ignore-identifiers-re = [
-  "auropro",
-  "Auropro",
-  "AURO[A-Z]+",
+  "^auropro$",
+  "^Auropro$",
+  "^AURO[A-Z]+$",
 ]
 
 [default.extend-words]
-# Domain-specific tokens that should NOT be flagged.
+# Domain-specific words that LOOK like typos but are correct.
+# Pharma / GMP / compliance acronyms and product names.
 bpcr = "bpcr"
 BPCR = "BPCR"
 gmp = "gmp"
@@ -47,7 +87,16 @@ ocr = "ocr"
 OCR = "OCR"
 llm = "llm"
 LLM = "LLM"
-
-[default.extend-identifiers]
-# Identifiers (variable / function names) that would otherwise trip
-# the checker. Add new ones as they surface in failing CI runs.
+# Pharma acronyms typos auto-corrects but shouldn't
+lod = "lod"      # Loss on Drying
+LOD = "LOD"
+aci = "aci"      # NOT ACPI — pharma context
+ACI = "ACI"
+# Pharma jargon: "equipments" (plural) is industry-standard usage
+equipments = "equipments"
+Equipments = "Equipments"
+EQUIPMENTS = "EQUIPMENTS"
+# Valid English variants typos flags
+inferrable = "inferrable"
+unparseable = "unparseable"
+alikes = "alikes"
