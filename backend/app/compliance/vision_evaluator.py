@@ -449,8 +449,11 @@ def _build_vision_prompt(rules: Sequence[AuditRule], page_num: int) -> str:
         '  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
         "  confidence (float 0.0-1.0),\n"
         '  severity (only if non_compliant: "critical"|"major"|"minor"|"observation"),\n'
-        "  reasoning (1-3 sentences referencing visual evidence),\n"
-        "  evidence (describe what you see in the image),\n"
+        "  reasoning (1-3 sentences referencing visual evidence; MUST match your status — "
+        "non_compliant reasoning cites the specific defect seen; compliant reasoning explains "
+        "absence of defect or what was visually confirmed; prefix with PAGE:N inline e.g. "
+        "'PAGE:5: Single-line strikethrough visible mid-page — original text readable'),\n"
+        "  evidence (describe what you see in the image; cite page number as PAGE:N inline),\n"
         "  description (what the issue is — empty if compliant),\n"
         "  recommendation (remediation — empty if compliant).\n\n"
         "Also return visual_checks results with check_id, detected (bool), "

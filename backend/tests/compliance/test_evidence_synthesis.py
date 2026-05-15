@@ -79,6 +79,49 @@ class TestSynthesizeBatch:
         with pytest.raises(Exception):
             await _synthesize_batch(chunk, llm)
 
+    @pytest.mark.asyncio
+    async def test_returns_evidence_and_reasoning_dict(self):
+        """_synthesize_batch must return {rule_id: {evidence: ..., reasoning: ...}}."""
+        chunk = {
+            "CHE-DOC8": [
+                (3, "Batch No entries have trailing dash 'C4060193-'", "non_compliant"),
+                (4, "Same pattern for Seed Material sub-rows", "non_compliant"),
+                (36, "Full lot number 'C4060193-02A' recorded here", "non_compliant"),
+                (41, "Complete lot numbers for all other materials", "non_compliant"),
+            ],
+        }
+        payload = json.dumps({
+            "CHE-DOC8": {
+                "evidence": "PAGE:3 shows trailing-dash batch entry 'C4060193-'. PAGE:36 records the full lot 'C4060193-02A'.",
+                "reasoning": "Batch numbers on PAGE:3 and PAGE:4 are truncated; PAGE:36 confirms the complete value exists, making the BPCR entries non_compliant.",
+            }
+        })
+        llm = _make_llm(payload)
+
+        result = await _synthesize_batch(chunk, llm)
+
+        assert "CHE-DOC8" in result
+        assert isinstance(result["CHE-DOC8"], dict)
+        assert "evidence" in result["CHE-DOC8"]
+        assert "reasoning" in result["CHE-DOC8"]
+        assert "PAGE:3" in result["CHE-DOC8"]["evidence"]
+        assert "non_compliant" in result["CHE-DOC8"]["reasoning"].lower() or "truncated" in result["CHE-DOC8"]["reasoning"].lower()
+
+    @pytest.mark.asyncio
+    async def test_handles_plain_string_response_as_evidence_fallback(self):
+        """If LLM returns a plain string (not nested dict), use it as evidence with empty reasoning."""
+        chunk = {
+            "CHE-X1": [(1, "ev", "compliant"), (2, "ev2", "compliant"),
+                       (3, "ev3", "compliant"), (4, "ev4", "compliant")],
+        }
+        payload = json.dumps({"CHE-X1": "Plain narrative PAGE:1."})
+        llm = _make_llm(payload)
+
+        result = await _synthesize_batch(chunk, llm)
+
+        assert result["CHE-X1"]["evidence"] == "Plain narrative PAGE:1."
+        assert result["CHE-X1"]["reasoning"] == ""
+
 
 class TestSynthesizeRuleEvidence:
     @pytest.mark.asyncio

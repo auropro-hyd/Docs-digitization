@@ -177,17 +177,24 @@ def _build_batch_prompt(
         f"  confidence (float 0.0-1.0),\n"
         f"  severity (only if non_compliant: \"critical\"|\"major\"|\"minor\"|\"observation\"),\n"
         f"  reasoning (REQUIRED for ALL statuses: 1-3 sentences explaining WHY this "
-        f"status was chosen. MUST reference at least ONE specific data point from the "
+        f"status was chosen. ALWAYS prefix with the page number, e.g. PAGE:{page_num}: "
+        f"MUST reference at least ONE specific data point from the "
         f"page — a field name, value, signature label, table cell, or section heading. "
         f"Do NOT use vague statements like 'data appears compliant'. "
         f"For compliant: cite what you found that satisfies the rule, e.g. "
-        f"'Done By field contains signature \"S. Patel\" with date 15/03/2025'. "
+        f"'PAGE:{page_num}: Done By field contains signature \"S. Patel\" with date 15/03/2025'. "
         f"For non_compliant: cite what is missing or incorrect, e.g. "
-        f"'Checked By field is blank — no countersignature present'),\n"
+        f"'PAGE:{page_num}: Checked By field is blank — no countersignature present'. "
+        f"CRITICAL CONSISTENCY RULE: Your reasoning MUST support your chosen status. "
+        f"If status=non_compliant, reasoning MUST explain what is missing or wrong — "
+        f"do NOT write a conclusion that says the page is compliant. "
+        f"If status=compliant, reasoning MUST explain what was found satisfying the rule. "
+        f"The reasoning is the verdict explanation, not a deliberation trail),\n"
         f"  evidence (REQUIRED for ALL statuses: a VERBATIM excerpt (exact text or "
         f"metadata value) from the page that supports your assessment. For compliant "
         f"rules, quote the specific field or text that proves compliance. "
-        f"Example: 'Done by: S. Patel | Date: 15/03/2025 | Checked by: R. Kumar'),\n"
+        f"ALWAYS prefix with the page number using the format PAGE:{page_num}: "
+        f"Example: 'PAGE:{page_num}: Done by: S. Patel | Date: 15/03/2025 | Checked by: R. Kumar'),\n"
         f"  description (what the issue is — empty only if compliant),\n"
         f"  recommendation (remediation guidance — empty only if compliant).\n\n"
         f"IMPORTANT: If a rule is about signatures/initials/dates but the page has no "
@@ -1074,15 +1081,16 @@ async def synthesize_rule_evidence(
 async def _synthesize_batch(
     chunk: dict[str, list[tuple[int, str, str]]],
     llm: LLMProvider,
-) -> dict[str, str]:
-    """Call the LLM once to synthesise cross-page evidence narratives.
+) -> dict[str, dict[str, str]]:
+    """Call the LLM once to synthesise cross-page evidence AND reasoning narratives.
 
     Args:
         chunk: mapping of rule_id → [(page_num, evidence_snippet, status), ...]
         llm: LLM provider (uses generate(), not generate_structured())
 
     Returns:
-        Mapping of rule_id → synthesised narrative string.
+        Mapping of rule_id → {"evidence": "...", "reasoning": "..."}.
+        Plain-string responses (backward compat) are treated as evidence with empty reasoning.
         Keys present in the response but absent from chunk are dropped.
 
     Raises:
@@ -1105,13 +1113,20 @@ async def _synthesize_batch(
         )
 
     prompt = (
-        "You are synthesising cross-page evidence for pharmaceutical compliance rules.\n\n"
-        "For each rule below, write a 2–4 sentence evidence narrative that:\n"
-        "- Cites specific page numbers inline, e.g. PAGE:3 or PAGE:36\n"
-        "- Names specific data points (field names, quantities, dates, lot numbers)\n"
-        "- Tells a traceable story across pages — what each page contributes\n"
-        "- Does NOT introduce information not present in the per-page snippets\n\n"
-        'Return ONLY a valid JSON object: {"rule_id": "narrative...", ...}\n\n'
+        "You are synthesising cross-page evidence and reasoning for pharmaceutical compliance rules.\n\n"
+        "For each rule below return a JSON object with TWO fields:\n\n"
+        "  evidence: 2-4 sentence cross-page narrative that:\n"
+        "    - Cites specific page numbers inline, e.g. PAGE:3 or PAGE:36\n"
+        "    - Names specific data points (field names, quantities, dates, lot numbers)\n"
+        "    - Tells a traceable story across pages — what each page contributes\n"
+        "    - Does NOT introduce information not present in the per-page snippets\n\n"
+        "  reasoning: 1-3 sentence verdict explanation that:\n"
+        "    - States WHY this rule has its overall status across the document\n"
+        "    - Names the specific gap, failure, or confirmed evidence that drives the verdict\n"
+        "    - MUST be consistent with the status: non_compliant reasoning explains the failure;\n"
+        "      compliant reasoning confirms what was verified; NEVER conclude compliance\n"
+        "      when the status is non_compliant\n\n"
+        'Return ONLY a valid JSON object: {"rule_id": {"evidence": "...", "reasoning": "..."}, ...}\n\n'
         "---\n\n" + "\n\n---\n\n".join(rules_text_parts)
     )
 
@@ -1122,7 +1137,18 @@ async def _synthesize_batch(
         text = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
 
     data = json.loads(text)
-    return {k: str(v) for k, v in data.items() if k in chunk}
+    result: dict[str, dict[str, str]] = {}
+    for k, v in data.items():
+        if k not in chunk:
+            continue
+        if isinstance(v, dict):
+            result[k] = {
+                "evidence": str(v.get("evidence", "")),
+                "reasoning": str(v.get("reasoning", "")),
+            }
+        elif isinstance(v, str):
+            result[k] = {"evidence": v, "reasoning": ""}
+    return result
 
 
 def _build_document_scope_prompt(
@@ -1145,8 +1171,12 @@ def _build_document_scope_prompt(
         f'  rule_id, status ("compliant"|"non_compliant"|"not_applicable"|"uncertain"),\n'
         f"  confidence (float 0.0-1.0),\n"
         f"  severity (only if non_compliant),\n"
-        f"  reasoning (REQUIRED: 1-3 sentence explanation),\n"
-        f"  evidence (REQUIRED: reference specific content from the summary),\n"
+        f"  reasoning (REQUIRED: 1-3 sentence explanation citing the specific page "
+        f"where evidence was found, e.g. 'PAGE:1: Prepared By field contains S. Patel'. "
+        f"CRITICAL: reasoning MUST support your status — non_compliant reasoning explains "
+        f"the gap or failure; compliant reasoning confirms what was verified),\n"
+        f"  evidence (REQUIRED: verbatim excerpt from the summary prefixed with the "
+        f"page number where found, e.g. 'PAGE:1: Prepared By: S. Patel'),\n"
         f"  description (what the issue is — empty only if compliant),\n"
         f"  recommendation (empty only if compliant).\n\n"
         f"RULES TO EVALUATE:\n{rules_section}\n\n"
@@ -1251,6 +1281,7 @@ def assemble_agent_report(
     all_findings: list[ComplianceFinding] = []
     raw_eval_map: dict[str, RuleResult] = {}
     per_rule_worst: dict[str, str] = {}
+    flagged_pages_map: dict[str, list[int]] = defaultdict(list)
 
     for _batch_id, page_num, result in batch_results:
         for ev in result.evaluations:
@@ -1266,6 +1297,12 @@ def assemble_agent_report(
             prev = per_rule_worst.get(ev.rule_id, "not_applicable")
             if _STATUS_SEVERITY.get(status, 0) > _STATUS_SEVERITY.get(prev, 0):
                 per_rule_worst[ev.rule_id] = status
+
+            # Track pages that actually flagged an issue (used post-loop to
+            # narrow non_compliant/uncertain RuleResult.page_numbers).
+            if status in ("non_compliant", "uncertain") and page_num is not None:
+                if page_num not in flagged_pages_map[ev.rule_id]:
+                    flagged_pages_map[ev.rule_id].append(page_num)
 
             # Merge into audit trail (H2: keep worst status). The
             # (status, reasoning, evidence, confidence) quadruple
@@ -1380,6 +1417,13 @@ def assemble_agent_report(
                     visual_evidence=visual_evidence_text,
                 )
                 all_findings.append(finding)
+
+    # Narrow page_numbers for non_compliant/uncertain rules to only the pages
+    # that actually flagged something. Compliant/not_applicable rules keep the
+    # full evaluated-pages list so summarise_compliant can show coverage.
+    for rule_id, rr in raw_eval_map.items():
+        if rr.status in ("non_compliant", "uncertain") and rule_id in flagged_pages_map:
+            rr.page_numbers = sorted(flagged_pages_map[rule_id])
 
     deduped = _deduplicate_findings(all_findings)
 
