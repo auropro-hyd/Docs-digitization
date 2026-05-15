@@ -1,0 +1,53 @@
+# actions/labeler@v5 config — applies labels based on which paths a
+# PR touches. `any-glob-to-any-file` means a single matching path is
+# enough to attach the label. Labels must exist in the repo (create
+# them once with `gh label create <name>` — see PR description for
+# the bootstrap commands).
+
+backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/**'
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'frontend/**'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'
+
+specs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'specs/**'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '.github/workflows/**'
+          - '.github/labeler.yml'
+          - '_typos.toml'
+
+compliance:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/compliance/**'
+          - 'frontend/**/compliance/**'
+
+bmr:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/app/compliance/rules/bmr_**'
+          - 'backend/app/compliance/bmr_**'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/pyproject.toml'
+          - 'backend/uv.lock'
+          - 'frontend/package.json'
+          - 'frontend/package-lock.json'
