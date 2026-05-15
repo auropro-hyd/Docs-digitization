@@ -32,6 +32,8 @@
 | [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md) | Spec 011 pipeline: LLM segmentation + deterministic post-pipeline + BPCR sub-section detection + HITL overrides |
 | [Compliance Review](backend/workflow/compliance-review.md) | ALCOA++, GMP, SOP verification agents |
 | [HITL Flow](backend/workflow/hitl-flow.md) | Interrupt/resume, review queue, audit trail |
+| [VLM Provider](backend/vlm-provider.md) | Vision-Language Model port + Gemini / vLLM adapters; visual checks; grayscale gate; absence-first prompts |
+| [Report Renderer](backend/report-renderer.md) | Spec 008 PDF / HTML / Markdown export — five-column rule table, three-state taxonomy, WeasyPrint, versioned cache |
 | [Rule Authoring Playbook](rule_authoring_playbook.md) | Operator guide for config-first rule updates and QA checks |
 
 ### Backend — Confidence & Config
@@ -51,6 +53,7 @@
 | [Upload Flow](frontend/upload-flow.md) | Drag-and-drop, progress tracking, validation |
 | [Review Interface](frontend/review-interface.md) | Split-pane HITL, inline editing, VLM findings, keyboard shortcuts |
 | [Compliance Dashboard](frontend/compliance-dashboard.md) | ALCOA++ visualizations, severity breakdown, visual evidence viewer |
+| [BMR Runs UI](frontend/bmr-runs.md) | `/bmr/runs` runs list + `/bmr/runs/{id}` detail with live stage progress, BPCR sections panel, findings summary |
 | [Corrections Manager](frontend/corrections-manager.md) | OCR correction rules, confusion chart, rule management |
 | [WebSocket Streaming](frontend/websocket-streaming.md) | Real-time updates from LangGraph to browser |
 
@@ -73,8 +76,12 @@
 5. [OCR Engine Strategy](backend/ocr-engines/overview.md)
 6. [Document Processing](backend/workflow/document-processing.md)
 7. [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md)
-8. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
-9. [HITL Flow](backend/workflow/hitl-flow.md)
-10. [Settings](backend/configuration/settings.md)
-11. [Local Setup](devops/local-setup.md)
-12. [GitHub Actions CI](devops/github-actions-ci.md)
+8. [Compliance Review](backend/workflow/compliance-review.md)
+9. [VLM Provider](backend/vlm-provider.md)
+10. [Report Renderer](backend/report-renderer.md)
+11. [BMR Runs UI](frontend/bmr-runs.md)
+12. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
+13. [HITL Flow](backend/workflow/hitl-flow.md)
+14. [Settings](backend/configuration/settings.md)
+15. [Local Setup](devops/local-setup.md)
+16. [GitHub Actions CI](devops/github-actions-ci.md)
