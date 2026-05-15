@@ -231,6 +231,7 @@ categories:
           - "Page title contains '& ALLOCATED' or 'ALLOCATED' without 'ISSUE' (WMS allocation printout, no sign-off expected) -> not_applicable"
           - "Page is a raw material request form (items are chemicals/APIs, not packaging materials) -> not_applicable"
           - "Page has no line items with quantities -> not_applicable"
+          - "ALL line items on the form have '—' or blank in the Requested Qty column (form was pre-printed but no packing materials were requested or issued for this batch) -> not_applicable"
 
       5:
         evaluation_strategy: agentic_audit
@@ -389,6 +390,21 @@ categories:
               equal the sum of sub-row Net Qtys (±0.05 Kg tolerance for
               rounding across containers).
 
+          MULTI-CONTAINER SUMMARY HEADER: A summary header row may show
+          multiple Net Qty values stacked vertically in a single cell (e.g.
+          "2000 / 2350 / 825 / 1221") — these are separate container
+          deliveries recorded in ONE summary row, not separate sub-rows.
+          The Done by and Checked by for that row cover all containers
+          combined. Do NOT interpret each stacked Net Qty value as an
+          independent sub-row requiring its own Done by entry.
+
+          SKIPPED STEP SUB-ROWS: For step sub-rows where Done by AND
+          Checked by are BOTH dashes ("----") or blank, the material was
+          NOT dispensed for that step (conditional or skipped step). Skip
+          all checks — blank Net Qty, blank Done by, and blank Checked by
+          are expected and compliant for these rows. Only evaluate sub-rows
+          where Done by OR Checked by is filled (dispensed rows).
+
           Ignore the "List of Raw Materials for Equipment Cleaning" sub-table.
 
           COMPLIANT if all dispensed rows satisfy (1)–(4).
@@ -414,8 +430,13 @@ categories:
         applicable_document_types: [batch_record]
         applicable_section_types: [manufacturing_operations, material_dispensing, yield_calculation]
         pass_criteria: |
-          Both "Done by" and "Checked by" columns must be populated for every
-          critical manufacturing step on this page.
+          Both "Done by" and "Checked by" columns must have a valid entry (per
+          the valid entry list below) for every critical manufacturing step on
+          this page. A dash ("—" or "-") in Done By OR Checked By is ALWAYS a
+          valid entry — including for executed steps where From/To times are
+          filled — and must NEVER be treated as non-compliant. Do NOT require
+          a personnel name in both columns; a dash in one or both columns is
+          sufficient and compliant.
 
           HOW TO IDENTIFY A CRITICAL STEP:
           A step (row) is critical if its Operations cell contains ANY of:
@@ -514,6 +535,15 @@ categories:
           date-alone entries and dash entries — regardless of GMP convention
           you may know from training. Do NOT substitute your own reasoning
           about what "should" be in these fields.
+
+          REAL EXAMPLES — EXECUTED STEPS WITH DASH IN CHECKED BY (must be COMPLIANT):
+          - Step 89.6 "Stop hot water circulation and cool to below 40°C":
+            From=05-25, To=06-35, Temp=37.6, Done By='MR 29/11/2025',
+            Checked By='—' → COMPLIANT. The step was executed (times filled)
+            and Done By has a valid entry; Checked By '—' is a valid dash
+            marker. Do NOT flag this as non-compliant.
+          - Step 89.3: Done By='[Signature] 29/11/2025', Checked By='—' →
+            COMPLIANT for the same reason.
 
           REAL EXAMPLES — SKIPPED CRITICAL STEPS (must be NOT_APPLICABLE):
           - Step 50 "Result of pH. / Limit: 7.0 to 8.0": From=—, To=N.A.,
@@ -617,6 +647,18 @@ categories:
              → The Remarks column MUST NOT contain a parameter value.
              → Remarks should be blank, dash (-/—), or "N.A."
              → A numeric measurement value in Remarks for a skipped step is NON-COMPLIANT.
+
+          COMPANION TABLE MONITORING EXCEPTION:
+          Some "maintain" steps delegate continuous parameter recording to a
+          companion table or an attached electronic print. These steps are
+          identified by a note in the Operations cell such as "Record the time,
+          temperature and vacuum for every 1 hour in Table-VII" or by a
+          reference to an attached SCADA/electronic print (e.g. "Slade Print
+          attached" in the companion table). For such steps, Temp=N.A. in the
+          main step row is expected and COMPLIANT — the parameter is logged
+          via the companion record, not the step row. Do NOT flag Temp=N.A.
+          as a missing or incomplete data point when a companion table or
+          attached print handles the monitoring for that step.
 
           UNIT-IS-LABEL EXCEPTION:
           Some parameters use their label as the unit — no separate unit suffix is
@@ -758,50 +800,12 @@ categories:
         skip_conditions:
           - "Page has no cover page or batch release note or BPCR review checklist -> not_applicable"
 
-      19:
-        evaluation_strategy: text_and_vision
-        applicable_document_types: []
-        applicable_section_types: []
-        visual_checks:
-          - VC-BLANK-FIELD
-        pass_criteria: >
-          This page may contain a "Remarks" or "Remark" field, label, or column
-          (e.g. "Remarks:", "Remarks :-", "Remark:", "Remarks/In-process Results").
-
-          STEP 1 — Detect if a Remarks field is present:
-          If this page has NO label, heading, or column named "Remarks" (or "Remark"),
-          treat as NOT_APPLICABLE — there is no remarks section to evaluate.
-
-          Data-printout pages (e.g. SCADA/DCS timestamp tables, VDE data exports with
-          only Date/Time/Temperature/Vacuum columns and no form fields) have no
-          Remarks field — treat them as NOT_APPLICABLE.
-
-          STEP 2 — Evaluate only if a Remarks field is found:
-          - COMPLIANT if the Remarks field/cell contains any of the following:
-            (a) Written text — any observation, note, or comment (e.g. "Type I cleaning",
-                "Within limit", "pH: 7.2", "No remarks")
-            (b) A dash or em-dash ("-", "—", "--", "---") — explicitly indicating
-                "no remarks"; this is a valid and complete documented response
-            (c) "N.A.", "NA", "N/A" — explicitly marking as not applicable
-            (d) Any handwritten mark or entry visible in the image
-          - NON_COMPLIANT only if the Remarks field is completely blank — the label
-            (e.g. "Remarks :-") is present but there is no text, no dash, no mark
-            whatsoever following it.
-
-          Vision: confirm whether any Remarks field present on this page has at least
-          a handwritten mark, dash, or written entry. A visually blank Remarks box
-          or cell (nothing written or printed after the label) is non-compliant.
-        skip_conditions:
-          - "Page has no Remarks label, heading, or column of any kind -> not_applicable"
-          - "Page is a data-printout (SCADA/DCS export, timestamp table) with no form Remarks field -> not_applicable"
-          - "Remarks field is present and contains any text, dash, or mark -> compliant"
-
   # ── Audit Trail Review (rules 20-21) ──────────────────────────
   audit_trail_review:
     severity: major
     applicable_section_types: [bpcr_review_checklist]
     rules:
-      20:
+      19:
         evaluation_strategy: text
         
         pass_criteria: >
@@ -814,7 +818,7 @@ categories:
           - "Page has no audit trail review section -> not_applicable"
           - "Electronic manufacturing applications are not available for this batch -> not_applicable"
 
-      21:
+      20:
         evaluation_strategy: text
         pass_criteria: >
           The checklist item for temperature/vacuum/process parameter excursions

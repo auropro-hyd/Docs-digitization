@@ -22,11 +22,10 @@ Category: BPCR review checklist
 16. Any deviation initiated for this batch is verified in the agile application and the reference number is recorded.
 17. For re-process or rework batches, the OOS/OOT/deviation/market complaint reference number is recorded and verified in the agile application.
 18. The batch's relevance to stability or annual addition batch is indicated.
-19. Any other remarks (if any) are documented.
 
 --------------------------------------------------
 
 Category: Audit Trail Review
 
-20. Any alarms observed during batch time that exceed predefined timelines as per site SOP are checked and any related deviations or incidents are documented.
-21. Any excursions in temperature, vacuum, or process parameters observed beyond predefined timelines as per SOP during batch time are checked and any related deviation or incident is documented.
+19. Any alarms observed during batch time that exceed predefined timelines as per site SOP are checked and any related deviations or incidents are documented.
+20. Any excursions in temperature, vacuum, or process parameters observed beyond predefined timelines as per SOP during batch time are checked and any related deviation or incident is documented.
