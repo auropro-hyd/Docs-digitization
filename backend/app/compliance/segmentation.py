@@ -66,6 +66,72 @@ def _looks_like_bpcr(section_type: str) -> bool:
     return any(hint in needle for hint in _BPCR_SECTION_TYPE_HINTS)
 
 
+def _is_bpcr_parent(section: "DocumentSection") -> bool:
+    """True when a section should be drilled into BPCR sub-sections.
+
+    Two-stage check that stays idempotent across re-runs:
+
+    1. ``section_type`` matches a BPCR hint (``batch_record``,
+       ``bpcr``, etc.) — the canonical case.
+    2. **Fallback**: ``section_type`` is NOT a known BPCR sub-
+       section type AND ``section_id`` contains a BPCR hint.
+       Catches Akhilesh's 2026-05-14 case where the LLM named
+       the section ``bpcr_main_record`` but typed it as
+       ``main_record`` / ``production_record`` — types the
+       vocabulary normaliser collapses to ``unknown``.
+
+    The fallback excludes known canonical BPCR sub-section types
+    (cover_page, material_dispensing, manufacturing_operations,
+    …) so an already-flattened span with id ``bpcr__cover_page``
+    and type ``cover_page`` doesn't re-trigger enrichment.
+    Idempotency invariant: ``enrich(enrich(x)) == enrich(x)``
+    holds for any input.
+    """
+
+    if _looks_like_bpcr(section.section_type):
+        return True
+    # Already-flattened sub-section → don't re-enrich.
+    if section.section_type and section.section_type in _BPCR_SUBSECTION_TYPES:
+        return False
+    return _looks_like_bpcr(section.section_id)
+
+
+# Canonical sub-section types emitted by the BPCR heuristic
+# detector (Spec 007). Loaded lazily so a missing / malformed
+# spec doesn't crash module import — falls back to the historical
+# 13-item set if load fails.
+_FALLBACK_BPCR_SUBSECTION_TYPES = frozenset({
+    "cover_page",
+    "revision_summary",
+    "material_dispensing",
+    "equipment_list",
+    "manufacturing_operations",
+    "sifting_record",
+    "pin_milling_mixing",
+    "micronization",
+    "co_mill_operation",
+    "metal_detection",
+    "yield_calculation",
+    "cleaning_log",
+    "deviation",
+})
+
+
+def _load_bpcr_subsection_types() -> frozenset[str]:
+    """Read the canonical sub-section types from the BPCR spec.
+    Returns the fallback set when the spec can't be loaded."""
+
+    try:
+        from app.bmr.capabilities.bpcr_sections_spec import load_spec
+        spec = load_spec()
+        return frozenset(s.section_id for s in spec.sections)
+    except Exception:
+        return _FALLBACK_BPCR_SUBSECTION_TYPES
+
+
+_BPCR_SUBSECTION_TYPES: frozenset[str] = _load_bpcr_subsection_types()
+
+
 @dataclass(frozen=True)
 class SegmentationIssue:
     """One quality issue found in a segmentation output."""
@@ -1097,7 +1163,7 @@ def enrich_with_bpcr_sub_sections(
         logger.exception("BPCR detector imports failed; skipping enrichment")
         return seg
 
-    bpcr_sections = [s for s in seg.sections if _looks_like_bpcr(s.section_type)]
+    bpcr_sections = [s for s in seg.sections if _is_bpcr_parent(s)]
     if not bpcr_sections:
         return seg
 
@@ -1121,7 +1187,7 @@ def enrich_with_bpcr_sub_sections(
 
     enriched_sections: list[DocumentSection] = []
     for section in seg.sections:
-        if not _looks_like_bpcr(section.section_type):
+        if not _is_bpcr_parent(section):
             enriched_sections.append(section)
             continue
 
@@ -1201,6 +1267,15 @@ def enrich_with_bpcr_sub_sections(
         # carry real page ranges; LLM ``page_index`` is a single int
         # so we collapse it to a 1-page span.
         flatten_plan: list[tuple[str, str, int, int]] = []
+        # The BPCR detector reports span page numbers RELATIVE to
+        # its input (1-indexed within the pages we passed it). When
+        # this parent section is at e.g. p11-19, the detector
+        # returns spans like (1-9) which we have to translate back
+        # to absolute pages (11-19) before recording in flatten_plan.
+        # Pre-fix, ``bpcr_main_record (11-19)`` enriched produced a
+        # span at (1-9) — wrong section identity and wrong page
+        # range — silently breaking the segmentation.
+        offset = section.start_page - 1
         seen_types: set[str] = set()
         for span in section_map.spans:
             normalized_section_type = (
@@ -1209,11 +1284,17 @@ def enrich_with_bpcr_sub_sections(
             if normalized_section_type in seen_types:
                 continue
             seen_types.add(normalized_section_type)
+            # Clamp to the parent's span so a detector miscount
+            # can't escape its allotted page range.
+            abs_start = max(section.start_page, span.start_page + offset)
+            abs_end = min(section.end_page, span.end_page + offset)
+            if abs_start > abs_end:
+                continue
             flatten_plan.append((
                 normalized_section_type,
                 span.display_name or section.name,
-                span.start_page,
-                span.end_page,
+                abs_start,
+                abs_end,
             ))
         for ss in section.sub_sections:
             normalized_section_type = (
@@ -1646,29 +1727,27 @@ class DocumentSegmenter:
 
             filled = fill_gaps_with_unknown(disjoint, total_pages=total_pages)
             boundary_reconciled = merge_split_by_boundary(filled, boundary_units)
-            canonical = normalize_section_types_to_canonical(boundary_reconciled)
-            stamped = stamp_document_types(canonical)
-
-            # Spec 007 / 2026-05-14 architectural fix: enrichment
-            # used to run in compliance_graph.py AFTER segment()
-            # returned, which meant the geometric invariants
-            # (no overlaps, full coverage) Spec 011's post-processes
-            # established got CLOBBERED by enrichment's output.
-            # Persisted segmentations on Akhilesh's 2026-05-14 doc
-            # showed three overlapping BPCR sections (1-3 / 1-10 /
-            # 1-19) and a 13-page uncovered gap because of this.
+            # Spec 007 + 2026-05-14: enrichment runs BEFORE
+            # ``normalize_section_types_to_canonical``. The
+            # normaliser collapses LLM-emitted non-canonical
+            # types (``main_record``, ``bpcr``,
+            # ``batch_production_record``, …) to ``unknown``, and
+            # ``_is_bpcr_parent`` against ``"unknown"`` returns
+            # False → enrichment silently skips real BPCR
+            # parents the LLM identified imperfectly.
             #
-            # Folding enrichment INSIDE segment() means the entire
-            # contract is enforced in one place; the post-enrichment
-            # re-sanitization keeps the output geometrically clean
-            # even when the BPCR detector / LLM produces overlapping
-            # flatten spans.
+            # The post-enrichment normalise step a few lines
+            # below still ensures the final output's section_types
+            # are canonical. We just preserve the LLM's hint long
+            # enough for the BPCR detector to recognise its
+            # input.
             #
-            # Idempotent: enrichment short-circuits when no BPCR
-            # sections exist; segments without batch_record content
-            # cost essentially nothing.
-            enriched = enrich_with_bpcr_sub_sections(stamped, extractions)
-            if enriched is not stamped:  # something was actually enriched
+            # ``_is_bpcr_parent`` also accepts section_id matches
+            # so docs where the LLM named a section
+            # ``bpcr_main_record`` but typed it as ``main_record``
+            # still get enriched. Belt-and-braces.
+            enriched = enrich_with_bpcr_sub_sections(boundary_reconciled, extractions)
+            if enriched is not boundary_reconciled:
                 # Geometric sanitization: clamp out-of-range,
                 # resolve overlaps, fill gaps. Same three steps the
                 # pre-enrichment pipeline already ran — applying
@@ -1682,7 +1761,9 @@ class DocumentSegmenter:
                 # rare but possible when re-segmenting a previously
                 # enriched doc).
                 enriched = deduplicate_section_ids(enriched)
-            stamped = enriched
+
+            canonical = normalize_section_types_to_canonical(enriched)
+            stamped = stamp_document_types(canonical)
 
             # Spec 011 / US4: apply HITL overrides LAST so the
             # operator's word is final — no post-process can
