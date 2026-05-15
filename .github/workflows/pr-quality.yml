@@ -1,0 +1,97 @@
+name: PR Quality
+
+# Lightweight checks that run on every PR regardless of which paths
+# changed. Each job is cheap (seconds, not minutes), so we don't gate
+# them on path filters — the goal is consistent hygiene across all
+# PRs (docs, code, infra).
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, labeled, unlabeled]
+
+concurrency:
+  group: pr-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  typos:
+    name: Typos
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check spelling
+        uses: crate-ci/typos@master
+        with:
+          config: ./_typos.toml
+
+  semantic-pr-title:
+    name: Semantic PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # Enforces Conventional Commit prefix on the PR title so squash-
+      # merge into main produces a clean changelog. Allowed types
+      # mirror what we already use in commit history.
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            ci
+            build
+            perf
+            revert
+          requireScope: false
+          subjectPattern: ^(?![A-Z]).+$
+          subjectPatternError: |
+            The subject "{subject}" must start with a lowercase letter.
+            Conventional Commit format: <type>(<scope>): <subject>
+            Example: fix(compliance/report): suppress broken-image fallback
+
+  labeler:
+    name: Auto-label by path
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
+
+  size:
+    name: PR size label
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: codelytv/pr-size-labeler@v1
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          xs_label: 'size/XS'
+          xs_max_size: '10'
+          s_label: 'size/S'
+          s_max_size: '100'
+          m_label: 'size/M'
+          m_max_size: '500'
+          l_label: 'size/L'
+          l_max_size: '1000'
+          xl_label: 'size/XL'
+          fail_if_xl: 'false'
+          message_if_xl: |
+            This PR exceeds 1000 changed lines. Consider splitting it
+            into smaller, reviewable chunks — each PR should land one
+            logical change.
+          files_to_ignore: |
+            "package-lock.json"
+            "frontend/package-lock.json"
+            "backend/uv.lock"

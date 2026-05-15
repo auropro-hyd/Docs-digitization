@@ -1,0 +1,53 @@
+# typos config — see https://github.com/crate-ci/typos
+#
+# We allow common pharma / compliance acronyms and product names that
+# would otherwise get flagged as misspellings. New domain words go
+# under [default.extend-identifiers] or [default.extend-words].
+
+[files]
+extend-exclude = [
+  "specs/**/research.md",
+  "specs/**/quickstart.md",
+  "backend/tests/data/**",
+  "backend/tests/fixtures/**",
+  "*.lock",
+  "package-lock.json",
+  "uv.lock",
+  "*.svg",
+  "*.pdf",
+]
+
+[default]
+# Words we want spell-checked as-is (not lowercased / stemmed).
+extend-ignore-identifiers-re = [
+  "auropro",
+  "Auropro",
+  "AURO[A-Z]+",
+]
+
+[default.extend-words]
+# Domain-specific tokens that should NOT be flagged.
+bpcr = "bpcr"
+BPCR = "BPCR"
+gmp = "gmp"
+GMP = "GMP"
+alcoa = "alcoa"
+ALCOA = "ALCOA"
+apitoria = "apitoria"
+Apitoria = "Apitoria"
+auropro = "auropro"
+Auropro = "Auropro"
+weasyprint = "weasyprint"
+WeasyPrint = "WeasyPrint"
+hitl = "hitl"
+HITL = "HITL"
+pharmix = "pharmix"
+Pharmix = "Pharmix"
+ocr = "ocr"
+OCR = "OCR"
+llm = "llm"
+LLM = "LLM"
+
+[default.extend-identifiers]
+# Identifiers (variable / function names) that would otherwise trip
+# the checker. Add new ones as they surface in failing CI runs.
