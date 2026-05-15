@@ -1,0 +1,74 @@
+name: Maintenance
+
+# Weekly housekeeping jobs that aren't tied to a specific PR:
+#   - link-check across the repo's markdown/docs
+#   - stale-issue/PR closer
+# Runs Monday 03:00 UTC (08:30 IST), well outside working hours so a
+# noisy result doesn't block anyone's morning. `workflow_dispatch` is
+# enabled so we can also fire it manually after big doc changes.
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  link-check:
+    name: Markdown link check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lychee
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Limit to markdown so we don't crawl every .py for stray
+          # urls; --no-progress keeps the log tidy in CI.
+          args: >-
+            --no-progress
+            --cache
+            --max-cache-age 1w
+            --exclude-mail
+            --accept 200,206,429
+            './**/*.md'
+          fail: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  stale:
+    name: Close stale issues and PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          # Generous defaults — this is a small repo and we'd rather
+          # err on the side of letting threads breathe than auto-
+          # closing something a contributor was about to revisit.
+          days-before-issue-stale: 90
+          days-before-issue-close: 30
+          days-before-pr-stale: 60
+          days-before-pr-close: 21
+          stale-issue-label: 'stale'
+          stale-pr-label: 'stale'
+          exempt-issue-labels: 'pinned,security,roadmap'
+          exempt-pr-labels: 'pinned,security,wip'
+          stale-issue-message: |
+            This issue has had no activity for 90 days. It will be
+            closed in 30 days unless an update lands or a maintainer
+            removes the `stale` label.
+          stale-pr-message: |
+            This PR has had no activity for 60 days. It will be
+            closed in 21 days unless an update lands or a maintainer
+            removes the `stale` label.
+          close-issue-message: |
+            Closing as stale. Re-open if this is still relevant — the
+            history is preserved.
+          close-pr-message: |
+            Closing as stale. Re-open and rebase if this is still
+            relevant.
+          operations-per-run: 100
