@@ -21,23 +21,24 @@ The platform runs in three environments, each with different adapter configurati
 ```mermaid
 flowchart LR
     localDev["Local Dev<br/>(developer machine)"]
-    cicd["Azure DevOps<br/>CI/CD Pipeline"]
+    cicd["GitHub Actions<br/>CI (tests + build)"]
     staging["Azure Staging<br/>(App Service + ACI)"]
     validation["Validated &<br/>Manual Approval"]
     onPrem["On-Prem Production<br/>(air-gapped / restricted)"]
 
-    localDev -->|"git push to develop"| cicd
-    cicd -->|"auto deploy"| staging
+    localDev -->|"open PR to main"| cicd
+    cicd -->|"manual deploy"| staging
     staging -->|"QA + UAT"| validation
     validation -->|"release package"| onPrem
 ```
 
-The Azure DevOps pipeline (`infra/azure-pipelines.yml`) runs on pushes to `main` and `develop`:
+CI runs on **GitHub Actions** (see [GitHub Actions CI](../devops/github-actions-ci.md)). There are three workflows:
 
-- **Build stage**: Lint (ruff), unit tests (pytest), Docker image build, frontend build (npm)
-- **Deploy Staging stage**: Triggers on `develop` branch only, deploys backend to App Service via `AzureWebApp@1`
+- **CI** (`.github/workflows/ci.yml`): Backend tests (pytest with WeasyPrint native deps) + Frontend type-check / lint / build, gated by a `dorny/paths-filter` sentinel so docs-only PRs short-circuit in ~30s.
+- **PR Quality** (`.github/workflows/pr-quality.yml`): Typos, semantic PR title, path-based auto-labels, PR-size labels.
+- **Maintenance** (`.github/workflows/maintenance.yml`): Weekly markdown link-check + stale issue/PR closer.
 
-On-prem deployment receives a validated release package (Docker images + config) and is deployed manually.
+**Deployment is currently performed manually outside of CI.** The legacy `infra/azure-pipelines.yml` exists from the original scaffold (March 2026) and is not wired to any Azure DevOps service connection; it is kept for historical reference only. On-prem deployment receives a validated release package (Docker images + config) and is deployed manually.
 
 ---
 

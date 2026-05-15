@@ -207,5 +207,5 @@ services:
 
 - [Settings](../backend/configuration/settings.md) — Full configuration reference
 - [Dependency Injection](../backend/configuration/dependency-injection.md) — How adapters are wired
-- [Azure DevOps Pipeline](./azure-devops-pipeline.md) — CI/CD setup
+- [GitHub Actions CI](./github-actions-ci.md) — CI/CD setup
 - [Frontend Overview](../frontend/overview.md) — Frontend architecture
