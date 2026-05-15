@@ -21,8 +21,15 @@ jobs:
     name: Typos
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    # Non-blocking. The codebase ingests pharmaceutical OCR text
+    # full of legitimate-looking misspellings (e.g. segmentation
+    # headers explicitly match "Pege" as a known OCR variant of
+    # "Page"). We want the typos report surfaced as annotations on
+    # the PR but not used to gate merge — too many false positives
+    # vs. real signal in this domain.
+    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Check spelling
         uses: crate-ci/typos@master
         with:
