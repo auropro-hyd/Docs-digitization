@@ -1,0 +1,95 @@
+Proprietary License — All Rights Reserved
+
+Copyright (c) 2026 Auropro Hyderabad. All rights reserved.
+
+This software, together with its documentation, configuration, rule
+definitions, prompts, OCR adapters, and any other material in this
+repository (collectively, the "Software"), is the proprietary and
+confidential property of Auropro Hyderabad ("the Owner"). The
+Software is made publicly readable on GitHub for transparency,
+audit-readiness, and recruiting purposes only; this visibility does
+NOT constitute a grant of any rights under copyright, patent,
+trademark, or trade-secret law.
+
+NOTICE
+------
+
+No license, express or implied, is granted by the Owner under this
+notice for any of the following:
+
+  1. Copying, reproducing, or storing the Software in whole or in
+     part, except for the transient copies a web browser, search
+     engine, or GitHub-provided viewer makes incidental to displaying
+     the repository contents.
+  2. Modifying, adapting, translating, or creating derivative works
+     of the Software.
+  3. Distributing, sublicensing, publishing, lending, leasing,
+     selling, or otherwise transferring the Software or any
+     derivative.
+  4. Using the Software, or any portion of it (including but not
+     limited to the compliance rule definitions, prompt text, and
+     audit-pipeline architecture), in any commercial product,
+     internal tool, or research project.
+  5. Reverse-engineering, decompiling, or disassembling the
+     Software.
+
+A separate written agreement from the Owner is required to obtain
+any of the above rights. Contact: anmol@auropro.com.
+
+PERMITTED ACTIVITIES (without separate agreement)
+-------------------------------------------------
+
+The following are permitted under this notice:
+
+  a. Reading the source code on github.com or via the GitHub API
+     for purposes of review, evaluation, audit, or scholarship.
+  b. Filing security disclosures or bug reports through the
+     channels documented in SECURITY.md, including the verbatim
+     reproduction of small code excerpts (≤ 50 lines) necessary
+     to demonstrate the report.
+  c. Linking to this repository or its files from articles,
+     research papers, regulatory filings, or commercial materials
+     describing the Software in a factual, non-derivative manner.
+
+TRADEMARKS
+----------
+
+"Auropro", "BMR Compliance Intelligence", "BMR Compliance
+Intelligence Suite", and any associated logos are trademarks of the
+Owner. Nothing in this notice grants any right to use these marks.
+
+NO WARRANTY
+-----------
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+NON-INFRINGEMENT. IN NO EVENT SHALL THE OWNER BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+THIRD-PARTY COMPONENTS
+----------------------
+
+This repository declares third-party dependencies in
+backend/pyproject.toml and frontend/package.json. Those
+dependencies are governed by their own respective licenses, which
+remain in effect independently of this notice.
+
+GOVERNING LAW
+-------------
+
+This notice and any related agreements shall be governed by the
+laws of the Republic of India. Any disputes arising shall fall
+under the exclusive jurisdiction of the courts of Hyderabad,
+Telangana, India.
+
+REVISION
+--------
+
+Notice version 1.0, effective 2026-05-15.
+The Owner reserves the right to update this notice. The version
+applicable to any particular copy of the Software is the version
+present at the commit ref of that copy.
