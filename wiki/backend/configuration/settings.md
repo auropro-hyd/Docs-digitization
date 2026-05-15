@@ -317,4 +317,4 @@ The `Container` class in [Dependency Injection](./dependency-injection.md) uses 
 
 - [Dependency Injection](./dependency-injection.md) — How pipeline mode drives adapter selection
 - [Local Setup](../../devops/local-setup.md) — Environment variable reference for local development
-- [Azure DevOps Pipeline](../../devops/azure-devops-pipeline.md) — How settings differ per deployment environment
+- [GitHub Actions CI](../../devops/github-actions-ci.md) — CI workflow, PR-quality gate, branch-protection settings

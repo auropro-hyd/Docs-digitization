@@ -29,6 +29,7 @@
 | Document | Description |
 |----------|-------------|
 | [Document Processing](backend/workflow/document-processing.md) | LangGraph state-graph, mode-based conditional routing |
+| [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md) | Spec 011 pipeline: LLM segmentation + deterministic post-pipeline + BPCR sub-section detection + HITL overrides |
 | [Compliance Review](backend/workflow/compliance-review.md) | ALCOA++, GMP, SOP verification agents |
 | [HITL Flow](backend/workflow/hitl-flow.md) | Interrupt/resume, review queue, audit trail |
 | [Rule Authoring Playbook](rule_authoring_playbook.md) | Operator guide for config-first rule updates and QA checks |
@@ -58,7 +59,7 @@
 | Document | Description |
 |----------|-------------|
 | [Local Setup](devops/local-setup.md) | Prerequisites, first-run walkthrough |
-| [Azure DevOps Pipeline](devops/azure-devops-pipeline.md) | CI/CD stages, deployment strategy |
+| [GitHub Actions CI](devops/github-actions-ci.md) | CI workflow, PR-quality gate, weekly maintenance, branch-protection rules, dependabot |
 | [Quick Commands](quick_commands.md) | Copy-paste reference for all dev commands |
 
 ---
@@ -71,7 +72,9 @@
 4. [Data Flow](architecture/data-flow.md)
 5. [OCR Engine Strategy](backend/ocr-engines/overview.md)
 6. [Document Processing](backend/workflow/document-processing.md)
-7. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
-8. [HITL Flow](backend/workflow/hitl-flow.md)
-9. [Settings](backend/configuration/settings.md)
-10. [Local Setup](devops/local-setup.md)
+7. [Document Segmentation & BPCR Detection](backend/workflow/segmentation.md)
+8. [Composite Scorer](backend/confidence-scoring/composite-scorer.md)
+9. [HITL Flow](backend/workflow/hitl-flow.md)
+10. [Settings](backend/configuration/settings.md)
+11. [Local Setup](devops/local-setup.md)
+12. [GitHub Actions CI](devops/github-actions-ci.md)
