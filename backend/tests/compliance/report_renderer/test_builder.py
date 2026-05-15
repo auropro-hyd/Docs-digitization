@@ -416,3 +416,73 @@ def test_metadata_overrides_skip_empty_values() -> None:
     rows = dict(doc.header.metadata_rows)
     assert rows["Product"] == "-"
     assert rows["Batch No"] == "2538105062"
+
+
+def test_non_compliant_row_uses_rule_result_synthesis_when_present() -> None:
+    """When ev.reasoning is set (by synthesize_rule_evidence), it must appear
+    in detailed_evidence rather than the per-finding single-page observation.
+
+    This pins the builder.py fix: synthesized RuleResult text takes priority
+    over concat_finding_evidence(findings).
+    """
+    synthesized_reasoning = (
+        "PAGE:11: The 'Remarks/In-process Results' column is empty for Steps 45-47. "
+        "PAGE:18: Same column blank for Steps 60-63. PAGE:51: Step 82 remarks missing. "
+        "PAGE:71: Step 98 remarks missing. No in-process results recorded across 4 pages."
+    )
+    rule = _rule(
+        "CHE-BPC19", "non_compliant",
+        pages=[11, 18, 51, 71],
+        text="Are in-process check remarks filled?",
+        reasoning=synthesized_reasoning,
+    )
+    # Finding only has single-page per-deduplication-winner text
+    finding = _finding(
+        "CHE-BPC19", "non_compliant",
+        pages=[11],
+        reasoning="[Vision] Step 59 visibly empty in remarks column.",
+    )
+    agent = AgentReport(
+        agent="checklist", agent_display="Checklist",
+        all_evaluations=[rule], findings=[finding],
+    )
+    report = _make_report(agent_reports=[agent])
+
+    doc = build_report_document(report, now=_NOW)
+
+    row = doc.rows[0]
+    assert row.compliance_kind == "action_required"
+    # Synthesized cross-page narrative must appear — not the single-page Vision finding
+    assert "PAGE:11" in row.detailed_evidence
+    assert "PAGE:18" in row.detailed_evidence
+    assert "PAGE:51" in row.detailed_evidence
+    assert "PAGE:71" in row.detailed_evidence
+    assert "[Vision] Step 59" not in row.detailed_evidence
+
+
+def test_non_compliant_row_falls_back_to_finding_when_no_rule_result_synthesis() -> None:
+    """When RuleResult has no reasoning/evidence (pre-synthesis run), the
+    per-finding text must still appear so the cell is never blank."""
+    rule = _rule(
+        "CHE-BPC9", "non_compliant",
+        pages=[15],
+        text="Are batch numbers consistent?",
+        reasoning="",  # no synthesis
+    )
+    finding = _finding(
+        "CHE-BPC9", "non_compliant",
+        pages=[15],
+        reasoning="PAGE:15: Batch number truncated — '4060193-' is incomplete.",
+    )
+    agent = AgentReport(
+        agent="checklist", agent_display="Checklist",
+        all_evaluations=[rule], findings=[finding],
+    )
+    report = _make_report(agent_reports=[agent])
+
+    doc = build_report_document(report, now=_NOW)
+
+    row = doc.rows[0]
+    assert row.compliance_kind == "action_required"
+    assert "4060193" in row.detailed_evidence
+    assert "incomplete" in row.detailed_evidence.lower()

@@ -193,10 +193,19 @@ def _build_row(
     else:
         finding_pages = sorted({pn for f in findings for pn in f.page_numbers})
         evidence_pages = format_pages(finding_pages) if finding_pages else format_pages(ev.page_numbers)
-        detailed_evidence = concat_finding_evidence(findings) or (
-            ev.reasoning or ev.evidence or
-            "The rule was flagged but no per-finding detail is recorded."
-        )
+        # Prefer the RuleResult-level synthesized narrative when it exists —
+        # it was produced by _synthesize_batch() and carries a cross-page
+        # narrative with PAGE:N citations covering all relevant pages.
+        # Per-finding concat is per-deduplication-winner text (one page only)
+        # and is used only as a fallback when no synthesis happened.
+        synth_text = (ev.reasoning or "").strip() or (ev.evidence or "").strip()
+        per_finding_text = concat_finding_evidence(findings)
+        if synth_text:
+            detailed_evidence = synth_text
+        elif per_finding_text:
+            detailed_evidence = per_finding_text
+        else:
+            detailed_evidence = "The rule was flagged but no per-finding detail is recorded."
         mitigation = pick_mitigation(findings)
 
     return ReportRow(

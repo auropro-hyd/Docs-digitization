@@ -21,40 +21,59 @@ Two surfaces:
 
 from __future__ import annotations
 
+import re
+
 from app.compliance.models import ComplianceFinding, RuleResult
 from app.compliance.report_renderer.page_formatter import format_pages
 
-_MAX_REASONING_PER_FINDING: int = 400
+_MAX_REASONING_PER_FINDING: int = 800
 """Cap on per-finding reasoning length when concatenating across
-multiple findings. Keeps the row visually readable in the rendered
-PDF — 400 chars is roughly 4-5 lines of body text at the rule
-table's column width."""
+multiple findings. 800 chars accommodates synthesised 2-4 sentence
+cross-page narratives while keeping the PDF cell readable."""
+
+_PAGE_CITATION_RE = re.compile(r"\bPAGE[S]?\s*:\s*\d", re.IGNORECASE)
+"""Compiled regex that matches PAGE:N or PAGES:N inline citations
+produced by all three evaluators (text, vision, agentic)."""
+
+
+def _has_page_citation(text: str) -> bool:
+    """Return True when *text* contains at least one PAGE:N inline citation."""
+    return bool(_PAGE_CITATION_RE.search(text))
 
 
 def summarise_compliant(rule_result: RuleResult) -> str:
     """Produce the Detailed-Evidence cell text for a compliant row.
 
-    v1 is deterministic — no LLM call. The reasoning is the
-    rule-author's authored text (when present) or a boilerplate
-    cross-page acknowledgement.
+    v1 is deterministic — no LLM call.
+
+    Agentic rules produce a high-level ``reasoning`` (conclusion without
+    page citations) and a citation-rich ``evidence``. When reasoning is
+    present but lacks PAGE:N inline citations, we append the evidence so
+    the PDF cell shows the cross-page support alongside the conclusion.
     """
 
     pages = format_pages(rule_result.page_numbers)
     page_count = len(rule_result.page_numbers)
 
-    # Prefer the rule's own reasoning if it has substantive content —
-    # rule authors sometimes write "compliant" reasoning that
-    # describes WHAT was checked. That's better than boilerplate.
-    if rule_result.reasoning and len(rule_result.reasoning.strip()) > 40:
-        # Keep the authored reasoning; let it stand on its own.
-        return rule_result.reasoning.strip()
+    reasoning = (rule_result.reasoning or "").strip()
+    evidence = (rule_result.evidence or "").strip()
 
-    # Boilerplate fallback. Page count + range gives the operator
-    # enough signal that the rule actually ran broadly.
+    if reasoning and len(reasoning) > 40:
+        if not _has_page_citation(reasoning) and evidence and len(evidence) > 10:
+            # Reasoning is a high-level conclusion (e.g. agentic audit); evidence
+            # carries the PAGE:N citations. Combine so both appear in the cell.
+            return f"{reasoning}\n\n{evidence}"
+        return reasoning
+
+    # Fall back to evidence when reasoning is absent or too short.
+    if evidence and len(evidence) > 10:
+        return evidence
+
+    # Boilerplate fallback when neither field has content.
     if page_count == 0:
         return (
-            f"This rule was evaluated for the document and found "
-            f"compliant. No exceptions surfaced during the review."
+            "This rule was evaluated for the document and found "
+            "compliant. No exceptions surfaced during the review."
         )
 
     category = rule_result.rule_category.replace("_", " ") or "compliance"
@@ -93,9 +112,6 @@ def concat_finding_evidence(findings: list[ComplianceFinding]) -> str:
         parts.append(text)
 
     if not parts:
-        # Every finding had empty reasoning/evidence/description —
-        # rare, but possible. Surface SOMETHING so the cell isn't
-        # blank.
         return (
             "The rule was flagged but the evaluator did not record "
             "specific findings. Review the underlying evaluation log."
